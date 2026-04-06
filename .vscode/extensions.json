@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "vue.volar",
+    "ms-python.python",
+    "ms-python.debugpy",
+    "ms-vscode.vscode-typescript-next"
+  ]
+}

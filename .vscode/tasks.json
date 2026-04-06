@@ -1,0 +1,122 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Cosecre: Install frontend deps",
+      "type": "shell",
+      "command": "npm install --prefix frontend",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Cosecre: Sync backend deps",
+      "type": "shell",
+      "command": "uv sync --project backend --dev",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Cosecre: Install all deps",
+      "dependsOrder": "parallel",
+      "dependsOn": [
+        "Cosecre: Install frontend deps",
+        "Cosecre: Sync backend deps"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Cosecre: Backend dev",
+      "type": "shell",
+      "command": "uv run --project backend backend",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "dev"
+      },
+      "problemMatcher": {
+        "owner": "python",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "Application startup complete\\.|Uvicorn running on"
+        }
+      }
+    },
+    {
+      "label": "Cosecre: Frontend dev",
+      "type": "shell",
+      "command": "npm run --prefix frontend dev -- --host 0.0.0.0",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "dev"
+      },
+      "problemMatcher": {
+        "owner": "typescript",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "Local:|ready in"
+        }
+      }
+    },
+    {
+      "label": "Cosecre: Dev stack",
+      "dependsOrder": "parallel",
+      "dependsOn": [
+        "Cosecre: Backend dev",
+        "Cosecre: Frontend dev"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Cosecre: Backend tests",
+      "type": "shell",
+      "command": "uv run --project backend pytest",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Cosecre: Frontend build",
+      "type": "shell",
+      "command": "npm run --prefix frontend build",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Cosecre: Backend healthcheck",
+      "type": "shell",
+      "command": "curl -fsS http://127.0.0.1:8000/healthz",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
