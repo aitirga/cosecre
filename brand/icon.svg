@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Cosecre — application icon master.
+
+  A bold C whose opening is a document slot, with a sheet coming through it.
+  Deliberately the same silhouette as cosecre-print's icon: they are sibling
+  apps and should read as a family. What distinguishes them is the palette —
+  Cosecre is terracotta on warm paper, cosecre-print is blue on cool paper.
+
+  This is the single source of truth for the app icon. Edit here, then run
+  `npm run icons` to regenerate desktop/build/icon.png, which electron-builder
+  turns into the .icns and .ico at package time.
+
+  Keep the 512-unit coordinate system, and keep in sync with:
+    frontend/public/favicon.svg          (the web favicon)
+    frontend/src/components/BrandMark.vue (the in-app mark)
+
+  Rules that keep it legible at 16px:
+    • No stroke thinner than 13 units. macOS downsamples 1024 to 16, and
+      anything finer disappears entirely.
+    • The sheet is outlined, not plain white. On a pale tile an unoutlined
+      sheet dissolves into the background. The outline is free: the sheet
+      passes through the C's gap without ever crossing the arc, so it only
+      ever sits on tile.
+    • Butt caps on the arc, not round. The flat ends are what make the gap
+      read as a document slot rather than an unfinished circle.
+    • The text lines are left-aligned and unequal. Centred equal-length lines
+      read as an equals sign.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="1024" height="1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="1" stop-color="#f7e9d4" />
+    </linearGradient>
+    <linearGradient id="arc" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#f68d68" />
+      <stop offset="1" stop-color="#b83c14" />
+    </linearGradient>
+  </defs>
+
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#tile)" />
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="none"
+        stroke="rgba(28,25,23,0.10)" stroke-width="2" />
+
+  <!-- The C: a 260-degree arc, opening to the right. -->
+  <path d="M 329.7 350.9 A 132 132 0 1 1 329.7 161.1"
+        transform="translate(-8 0)"
+        fill="none" stroke="url(#arc)" stroke-width="58" />
+
+  <!-- The sheet. Its ends clear the arc's stroke ends (y 123–185 and 327–389),
+       so the letter never looks broken. -->
+  <rect x="210" y="214" width="232" height="84" rx="19"
+        fill="#ffffff" stroke="#3a5a3c" stroke-width="13" />
+  <g fill="#3a5a3c" opacity="0.55">
+    <rect x="248" y="238" width="152" height="13" rx="6.5" />
+    <rect x="248" y="262" width="100" height="13" rx="6.5" />
+  </g>
+</svg>

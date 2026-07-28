@@ -1,0 +1,8 @@
+{
+  // Only the node project is a composite reference. tsconfig.web.json spans two
+  // workspace packages (this one and ../frontend), which a composite project
+  // cannot do — its file list is rejected as incomplete no matter how the
+  // includes are written. `npm run typecheck` checks it directly instead.
+  "files": [],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}

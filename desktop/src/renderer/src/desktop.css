@@ -1,0 +1,65 @@
+/*
+  Desktop-only adjustments to the shared web UI.
+
+  Everything here is a consequence of running in a window rather than a tab, so
+  none of it belongs in the shared stylesheet.
+*/
+
+:root {
+  /* The window uses a hidden inset title bar on macOS, so the traffic lights
+     float over the top-left of the shell. The shared layout reads this token
+     and leaves room; overriding `.sidebar` directly would not work, because
+     Vue's scoped rules compile to `.sidebar[data-v-…]` and outrank it. */
+  --shell-inset-top: 22px;
+}
+
+/* The empty space in the sidebar becomes the drag handle. Its children opt back
+   out, or the nav would move the window instead of navigating. */
+.sidebar {
+  -webkit-app-region: drag;
+}
+
+.sidebar > * {
+  -webkit-app-region: no-drag;
+}
+
+/* Sign-in and hub-picker screens have no sidebar, so they get their own strip
+   to grab. 34px matches the inset title bar's height. */
+.page::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 34px;
+  -webkit-app-region: drag;
+}
+
+/* A native window is not a document: rubber-band scrolling of the whole page
+   looks broken, and selecting the chrome by dragging even more so. */
+html,
+body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Content people actually need to copy stays selectable. */
+input,
+textarea,
+.table,
+.mono,
+.meta,
+.notice {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+#app {
+  height: 100vh;
+  overflow: auto;
+}

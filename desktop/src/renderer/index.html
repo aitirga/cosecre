@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cosecre</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      `connect-src` has to allow arbitrary http/https because the hub address is
+      chosen by whoever installs the app — there is no origin to pin it to.
+      Everything else is locked down: no remote scripts, no remote styles, no
+      inline script. Blob and data URLs are needed for document previews and
+      camera capture.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; font-src 'self' data:; connect-src 'self' http: https: data: blob:; form-action 'none'; frame-src 'none'; object-src 'none'"
+    />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

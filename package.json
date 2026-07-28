@@ -1,0 +1,19 @@
+{
+  "name": "cosecre",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cosecre — document intake, extraction and review",
+  "type": "module",
+  "workspaces": [
+    "frontend",
+    "desktop"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace @cosecre/web",
+    "dev:desktop": "npm run dev --workspace cosecre-desktop",
+    "build:web": "npm run build --workspace @cosecre/web",
+    "build:desktop": "npm run build --workspace cosecre-desktop",
+    "typecheck": "npm run typecheck --workspace @cosecre/web && npm run typecheck --workspace cosecre-desktop",
+    "icons": "node scripts/build-icons.mjs"
+  }
+}
