@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Concept A — "Desk".
+
+  The Cosecre C set on a writing desk. Reads as the secretary's workspace: a
+  thing that sits on a desk and deals with what lands on it.
+
+  512-unit grid. Nothing is thinner than 34 units (≈1.1px once macOS
+  downsamples 1024 to 16), which is what keeps the legs from vanishing.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="aTile" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="1" stop-color="#f7e9d4" />
+    </linearGradient>
+    <linearGradient id="aArc" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#f68d68" />
+      <stop offset="1" stop-color="#b83c14" />
+    </linearGradient>
+  </defs>
+
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#aTile)" />
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="none"
+        stroke="rgba(28,25,23,0.10)" stroke-width="2" />
+
+  <!-- The C: a 260° arc opening to the right, butt caps so the gap reads as a
+       deliberate opening. Its bottom edge lands 8 units above the desk, which
+       is close enough to read as resting on it. -->
+  <path d="M 317.7 281.5 A 96 96 0 1 1 317.7 134.5"
+        fill="none" stroke="url(#aArc)" stroke-width="60" />
+
+  <!-- The desk: a top that overhangs its legs, which is what makes it a table
+       rather than a box. -->
+  <g fill="#3a5a3c">
+    <rect x="84" y="342" width="344" height="34" rx="12" />
+    <rect x="124" y="376" width="36" height="56" rx="6" />
+    <rect x="352" y="376" width="36" height="56" rx="6" />
+  </g>
+</svg>

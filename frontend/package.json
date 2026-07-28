@@ -1,7 +1,7 @@
 {
   "name": "@cosecre/web",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cosecre web client — also the UI the desktop app renders",
   "type": "module",
   "scripts": {

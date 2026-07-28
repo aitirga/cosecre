@@ -1,31 +1,33 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Cosecre — application icon master.
+  Cosecre — application icon master ("Ledger").
 
-  A bold C whose opening is a document slot, with a sheet coming through it.
-  Deliberately the same silhouette as cosecre-print's icon: they are sibling
-  apps and should read as a family. What distinguishes them is the palette —
-  Cosecre is terracotta on warm paper, cosecre-print is blue on cool paper.
+  The Cosecre C standing on a data table: a solid header row and two lighter
+  body rows, split into two columns. It says what the product does rather than
+  what it is — documents in, rows out — and the C stays the thing you recognise.
 
   This is the single source of truth for the app icon. Edit here, then run
   `npm run icons` to regenerate desktop/build/icon.png, which electron-builder
   turns into the .icns and .ico at package time.
 
   Keep the 512-unit coordinate system, and keep in sync with:
-    frontend/public/favicon.svg          (the web favicon)
+    frontend/public/favicon.svg           (the web favicon)
     frontend/src/components/BrandMark.vue (the in-app mark)
 
+  The alternative that was considered — the C on a writing desk — is kept in
+  concepts/ as a record of the choice.
+
   Rules that keep it legible at 16px:
-    • No stroke thinner than 13 units. macOS downsamples 1024 to 16, and
-      anything finer disappears entirely.
-    • The sheet is outlined, not plain white. On a pale tile an unoutlined
-      sheet dissolves into the background. The outline is free: the sheet
-      passes through the C's gap without ever crossing the arc, so it only
-      ever sits on tile.
-    • Butt caps on the arc, not round. The flat ends are what make the gap
-      read as a document slot rather than an unfinished circle.
-    • The text lines are left-aligned and unequal. Centred equal-length lines
-      read as an equals sign.
+    • Nothing thinner than 24 units. macOS downsamples 1024 to 16, so a
+      24-unit gap is about 0.75px; the 14 that looked right at full size
+      closed up entirely and the table read as plain stripes.
+    • The rows step down in weight rather than in size. At 16px the block is
+      four pixels tall, and a top-to-bottom gradient of weight is the only
+      thing that still reads as "header, then data".
+    • Butt caps on the arc, not round. The flat ends are what make the gap in
+      the C read as deliberate rather than as an unfinished circle.
+    • The columns are unequal. Two equal ones read as a split rectangle, not
+      as a table.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="1024" height="1024">
   <defs>
@@ -44,16 +46,20 @@
         stroke="rgba(28,25,23,0.10)" stroke-width="2" />
 
   <!-- The C: a 260-degree arc, opening to the right. -->
-  <path d="M 329.7 350.9 A 132 132 0 1 1 329.7 161.1"
-        transform="translate(-8 0)"
-        fill="none" stroke="url(#arc)" stroke-width="58" />
+  <path d="M 311.3 263.9 A 86 86 0 1 1 311.3 132.1"
+        fill="none" stroke="url(#arc)" stroke-width="54" />
 
-  <!-- The sheet. Its ends clear the arc's stroke ends (y 123–185 and 327–389),
-       so the letter never looks broken. -->
-  <rect x="210" y="214" width="232" height="84" rx="19"
-        fill="#ffffff" stroke="#3a5a3c" stroke-width="13" />
-  <g fill="#3a5a3c" opacity="0.55">
-    <rect x="248" y="238" width="152" height="13" rx="6.5" />
-    <rect x="248" y="262" width="100" height="13" rx="6.5" />
+  <!-- The table it stands on. -->
+  <g fill="#3a5a3c">
+    <rect x="96" y="326" width="182" height="30" rx="8" />
+    <rect x="302" y="326" width="114" height="30" rx="8" />
+  </g>
+  <g fill="#3a5a3c" opacity="0.42">
+    <rect x="96" y="364" width="182" height="26" rx="7" />
+    <rect x="302" y="364" width="114" height="26" rx="7" />
+  </g>
+  <g fill="#3a5a3c" opacity="0.24">
+    <rect x="96" y="398" width="182" height="26" rx="7" />
+    <rect x="302" y="398" width="114" height="26" rx="7" />
   </g>
 </svg>

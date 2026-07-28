@@ -1,33 +1,38 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Cosecre mark — the C standing on a data table.
+  Concept B — "Ledger".
 
-  Keep in sync with src/components/BrandMark.vue and ../../brand/icon.svg,
-  which carries the rationale and the rules.
+  The Cosecre C set on a data table — a solid header row and two lighter body
+  rows, split into two columns. Says what the product actually does: documents
+  in, rows out.
+
+  512-unit grid. The column gap is 24 units (≈0.75px at 16) rather than the 14
+  that looked right at full size — anything finer closes up and the table reads
+  as plain stripes.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <linearGradient id="tile" x1="0" y1="0" x2="0.3" y2="1">
+    <linearGradient id="bTile" x1="0" y1="0" x2="0.3" y2="1">
       <stop offset="0" stop-color="#ffffff" />
       <stop offset="1" stop-color="#f7e9d4" />
     </linearGradient>
-    <linearGradient id="arc" x1="0" y1="0" x2="0.4" y2="1">
+    <linearGradient id="bArc" x1="0" y1="0" x2="0.4" y2="1">
       <stop offset="0" stop-color="#f68d68" />
       <stop offset="1" stop-color="#b83c14" />
     </linearGradient>
   </defs>
 
-  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#tile)" />
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bTile)" />
   <rect x="16" y="16" width="480" height="480" rx="112" fill="none"
         stroke="rgba(28,25,23,0.10)" stroke-width="2" />
 
-  <!-- The C: a 260-degree arc opening to the right, butt caps so the gap reads
-       as deliberate. -->
+  <!-- The C: same 260° arc as concept A, a little smaller to leave the table
+       room to be three rows rather than a stripe. -->
   <path d="M 311.3 263.9 A 86 86 0 1 1 311.3 132.1"
-        fill="none" stroke="url(#arc)" stroke-width="54" />
+        fill="none" stroke="url(#bArc)" stroke-width="54" />
 
-  <!-- The table. The rows step down in weight, which is the only thing that
-       still reads as "header, then data" once this is 16px tall. -->
+  <!-- The table. The header carries full weight and the body rows step down in
+       opacity, so at 16px the block still reads top-down as a table. -->
   <g fill="#3a5a3c">
     <rect x="96" y="326" width="182" height="30" rx="8" />
     <rect x="302" y="326" width="114" height="30" rx="8" />
