@@ -2,13 +2,16 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 
 import { api, ApiError } from '../api/client'
+import { DOCUMENT_CONFIG } from '../document-config'
 import { useExtractionTracker } from '../composables/useExtractionTracker'
+import type { DocumentType } from '../api/types'
+import AppIcon from './AppIcon.vue'
 import CameraCapture from './CameraCapture.vue'
 
-const emit = defineEmits<{
-  uploaded: []
-}>()
+const props = defineProps<{ documentType: DocumentType }>()
+const emit = defineEmits<{ uploaded: [] }>()
 
+/** An upload that has not reached the hub yet, so it has no job to poll. */
 type LocalUpload = {
   id: string
   name: string
@@ -24,7 +27,8 @@ const loading = ref(false)
 const isDragging = ref(false)
 const isMobile = ref(false)
 const queueRef = ref<HTMLElement | null>(null)
-const { trackedJobs, trackUpload, dismissTrackedJob } = useExtractionTracker()
+const config = computed(() => DOCUMENT_CONFIG[props.documentType])
+const { trackedJobs, trackUpload, dismissTrackedJob } = useExtractionTracker(props.documentType)
 
 const activityItems = computed(() => [
   ...localUploads.value.map((item) => ({
@@ -33,8 +37,8 @@ const activityItems = computed(() => [
     status: item.status,
     detail: item.detail,
     progress: item.progress,
-    stateClass: item.failed ? 'local-error' : 'local',
-    canDismiss: item.failed ?? false,
+    failed: Boolean(item.failed),
+    canDismiss: Boolean(item.failed),
   })),
   ...trackedJobs.value.map((job) => ({
     id: job.jobId,
@@ -42,8 +46,7 @@ const activityItems = computed(() => [
     status: job.stageLabel,
     detail: `${job.detail} Ref ${job.internalDocNumber}.`,
     progress: job.progress,
-    isTransient: false,
-    stateClass: job.status,
+    failed: job.status === 'error',
     canDismiss: ['needs_validation', 'validated', 'error'].includes(job.status),
   })),
 ])
@@ -63,49 +66,48 @@ async function processFiles(files: File[]) {
 
   loading.value = true
   error.value = ''
-  const createdUploads = files.map((file) => ({
+  const created = files.map((file) => ({
     id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     name: file.name,
     status: 'Uploading',
-    detail: 'Sending the file to the backend and creating the extraction job.',
+    detail: 'Sending the file to the hub.',
     progress: 12,
   }))
-  localUploads.value = [...createdUploads, ...localUploads.value]
+  localUploads.value = [...created, ...localUploads.value]
 
   const results = await Promise.allSettled(
     files.map(async (file, index) => {
-      const localItem = createdUploads[index]
+      const localItem = created[index]
       if (localItem) {
         updateLocalUpload(localItem.id, {
           status: 'Creating job',
-          detail: 'Upload complete. Waiting for the extraction worker to start.',
+          detail: 'Upload complete. Waiting for the extraction worker.',
           progress: 28,
         })
       }
-      const response = await api.uploadInvoice(file)
+      const response = await api.uploadDocument(props.documentType, file)
+      // Once the hub owns the job, the tracker takes over reporting it.
       trackUpload(file.name, response)
       localUploads.value = localUploads.value.filter((item) => item.id !== localItem?.id)
     }),
   )
 
-  const failures = results.filter((r) => r.status === 'rejected')
   results.forEach((result, index) => {
-    if (result.status === 'fulfilled') {
-      return
-    }
-    const localItem = createdUploads[index]
-    if (!localItem) {
-      return
-    }
+    if (result.status === 'fulfilled') return
+    const localItem = created[index]
+    if (!localItem) return
     updateLocalUpload(localItem.id, {
       failed: true,
       status: 'Upload failed',
       detail:
-        result.reason instanceof ApiError ? result.reason.message : 'The upload could not be queued.',
+        result.reason instanceof ApiError
+          ? result.reason.message
+          : 'The upload could not be queued.',
       progress: 100,
     })
   })
 
+  const failures = results.filter((result) => result.status === 'rejected')
   if (failures.length) {
     const first = failures[0]
     error.value =
@@ -123,8 +125,7 @@ async function processFiles(files: File[]) {
 
 function handleFileSelection(event: Event) {
   const input = event.target as HTMLInputElement
-  const files = input.files ? Array.from(input.files) : []
-  void processFiles(files)
+  void processFiles(input.files ? Array.from(input.files) : [])
   input.value = ''
 }
 
@@ -135,26 +136,25 @@ function handleCapture(file: File) {
   }
 }
 
-function handleDragOver(e: DragEvent) {
-  e.preventDefault()
+function handleDragOver(event: DragEvent) {
+  event.preventDefault()
   isDragging.value = true
 }
 
-function handleDragLeave(e: DragEvent) {
-  // Only clear if leaving the card itself (not a child)
-  if (!(e.currentTarget as Element).contains(e.relatedTarget as Node)) {
+function handleDragLeave(event: DragEvent) {
+  // Only clear when the pointer leaves the card itself, not one of its children.
+  if (!(event.currentTarget as Element).contains(event.relatedTarget as Node)) {
     isDragging.value = false
   }
 }
 
-function handleDrop(e: DragEvent) {
-  e.preventDefault()
+function handleDrop(event: DragEvent) {
+  event.preventDefault()
   isDragging.value = false
-  const files = e.dataTransfer?.files ? Array.from(e.dataTransfer.files) : []
-  void processFiles(files)
+  void processFiles(event.dataTransfer?.files ? Array.from(event.dataTransfer.files) : [])
 }
 
-function dismissActivityItem(itemId: string) {
+function dismiss(itemId: string) {
   if (localUploads.value.some((upload) => upload.id === itemId)) {
     localUploads.value = localUploads.value.filter((upload) => upload.id !== itemId)
     return
@@ -165,268 +165,182 @@ function dismissActivityItem(itemId: string) {
 
 <template>
   <section
-    class="panel upload-card"
+    class="card intake"
     :class="{ dragging: isDragging }"
     @dragover="handleDragOver"
     @dragleave="handleDragLeave"
     @drop="handleDrop"
   >
-    <div class="card-header">
+    <div class="card-head">
       <div>
-        <p class="eyebrow">Intake</p>
-        <h2>Upload invoices or capture them on the spot.</h2>
+        <h2 class="card-title">{{ config.uploadHeading }}</h2>
+        <p class="hint">{{ config.uploadLead }}</p>
       </div>
     </div>
 
-    <p class="subtle">
-      PDFs and images are processed in parallel. Each file becomes one invoice record and is pushed
-      to Google Sheets as soon as extraction succeeds.
-    </p>
+    <div class="card-body">
+      <div class="sources">
+        <label class="dropzone" :class="{ active: isDragging }">
+          <input
+            type="file"
+            accept="application/pdf,image/png,image/jpeg"
+            multiple
+            @change="handleFileSelection"
+          />
+          <AppIcon name="upload" :size="22" />
+          <span class="dropzone-title">Drop PDFs or images here</span>
+          <span class="btn btn-outline btn-sm">Choose files</span>
+        </label>
 
-    <div v-if="activityItems.length" ref="queueRef" class="queue">
-      <article
-        v-for="item in activityItems"
-        :key="item.id"
-        class="queue-item"
-        :data-state="item.stateClass"
-      >
-        <div class="queue-row">
-          <div class="queue-copy">
-            <strong>{{ item.name }}</strong>
-            <span>{{ item.status }}</span>
+        <CameraCapture :auto-start="isMobile" @captured="handleCapture" />
+      </div>
+
+      <div v-if="activityItems.length" ref="queueRef" class="queue">
+        <article
+          v-for="item in activityItems"
+          :key="item.id"
+          class="queue-item"
+          :class="{ failed: item.failed }"
+        >
+          <div class="queue-top">
+            <span class="queue-name truncate">{{ item.name }}</span>
+            <span class="queue-status">{{ item.status }}</span>
+            <button
+              v-if="item.canDismiss"
+              class="btn btn-ghost btn-icon btn-sm"
+              type="button"
+              title="Dismiss"
+              @click="dismiss(item.id)"
+            >
+              <AppIcon name="close" />
+              <span class="sr-only">Dismiss</span>
+            </button>
           </div>
-          <button
-            v-if="item.canDismiss"
-            class="dismiss-btn"
-            type="button"
-            @click="dismissActivityItem(item.id)"
-          >
-            Dismiss
-          </button>
-        </div>
-        <div class="progress-track" aria-hidden="true">
-          <span class="progress-value" :style="{ width: `${item.progress}%` }" />
-        </div>
-        <p class="queue-detail">{{ item.detail }}</p>
-      </article>
+          <div class="progress" role="presentation">
+            <span :style="{ width: `${item.progress}%` }" />
+          </div>
+          <p class="queue-detail">{{ item.detail }}</p>
+        </article>
+      </div>
+      <p v-else class="hint queue-empty">{{ config.queueLead }}</p>
+
+      <p v-if="loading" class="hint">Sending files to the hub…</p>
+      <p v-if="error" class="notice notice-error">
+        <AppIcon name="alert" :size="15" />
+        <span>{{ error }}</span>
+      </p>
     </div>
-
-    <div class="intake-grid">
-      <!-- Drop zone -->
-      <label class="drop-zone" :class="{ 'drop-zone--active': isDragging }">
-        <input
-          type="file"
-          accept="application/pdf,image/png,image/jpeg"
-          multiple
-          @change="handleFileSelection"
-        />
-        <div class="drop-inner">
-          <svg
-            class="drop-icon"
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="17 8 12 3 7 8" />
-            <line x1="12" y1="3" x2="12" y2="15" />
-          </svg>
-          <p class="drop-label">Drag &amp; drop PDFs or images here</p>
-          <span class="or-divider">or</span>
-          <span class="select-btn">Select Files</span>
-        </div>
-      </label>
-
-      <!-- Camera -->
-      <CameraCapture :auto-start="isMobile" @captured="handleCapture" />
-    </div>
-
-    <p v-if="!activityItems.length" class="subtle">
-      New uploads will appear here with step-by-step extraction progress and survive page reloads.
-    </p>
-
-    <p v-if="loading" class="subtle">Sending files to the backend and starting extraction jobs.</p>
-    <p v-if="error" class="error">{{ error }}</p>
   </section>
 </template>
 
 <style scoped>
-.upload-card {
+.intake {
+  transition: border-color 0.12s ease;
+}
+
+.intake.dragging {
+  border-color: var(--accent-500);
+}
+
+.card-body {
   display: grid;
-  gap: 20px;
-  padding: 24px;
-  transition: box-shadow 0.15s ease;
+  gap: 12px;
 }
 
-.upload-card.dragging {
-  box-shadow: 0 0 0 2px var(--accent), var(--shadow);
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-h2 {
-  font-size: 2rem;
-}
-
-.eyebrow,
-.subtle {
-  color: var(--muted);
-}
-
-/* Two-column grid: drop zone + camera */
-.intake-grid {
+.sources {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 10px;
   align-items: stretch;
 }
 
-/* Drop zone */
-.drop-zone {
-  display: flex;
-  flex-direction: column;
-  cursor: pointer;
-  border: 2px dashed rgba(49, 36, 29, 0.18);
-  border-radius: 20px;
-  transition:
-    border-color 0.15s,
-    background 0.15s;
-  background: rgba(31, 55, 39, 0.03);
-  min-height: 180px;
-}
-
-.drop-zone input {
-  display: none;
-}
-
-.drop-zone:hover,
-.drop-zone--active {
-  border-color: var(--accent);
-  background: rgba(243, 106, 62, 0.05);
-}
-
-.drop-inner {
-  flex: 1;
+.dropzone {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 28px 20px;
+  min-height: 132px;
+  padding: 18px;
   text-align: center;
+  cursor: pointer;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  color: var(--ink-400);
+  transition:
+    border-color 0.12s ease,
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 
-.drop-icon {
-  width: 36px;
-  height: 36px;
-  color: var(--muted);
-  transition: color 0.15s;
+.dropzone input {
+  display: none;
 }
 
-.drop-zone:hover .drop-icon,
-.drop-zone--active .drop-icon {
-  color: var(--accent);
+.dropzone:hover,
+.dropzone.active {
+  border-color: var(--accent-500);
+  background: var(--accent-100);
+  color: var(--accent-700);
 }
 
-.drop-label {
-  font-size: 0.95rem;
-  color: var(--muted);
-}
-
-.or-divider {
-  font-size: 0.8rem;
-  color: var(--muted);
-  opacity: 0.6;
-}
-
-.select-btn {
-  display: inline-block;
-  border: 0;
-  border-radius: 999px;
-  background: var(--accent);
-  color: white;
-  padding: 0.6rem 1.2rem;
-  font-weight: 700;
-  font-size: 0.9rem;
+.dropzone-title {
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--ink-700);
 }
 
 .queue {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .queue-item {
   display: grid;
-  gap: 10px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(49, 36, 29, 0.1);
-  background: rgba(255, 255, 255, 0.82);
+  gap: 6px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
 }
 
-.queue-item[data-state='local-error'],
-.queue-item[data-state='error'] {
-  border-color: rgba(188, 53, 53, 0.26);
-  background: rgba(188, 53, 53, 0.05);
+.queue-item.failed {
+  border-color: var(--danger-200);
+  background: var(--danger-100);
 }
 
-.queue-row {
+.queue-top {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
+  align-items: center;
+  gap: 10px;
 }
 
-.queue-copy {
-  display: grid;
-  gap: 4px;
+.queue-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
 }
 
-.queue-copy span,
+.queue-status {
+  font-size: var(--text-sm);
+  color: var(--ink-500);
+  white-space: nowrap;
+}
+
 .queue-detail {
-  color: var(--muted);
+  font-size: var(--text-sm);
+  color: var(--ink-400);
+  line-height: 1.45;
 }
 
-.progress-track {
-  width: 100%;
-  height: 10px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(49, 36, 29, 0.08);
+.queue-empty {
+  margin: 0;
 }
 
-.progress-value {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #f36a3e;
-  transition: width 0.3s ease;
-}
-
-.dismiss-btn {
-  border: 0;
-  border-radius: 999px;
-  padding: 0.45rem 0.8rem;
-  background: rgba(31, 55, 39, 0.08);
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.error {
-  color: var(--danger);
-}
-
-@media (max-width: 900px) {
-  .intake-grid {
+@media (max-width: 720px) {
+  .sources {
     grid-template-columns: 1fr;
   }
 }

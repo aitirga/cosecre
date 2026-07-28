@@ -1,7 +1,13 @@
 import { computed, ref } from 'vue'
 
 import { api } from '../api/client'
-import type { ExtractionStatus, InvoiceRecord, JobRead, UploadResponse } from '../api/types'
+import type {
+  DocumentType,
+  ExtractionStatus,
+  InvoiceRecord,
+  JobRead,
+  UploadResponse,
+} from '../api/types'
 
 const STORAGE_KEY = 'cosecre.extractionTracker'
 const POLL_INTERVAL_MS = 2000
@@ -9,6 +15,7 @@ const STALE_COMPLETED_MS = 1000 * 60 * 60 * 12
 
 export interface TrackedExtractionJob {
   jobId: string
+  documentType: DocumentType
   internalDocNumber: string
   fileName: string
   status: ExtractionStatus
@@ -40,7 +47,7 @@ function getStatusMeta(status: ExtractionStatus, errorMessage?: string | null) {
       return {
         progress: 62,
         stageLabel: 'Running AI extraction',
-        detail: 'Reading the invoice and generating structured fields.',
+        detail: 'Reading the document and generating structured fields.',
       }
     case 'written_to_sheet':
       return {
@@ -52,13 +59,13 @@ function getStatusMeta(status: ExtractionStatus, errorMessage?: string | null) {
       return {
         progress: 100,
         stageLabel: 'Ready for review',
-        detail: 'Extraction finished. Check the fields and validate the invoice.',
+        detail: 'Extraction finished. Check the fields and validate the document.',
       }
     case 'validated':
       return {
         progress: 100,
         stageLabel: 'Validated',
-        detail: 'The invoice is already confirmed in the app and sheet.',
+        detail: 'The document is already confirmed in the app and sheet.',
       }
     case 'error':
       return {
@@ -81,7 +88,13 @@ function loadState(): TrackedExtractionJob[] {
 
   try {
     const parsed = JSON.parse(raw) as TrackedExtractionJob[]
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+    return parsed.map((job) => ({
+      ...job,
+      documentType: job.documentType ?? 'invoice',
+    }))
   } catch {
     window.localStorage.removeItem(STORAGE_KEY)
     return []
@@ -131,6 +144,7 @@ function syncTrackedJob(job: JobRead, fileName?: string) {
   const statusMeta = getStatusMeta(job.status, job.error_message)
   upsertTrackedJob({
     jobId: job.id,
+    documentType: job.document_type,
     internalDocNumber: job.internal_doc_number,
     fileName: fileName || existing?.fileName || job.internal_doc_number,
     status: job.status,
@@ -156,7 +170,9 @@ async function pollActiveJobs() {
 
   polling = true
   try {
-    const results = await Promise.allSettled(activeJobs.map((job) => api.getJob(job.jobId)))
+    const results = await Promise.allSettled(
+      activeJobs.map((job) => api.getJob(job.documentType, job.jobId)),
+    )
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') {
         syncTrackedJob(result.value, activeJobs[index]?.fileName)
@@ -189,6 +205,7 @@ function trackUpload(fileName: string, response: UploadResponse) {
   const statusMeta = getStatusMeta(response.status)
   upsertTrackedJob({
     jobId: response.job_id,
+    documentType: response.document_type,
     internalDocNumber: response.internal_doc_number,
     fileName,
     status: response.status,
@@ -202,21 +219,25 @@ function trackUpload(fileName: string, response: UploadResponse) {
   ensurePolling()
 }
 
-function syncFromInvoices(invoices: InvoiceRecord[]) {
-  invoices.forEach((invoice) => {
-    const existing = trackedJobs.value.find((job) => job.internalDocNumber === invoice.num_doc_intern)
+function syncFromDocuments(documents: InvoiceRecord[]) {
+  documents.forEach((document) => {
+    const existing = trackedJobs.value.find(
+      (job) =>
+        job.documentType === document.document_type &&
+        job.internalDocNumber === document.num_doc_intern,
+    )
     if (!existing) {
       return
     }
-    const statusMeta = getStatusMeta(invoice.extraction_status, invoice.error_message)
+    const statusMeta = getStatusMeta(document.extraction_status, document.error_message)
     upsertTrackedJob({
       ...existing,
-      status: invoice.extraction_status,
+      status: document.extraction_status,
       progress: statusMeta.progress,
       stageLabel: statusMeta.stageLabel,
       detail: statusMeta.detail,
-      errorMessage: invoice.error_message,
-      updatedAt: invoice.updated_at || existing.updatedAt,
+      errorMessage: document.error_message,
+      updatedAt: document.updated_at || existing.updatedAt,
     })
   })
 
@@ -235,7 +256,7 @@ function dismissTrackedJob(jobId: string) {
   }
 }
 
-export function useExtractionTracker() {
+export function useExtractionTracker(documentType?: DocumentType) {
   pruneCompletedJobs()
   persistState()
   if (trackedJobs.value.some((job) => !isTerminalStatus(job.status))) {
@@ -243,15 +264,27 @@ export function useExtractionTracker() {
   }
 
   return {
-    trackedJobs: computed(() => sortJobs(trackedJobs.value)),
+    trackedJobs: computed(() =>
+      sortJobs(
+        trackedJobs.value.filter((job) => !documentType || job.documentType === documentType),
+      ),
+    ),
     activeTrackedJobs: computed(() =>
-      trackedJobs.value.filter((job) => !isTerminalStatus(job.status)),
+      trackedJobs.value.filter(
+        (job) => (!documentType || job.documentType === documentType) && !isTerminalStatus(job.status),
+      ),
     ),
     getTrackedJob(internalDocNumber: string) {
-      return trackedJobs.value.find((job) => job.internalDocNumber === internalDocNumber) ?? null
+      return (
+        trackedJobs.value.find(
+          (job) =>
+            (!documentType || job.documentType === documentType) &&
+            job.internalDocNumber === internalDocNumber,
+        ) ?? null
+      )
     },
     trackUpload,
-    syncFromInvoices,
+    syncFromDocuments,
     dismissTrackedJob,
   }
 }

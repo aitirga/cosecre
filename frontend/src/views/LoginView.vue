@@ -1,182 +1,251 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, reactive, ref, watchEffect } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
 
+import AppIcon from '../components/AppIcon.vue'
+import BrandMark from '../components/BrandMark.vue'
 import { useAuth } from '../composables/useAuth'
+import { usePlatform } from '../platform'
 
 const router = useRouter()
 const auth = useAuth()
+const platform = usePlatform()
 
-const mode = ref<'login' | 'register'>('register')
-const form = reactive({
-  email: '',
-  password: '',
+const mode = ref<'login' | 'register'>('login')
+const form = reactive({ email: '', password: '' })
+
+/**
+ * The hub only accepts registration while it has no accounts, so the very
+ * first visit lands on "create the first account" and every later one on
+ * sign-in. Nobody has to know which case they are in.
+ */
+watchEffect(() => {
+  if (auth.canRegister.value && !auth.state.hub?.has_users) {
+    mode.value = 'register'
+  }
 })
 
-const title = computed(() =>
-  mode.value === 'register' ? 'Create the first workspace account.' : 'Sign back into Cosecre.',
-)
+const isFirstAccount = computed(() => auth.state.hub?.has_users === false)
+
+const heading = computed(() => {
+  if (mode.value === 'register') {
+    return isFirstAccount.value ? 'Create the first account' : 'Create an account'
+  }
+  return 'Sign in'
+})
+
+const lead = computed(() => {
+  if (auth.state.hubError) return auth.state.hubError
+  if (mode.value === 'register' && isFirstAccount.value) {
+    return 'This hub has no accounts yet. The first one you create becomes the administrator and can add everyone else.'
+  }
+  if (mode.value === 'register') return 'Register a new account on this hub.'
+  return 'Use the account an administrator created for you.'
+})
+
+const submitting = computed(() => auth.state.loading)
 
 async function submit() {
-  await auth.authenticate(mode.value, form)
-  router.push({ name: 'inbox' })
+  try {
+    await auth.authenticate(mode.value, { email: form.email, password: form.password })
+    await router.replace({ name: 'invoices' })
+  } catch {
+    // The message is already on auth.state.error.
+  }
 }
 </script>
 
 <template>
-  <main class="login-page">
-    <section class="login-card">
-      <div class="copy">
-        <p class="eyebrow">Invoice extraction MVP</p>
-        <div class="title-wrap">
-          <h1 class="title-sizer" aria-hidden="true">Create the first workspace account.</h1>
-          <h1 class="title-actual">{{ title }}</h1>
+  <main class="page">
+    <section class="panel">
+      <header class="head">
+        <BrandMark :size="34" />
+        <div>
+          <p class="wordmark">Cosecre</p>
+          <p class="tagline">Document intake, extraction and review</p>
         </div>
-        <p>
-          The first registered user becomes the admin and configures the shared Google Sheet. After
-          that, the same account can sign in from multiple devices.
-        </p>
+      </header>
+
+      <div class="card form-card">
+        <div class="card-body">
+          <h1 class="title">{{ heading }}</h1>
+          <p class="lead">{{ lead }}</p>
+
+          <div v-if="auth.canRegister.value && !isFirstAccount" class="segmented" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="mode === 'login'"
+              :class="{ active: mode === 'login' }"
+              @click="mode = 'login'"
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="mode === 'register'"
+              :class="{ active: mode === 'register' }"
+              @click="mode = 'register'"
+            >
+              Register
+            </button>
+          </div>
+
+          <form class="form" @submit.prevent="submit">
+            <label class="field">
+              <span class="label">Email</span>
+              <input
+                v-model="form.email"
+                class="input"
+                type="email"
+                autocomplete="username"
+                placeholder="you@company.com"
+                required
+              />
+            </label>
+
+            <label class="field">
+              <span class="label">Password</span>
+              <input
+                v-model="form.password"
+                class="input"
+                type="password"
+                :autocomplete="mode === 'register' ? 'new-password' : 'current-password'"
+                :minlength="mode === 'register' ? 8 : undefined"
+                required
+              />
+              <span v-if="mode === 'register'" class="hint">At least 8 characters.</span>
+            </label>
+
+            <button class="btn btn-primary btn-lg btn-block" type="submit" :disabled="submitting">
+              {{
+                submitting
+                  ? 'Working…'
+                  : mode === 'register'
+                    ? 'Create account'
+                    : 'Sign in'
+              }}
+            </button>
+
+            <p v-if="auth.state.error" class="notice notice-error">
+              <AppIcon name="alert" :size="15" />
+              <span>{{ auth.state.error }}</span>
+            </p>
+          </form>
+        </div>
+
+        <footer class="card-foot">
+          <span class="hub-line">
+            <AppIcon name="server" :size="13" />
+            <span class="truncate">{{ auth.state.hub?.name ?? 'Cosecre Hub' }}</span>
+            <span v-if="auth.state.hub" class="muted">v{{ auth.state.hub.version }}</span>
+          </span>
+          <RouterLink v-if="platform.changeHub" class="btn btn-ghost btn-sm" :to="{ name: 'connect' }">
+            Change hub
+          </RouterLink>
+        </footer>
       </div>
-
-      <form class="form-card" @submit.prevent="submit">
-        <div class="mode-switch">
-          <button type="button" :class="{ active: mode === 'register' }" @click="mode = 'register'">
-            Register
-          </button>
-          <button type="button" :class="{ active: mode === 'login' }" @click="mode = 'login'">
-            Login
-          </button>
-        </div>
-
-        <label>
-          <span>Email</span>
-          <input v-model="form.email" type="email" placeholder="you@company.com" required />
-        </label>
-
-        <label>
-          <span>Password</span>
-          <input v-model="form.password" type="password" minlength="8" required />
-        </label>
-
-        <button class="submit" type="submit" :disabled="auth.state.loading">
-          {{ auth.state.loading ? 'Working...' : mode === 'register' ? 'Create Account' : 'Login' }}
-        </button>
-
-        <p v-if="auth.state.error" class="error">{{ auth.state.error }}</p>
-      </form>
     </section>
   </main>
 </template>
 
 <style scoped>
-.login-page {
+.page {
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 24px;
 }
 
-.login-card {
-  width: min(1100px, 100%);
-  display: grid;
-  grid-template-columns: 1.3fr 1fr;
-  gap: 18px;
-}
-
-.copy,
-.form-card {
-  padding: 28px;
-  border-radius: 28px;
-  box-shadow: var(--shadow);
-}
-
-.copy {
-  background:
-    radial-gradient(circle at top right, rgba(255, 205, 101, 0.34), transparent 25%),
-    linear-gradient(160deg, #1f3727 0%, #38563c 100%);
-  color: #fffaf2;
-  display: grid;
-  align-content: space-between;
-  gap: 16px;
-}
-
-.title-wrap {
-  position: relative;
-}
-
-.title-sizer {
-  visibility: hidden;
-  font-size: clamp(3rem, 5vw, 5.5rem);
-  max-width: 8ch;
-}
-
-.title-actual {
-  position: absolute;
-  inset: 0;
-  font-size: clamp(3rem, 5vw, 5.5rem);
-  max-width: 8ch;
-}
-
-.form-card {
-  background: rgba(255, 250, 242, 0.92);
+.panel {
+  width: min(400px, 100%);
   display: grid;
   gap: 18px;
 }
 
-.mode-switch {
-  display: inline-grid;
-  grid-template-columns: repeat(2, 1fr);
-  padding: 0.3rem;
-  border-radius: 999px;
-  background: rgba(31, 55, 39, 0.08);
+.head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
 }
 
-.mode-switch button {
+.wordmark {
+  font-size: var(--text-xl);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.tagline {
+  font-size: var(--text-sm);
+  color: var(--ink-400);
+}
+
+.form-card {
+  box-shadow: var(--shadow-sm);
+}
+
+.title {
+  font-size: var(--text-lg);
+}
+
+.lead {
+  margin-top: 5px;
+  font-size: var(--text-base);
+  line-height: 1.55;
+  color: var(--ink-500);
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  margin-top: 16px;
+  padding: 2px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.segmented button {
+  padding: 5px 10px;
   border: 0;
-  border-radius: 999px;
-  padding: 0.8rem 1rem;
+  border-radius: var(--r-sm);
   background: transparent;
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--ink-500);
 }
 
-.mode-switch .active {
-  background: white;
-  box-shadow: 0 8px 18px rgba(31, 55, 39, 0.08);
+.segmented button.active {
+  background: var(--surface-0);
+  color: var(--ink-900);
+  box-shadow: var(--shadow-xs);
 }
 
-label {
+.form {
   display: grid;
-  gap: 8px;
+  gap: 14px;
+  margin-top: 18px;
 }
 
-input {
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: 0.95rem 1rem;
-  background: white;
+.card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-1);
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
 }
 
-.submit {
-  border: 0;
-  border-radius: 999px;
-  background: var(--accent);
-  color: white;
-  padding: 1rem 1.2rem;
-  font-weight: 700;
-}
-
-.eyebrow {
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  font-size: 0.84rem;
-}
-
-.error {
-  color: var(--danger);
-}
-
-@media (max-width: 880px) {
-  .login-card {
-    grid-template-columns: 1fr;
-  }
+.hub-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--ink-500);
 }
 </style>

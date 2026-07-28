@@ -1,11 +1,13 @@
 {
-  "name": "frontend",
+  "name": "@cosecre/web",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Cosecre web client — also the UI the desktop app renders",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "typecheck": "vue-tsc -b --force",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -1,97 +1,129 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { useRoute } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 
 import { api, ApiError } from '../api/client'
+import { DOCUMENT_CONFIG } from '../document-config'
 import { useExtractionTracker } from '../composables/useExtractionTracker'
+import type { DocumentType } from '../api/types'
+import AppIcon from '../components/AppIcon.vue'
 import StatusPill from '../components/StatusPill.vue'
 
 const route = useRoute()
 const queryClient = useQueryClient()
 const internalDocNumber = route.params.internalDocNumber as string
-const { getTrackedJob } = useExtractionTracker()
+const documentType = computed(() => route.meta.documentType as DocumentType)
+const config = computed(() => DOCUMENT_CONFIG[documentType.value])
+const { getTrackedJob } = useExtractionTracker(documentType.value)
 
-const invoiceQuery = useQuery({
-  queryKey: ['invoice', internalDocNumber],
-  queryFn: () => api.getInvoice(internalDocNumber),
+const documentQuery = useQuery({
+  queryKey: computed(() => ['document', documentType.value, internalDocNumber]),
+  queryFn: () => api.getDocument(documentType.value, internalDocNumber),
   refetchInterval: 10000,
 })
 
-const form = reactive({
+const record = computed(() => documentQuery.data.value)
+
+/** The nine sheet columns, in the order the spreadsheet uses. */
+const FIELDS = [
+  { key: 'num_factura', label: 'Núm. de la factura', type: 'text' },
+  { key: 'data_factura', label: 'Data factura', type: 'text' },
+  { key: 'proveidor', label: 'Proveïdor/a', type: 'text' },
+  { key: 'cif_proveidor', label: 'CIF Proveïdor', type: 'text' },
+  { key: 'import', label: 'Import', type: 'text' },
+  { key: 'cif_proveit', label: 'CIF Proveït', type: 'text' },
+  { key: 'pressupost_afectat', label: 'Pressupost afectat', type: 'text' },
+  { key: 'adreca_proveidor', label: 'Adreça Proveïdor', type: 'area' },
+  { key: 'descripcio', label: 'Descripció', type: 'area' },
+] as const
+
+type FieldKey = (typeof FIELDS)[number]['key']
+
+const form = reactive<Record<FieldKey, string>>({
   num_factura: '',
   data_factura: '',
   proveidor: '',
   cif_proveidor: '',
   adreca_proveidor: '',
-  import: '' as string,
+  import: '',
   cif_proveit: '',
   descripcio: '',
   pressupost_afectat: '',
 })
 
+/** True once the user has typed, so a background refetch cannot overwrite them. */
+const dirty = ref(false)
+
 watch(
-  () => invoiceQuery.data.value,
-  (invoice) => {
-    if (!invoice) {
-      return
-    }
-    form.num_factura = invoice.num_factura
-    form.data_factura = invoice.data_factura
-    form.proveidor = invoice.proveidor
-    form.cif_proveidor = invoice.cif_proveidor
-    form.adreca_proveidor = invoice.adreca_proveidor
-    form.import = invoice.import != null ? String(invoice.import) : ''
-    form.cif_proveit = invoice.cif_proveit
-    form.descripcio = invoice.descripcio
-    form.pressupost_afectat = invoice.pressupost_afectat
+  record,
+  (value) => {
+    if (!value || dirty.value) return
+    form.num_factura = value.num_factura
+    form.data_factura = value.data_factura
+    form.proveidor = value.proveidor
+    form.cif_proveidor = value.cif_proveidor
+    form.adreca_proveidor = value.adreca_proveidor
+    form.import = value.import != null ? String(value.import) : ''
+    form.cif_proveit = value.cif_proveit
+    form.descripcio = value.descripcio
+    form.pressupost_afectat = value.pressupost_afectat
   },
   { immediate: true },
 )
 
 const saveError = ref('')
 const validateError = ref('')
+const saved = ref(false)
+
+function invalidate() {
+  void queryClient.invalidateQueries({
+    queryKey: ['document', documentType.value, internalDocNumber],
+  })
+  void queryClient.invalidateQueries({ queryKey: ['documents', documentType.value] })
+}
 
 const saveMutation = useMutation({
-  mutationFn: () => api.updateInvoice(internalDocNumber, { ...form }),
+  mutationFn: () => api.updateDocument(documentType.value, internalDocNumber, { ...form }),
   onSuccess: () => {
     saveError.value = ''
-    void queryClient.invalidateQueries({ queryKey: ['invoice', internalDocNumber] })
-    void queryClient.invalidateQueries({ queryKey: ['invoices'] })
+    dirty.value = false
+    saved.value = true
+    setTimeout(() => (saved.value = false), 2500)
+    invalidate()
   },
-  onError: (err) => {
-    saveError.value = err instanceof ApiError ? err.message : 'Save failed. Please try again.'
+  onError: (error) => {
+    saveError.value = error instanceof ApiError ? error.message : 'Save failed. Please try again.'
   },
 })
 
 const validateMutation = useMutation({
-  mutationFn: () => api.validateInvoice(internalDocNumber),
+  mutationFn: () => api.validateDocument(documentType.value, internalDocNumber),
   onSuccess: () => {
     validateError.value = ''
-    void queryClient.invalidateQueries({ queryKey: ['invoice', internalDocNumber] })
-    void queryClient.invalidateQueries({ queryKey: ['invoices'] })
+    invalidate()
   },
-  onError: (err) => {
-    validateError.value = err instanceof ApiError ? err.message : 'Validation failed. Please try again.'
+  onError: (error) => {
+    validateError.value =
+      error instanceof ApiError ? error.message : 'Validation failed. Please try again.'
   },
 })
 
 const trackedJob = computed(() => getTrackedJob(internalDocNumber))
 
-// Photo preview
+// ── Original document preview ────────────────────────────────────────────────
 const photoSrc = ref<string | null>(null)
 const photoLoading = ref(false)
 
 watch(
-  () => invoiceQuery.data.value,
-  async (invoice) => {
-    if (!invoice?.file_url) return
-    if (photoSrc.value) return  // already loaded
+  record,
+  async (value) => {
+    if (!value?.file_url || photoSrc.value) return
     photoLoading.value = true
     try {
-      photoSrc.value = await api.getInvoiceFileBlob(internalDocNumber)
+      photoSrc.value = await api.getDocumentFileBlob(documentType.value, internalDocNumber)
     } catch {
-      // preview is best-effort
+      // The preview is best-effort; the fields still work without it.
     } finally {
       photoLoading.value = false
     }
@@ -105,252 +137,275 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="detail-layout">
-    <article class="panel detail-panel">
-      <div v-if="invoiceQuery.isLoading.value" class="empty">Loading invoice...</div>
-      <div v-else-if="invoiceQuery.isError.value" class="empty error">
-        {{ (invoiceQuery.error.value as Error).message }}
-      </div>
-      <template v-else-if="invoiceQuery.data.value">
-        <div class="header">
-          <div>
-            <p class="eyebrow">Invoice detail</p>
-            <h2>{{ invoiceQuery.data.value.num_factura || invoiceQuery.data.value.num_doc_intern }}</h2>
-            <p class="subtle">Internal reference {{ invoiceQuery.data.value.num_doc_intern }}</p>
-          </div>
-          <StatusPill :status="invoiceQuery.data.value.extraction_status" />
-        </div>
+  <div class="detail">
+    <nav class="crumbs">
+      <RouterLink :to="{ name: config.routeName }">{{ config.listTitle }}</RouterLink>
+      <AppIcon name="chevron" :size="13" />
+      <span class="mono muted">{{ internalDocNumber }}</span>
+    </nav>
 
-        <section v-if="trackedJob" class="progress-card">
-          <div class="progress-card__head">
-            <div>
-              <p class="eyebrow">Extraction progress</p>
-              <strong>{{ trackedJob.stageLabel }}</strong>
+    <p v-if="documentQuery.isLoading.value" class="empty">Loading {{ config.singular }}…</p>
+    <p v-else-if="documentQuery.isError.value" class="notice notice-error">
+      <AppIcon name="alert" :size="15" />
+      <span>{{ (documentQuery.error.value as Error).message }}</span>
+    </p>
+
+    <template v-else-if="record">
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">{{ record.num_factura || 'Not extracted yet' }}</h1>
+          <p class="page-lead">
+            {{ record.proveidor || 'Supplier unknown' }}
+            <span v-if="record.source_file_name"> · {{ record.source_file_name }}</span>
+          </p>
+        </div>
+        <StatusPill :status="record.extraction_status" />
+      </header>
+
+      <p v-if="record.error_message" class="notice notice-error">
+        <AppIcon name="alert" :size="15" />
+        <span>{{ record.error_message }}</span>
+      </p>
+
+      <section v-if="trackedJob && trackedJob.progress < 100" class="card progress-card">
+        <div class="progress-top">
+          <strong>{{ trackedJob.stageLabel }}</strong>
+          <span class="muted mono">{{ trackedJob.progress }}%</span>
+        </div>
+        <div class="progress"><span :style="{ width: `${trackedJob.progress}%` }" /></div>
+        <p class="hint">{{ trackedJob.detail }}</p>
+      </section>
+
+      <div class="columns">
+        <section class="card">
+          <div class="card-head">
+            <h2 class="card-title">Extracted fields</h2>
+            <span v-if="saved" class="badge badge-olive">
+              <AppIcon name="check" :size="12" />
+              Saved
+            </span>
+          </div>
+
+          <form class="card-body form" @submit.prevent="saveMutation.mutate()">
+            <label v-for="field in FIELDS" :key="field.key" class="field" :class="field.type">
+              <span class="label">{{ field.label }}</span>
+              <textarea
+                v-if="field.type === 'area'"
+                v-model="form[field.key]"
+                class="textarea"
+                rows="3"
+                @input="dirty = true"
+              />
+              <input
+                v-else
+                v-model="form[field.key]"
+                class="input"
+                type="text"
+                @input="dirty = true"
+              />
+            </label>
+
+            <div class="form-actions">
+              <button
+                class="btn btn-outline"
+                type="submit"
+                :disabled="saveMutation.isPending.value || !dirty"
+              >
+                {{ saveMutation.isPending.value ? 'Saving…' : 'Save changes' }}
+              </button>
+              <button
+                class="btn btn-primary"
+                type="button"
+                :disabled="validateMutation.isPending.value || record.validat"
+                @click="validateMutation.mutate()"
+              >
+                <AppIcon name="check" />
+                {{
+                  record.validat
+                    ? 'Validated'
+                    : validateMutation.isPending.value
+                      ? 'Validating…'
+                      : 'Validate'
+                }}
+              </button>
             </div>
-            <span>{{ trackedJob.progress }}%</span>
-          </div>
-          <div class="progress-track" aria-hidden="true">
-            <span class="progress-value" :style="{ width: `${trackedJob.progress}%` }" />
-          </div>
-          <p class="subtle">{{ trackedJob.detail }}</p>
+
+            <p v-if="saveError" class="notice notice-error form-full">
+              <AppIcon name="alert" :size="15" />
+              <span>{{ saveError }}</span>
+            </p>
+            <p v-if="validateError" class="notice notice-error form-full">
+              <AppIcon name="alert" :size="15" />
+              <span>{{ validateError }}</span>
+            </p>
+          </form>
         </section>
 
-        <div v-if="photoLoading" class="photo-preview photo-preview--loading">
-          Loading photo…
-        </div>
-        <div v-else-if="photoSrc" class="photo-preview">
-          <img :src="photoSrc" alt="Invoice photo" />
-        </div>
+        <aside class="side">
+          <section class="card">
+            <div class="card-head"><h2 class="card-title">Original</h2></div>
+            <div class="card-body preview">
+              <p v-if="photoLoading" class="hint">Loading…</p>
+              <img v-else-if="photoSrc" :src="photoSrc" :alt="`${config.singular} original`" />
+              <p v-else class="hint">
+                No local copy. PDFs and documents synced before this release open from Drive.
+              </p>
+              <a
+                v-if="record.file_link && record.file_link.startsWith('http')"
+                class="btn btn-outline btn-sm btn-block"
+                :href="record.file_link"
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                <AppIcon name="external" />
+                Open in Drive
+              </a>
+            </div>
+          </section>
 
-        <form class="detail-form" @submit.prevent="saveMutation.mutate()">
-          <label>
-            <span>Núm. de la factura</span>
-            <input v-model="form.num_factura" type="text" />
-          </label>
-          <label>
-            <span>Data factura</span>
-            <input v-model="form.data_factura" type="text" />
-          </label>
-          <label>
-            <span>Proveïdor/a</span>
-            <input v-model="form.proveidor" type="text" />
-          </label>
-          <label>
-            <span>CIF Proveïdor</span>
-            <input v-model="form.cif_proveidor" type="text" />
-          </label>
-          <label>
-            <span>Adreça Proveïdor</span>
-            <textarea v-model="form.adreca_proveidor" rows="3" />
-          </label>
-          <label>
-            <span>Import</span>
-            <input v-model="form.import" type="text" />
-          </label>
-          <label>
-            <span>CIF Proveït</span>
-            <input v-model="form.cif_proveit" type="text" />
-          </label>
-          <label>
-            <span>Descripció</span>
-            <textarea v-model="form.descripcio" rows="4" />
-          </label>
-          <label>
-            <span>Pressupost afectat</span>
-            <input v-model="form.pressupost_afectat" type="text" />
-          </label>
-
-          <div class="actions">
-            <button class="ghost" type="submit" :disabled="saveMutation.isPending.value">
-              {{ saveMutation.isPending.value ? 'Saving...' : 'Save changes' }}
-            </button>
-            <button
-              class="primary"
-              type="button"
-              :disabled="validateMutation.isPending.value || invoiceQuery.data.value.validat"
-              @click="validateMutation.mutate()"
-            >
-              {{
-                invoiceQuery.data.value.validat
-                  ? 'Already validated'
-                  : validateMutation.isPending.value
-                    ? 'Validating...'
-                    : 'Validate in app and sheet'
-              }}
-            </button>
-          </div>
-          <p v-if="saveError" class="action-error">{{ saveError }}</p>
-          <p v-if="validateError" class="action-error">{{ validateError }}</p>
-        </form>
-      </template>
-    </article>
-  </section>
+          <section class="card">
+            <div class="card-head"><h2 class="card-title">Record</h2></div>
+            <dl class="card-body meta">
+              <dt>Reference</dt>
+              <dd class="mono">{{ record.num_doc_intern }}</dd>
+              <dt>Sheet row</dt>
+              <dd class="mono">{{ record.sheet_row_ref ?? '—' }}</dd>
+              <dt>Type</dt>
+              <dd>{{ config.singular }}</dd>
+              <dt>File</dt>
+              <dd class="truncate">{{ record.source_file_name ?? '—' }}</dd>
+            </dl>
+          </section>
+        </aside>
+      </div>
+    </template>
+  </div>
 </template>
 
 <style scoped>
-.detail-panel {
-  padding: 24px;
+.detail {
+  display: grid;
+  gap: 16px;
+  max-width: 1180px;
 }
 
-.header {
+.crumbs {
   display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--ink-400);
+}
+
+.crumbs a:hover {
+  color: var(--accent-700);
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  align-items: flex-start;
-  margin-bottom: 22px;
 }
 
-h2 {
-  font-size: 2.4rem;
+.page-title {
+  font-size: var(--text-xl);
 }
 
-.detail-form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+.page-lead {
+  margin-top: 2px;
+  font-size: var(--text-base);
+  color: var(--ink-400);
 }
 
 .progress-card {
   display: grid;
-  gap: 10px;
-  padding: 16px 18px;
-  margin-bottom: 18px;
-  border-radius: 18px;
-  background: rgba(31, 55, 39, 0.05);
+  gap: 7px;
+  padding: 12px 14px;
 }
 
-.progress-card__head {
+.progress-top {
   display: flex;
-  justify-content: space-between;
-  gap: 16px;
   align-items: baseline;
-}
-
-.progress-track {
-  width: 100%;
-  height: 10px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(49, 36, 29, 0.08);
-}
-
-.progress-value {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #f36a3e;
-}
-
-label {
-  display: grid;
-  gap: 8px;
-}
-
-textarea,
-input {
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: 0.95rem 1rem;
-  background: white;
-}
-
-.actions {
-  grid-column: 1 / -1;
-  display: flex;
+  justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
-  margin-top: 12px;
+  font-size: var(--text-base);
 }
 
-.primary,
-.ghost {
-  border: 0;
-  border-radius: 999px;
-  padding: 0.9rem 1.1rem;
+.columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 16px;
+  align-items: start;
 }
 
-.primary {
-  background: var(--accent);
-  color: white;
+.side {
+  display: grid;
+  gap: 16px;
 }
 
-.ghost {
-  background: rgba(31, 55, 39, 0.08);
+.form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
-.subtle,
-.eyebrow {
-  color: var(--muted);
-}
-
-.empty {
-  color: var(--muted);
-}
-
-.error {
-  color: var(--danger);
-}
-
-.action-error {
+.form .area {
   grid-column: 1 / -1;
-  font-size: 0.88rem;
-  color: var(--danger);
-  padding: 10px 14px;
-  background: rgba(188, 53, 53, 0.08);
-  border-radius: 12px;
 }
 
-.photo-preview {
-  border-radius: 18px;
-  overflow: hidden;
-  background: rgba(49, 36, 29, 0.05);
-  margin-bottom: 18px;
-  max-height: 420px;
+.form-actions,
+.form-full {
+  grid-column: 1 / -1;
+}
+
+.form-actions {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
 }
 
-.photo-preview img {
+.preview {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+
+.preview img {
   display: block;
   max-width: 100%;
-  max-height: 420px;
+  max-height: 340px;
   object-fit: contain;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
 }
 
-.photo-preview--loading {
-  padding: 2rem;
-  color: var(--muted);
-  font-size: 0.9rem;
+.meta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0;
+  font-size: var(--text-base);
 }
 
-@media (max-width: 800px) {
-  .detail-form {
-    grid-template-columns: 1fr;
+.meta dt {
+  color: var(--ink-400);
+}
+
+.meta dd {
+  margin: 0;
+  min-width: 0;
+}
+
+@media (max-width: 1020px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr);
   }
+}
 
-  .header {
-    flex-direction: column;
+@media (max-width: 640px) {
+  .form {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

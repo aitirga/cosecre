@@ -1,17 +1,33 @@
+/**
+ * The Cosecre Hub client.
+ *
+ * Shared verbatim by the web app and the desktop app, which is why nothing in
+ * here assumes a browser origin or `localStorage`: both the base URL and the
+ * token store are injected through `configureApi`. In the browser the defaults
+ * are right and nobody calls it; in Electron the main process supplies both.
+ */
 import type {
   AuthTokens,
+  DocumentType,
+  HubMeta,
   InvoiceRecord,
   InvoiceUpdate,
   JobRead,
+  LlmProvider,
   RefreshResult,
+  SessionInfo,
   UploadResponse,
   User,
+  UserCreate,
+  UserUpdate,
   WorkspaceSettings,
 } from './types'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api'
 const ACCESS_KEY = 'cosecre.accessToken'
 const REFRESH_KEY = 'cosecre.refreshToken'
+
+/** Endpoints that must never trigger a refresh-and-retry of their own. */
+const NO_RETRY_PATHS = ['/auth/refresh', '/auth/login', '/auth/register', '/auth/logout']
 
 export class ApiError extends Error {
   status: number
@@ -22,78 +38,210 @@ export class ApiError extends Error {
   }
 }
 
-let accessToken = localStorage.getItem(ACCESS_KEY)
-let refreshToken = localStorage.getItem(REFRESH_KEY)
+/**
+ * Somewhere to keep tokens across restarts.
+ *
+ * Synchronous on purpose: the very first request has to be able to attach a
+ * token without awaiting anything.
+ */
+export interface TokenStorage {
+  get(key: string): string | null
+  set(key: string, value: string): void
+  remove(key: string): void
+}
+
+/** `localStorage` is unavailable on some origins (notably `file://`), and
+ *  throwing there would take the whole app down, so every call is guarded. */
+const browserStorage: TokenStorage = {
+  get(key) {
+    try {
+      return globalThis.localStorage?.getItem(key) ?? null
+    } catch {
+      return null
+    }
+  },
+  set(key, value) {
+    try {
+      globalThis.localStorage?.setItem(key, value)
+    } catch {
+      /* a session that cannot be persisted still works until reload */
+    }
+  },
+  remove(key) {
+    try {
+      globalThis.localStorage?.removeItem(key)
+    } catch {
+      /* nothing to do */
+    }
+  },
+}
+
+export interface ApiConfig {
+  /** Hub API root, e.g. `https://hub.example.com/api/v1`. No trailing slash. */
+  baseUrl?: string
+  storage?: TokenStorage
+  /** Recorded on the session so a user can tell their devices apart. */
+  client?: string
+  clientLabel?: string
+  /** Called when a session is gone for good, so the UI can return to sign-in. */
+  onUnauthorized?: () => void
+}
+
+let baseUrl = normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL ?? '/api/v1')
+let storage: TokenStorage = browserStorage
+let clientName = 'web'
+let clientLabel: string | undefined
+let onUnauthorized: (() => void) | undefined
+
+let accessToken: string | null = null
+let refreshToken: string | null = null
+let tokensLoaded = false
+
+function normalizeBaseUrl(value: string): string {
+  return value.replace(/\/+$/, '')
+}
+
+function loadTokens() {
+  if (tokensLoaded) return
+  accessToken = storage.get(ACCESS_KEY)
+  refreshToken = storage.get(REFRESH_KEY)
+  tokensLoaded = true
+}
+
+export function configureApi(config: ApiConfig) {
+  if (config.baseUrl !== undefined) baseUrl = normalizeBaseUrl(config.baseUrl)
+  if (config.storage) {
+    storage = config.storage
+    // A new store means the cached pair belongs to the old one.
+    tokensLoaded = false
+    accessToken = null
+    refreshToken = null
+  }
+  if (config.client) clientName = config.client
+  if (config.clientLabel !== undefined) clientLabel = config.clientLabel
+  if (config.onUnauthorized) onUnauthorized = config.onUnauthorized
+}
+
+export function getApiBaseUrl() {
+  return baseUrl
+}
 
 function persistTokens(tokens: AuthTokens) {
   accessToken = tokens.access_token
   refreshToken = tokens.refresh_token
-  localStorage.setItem(ACCESS_KEY, tokens.access_token)
-  localStorage.setItem(REFRESH_KEY, tokens.refresh_token)
+  tokensLoaded = true
+  storage.set(ACCESS_KEY, tokens.access_token)
+  storage.set(REFRESH_KEY, tokens.refresh_token)
 }
 
 export function clearTokens() {
   accessToken = null
   refreshToken = null
-  localStorage.removeItem(ACCESS_KEY)
-  localStorage.removeItem(REFRESH_KEY)
+  tokensLoaded = true
+  storage.remove(ACCESS_KEY)
+  storage.remove(REFRESH_KEY)
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
   const text = await response.text()
-  const data = text ? JSON.parse(text) : null
+  let data: unknown = null
+
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      if (!response.ok) {
+        throw new ApiError(response.status, text)
+      }
+      throw new ApiError(response.status, 'The server returned an invalid JSON response.')
+    }
+  }
 
   if (!response.ok) {
-    const detail = data?.detail ?? data?.message ?? response.statusText
-    throw new ApiError(response.status, detail)
+    throw new ApiError(response.status, describeError(data, response.statusText))
   }
 
   return data as T
 }
 
-async function refreshSession(): Promise<boolean> {
-  if (!refreshToken) {
-    return false
+/** FastAPI reports validation failures as a list of objects, not a string. */
+function describeError(data: unknown, fallback: string): string {
+  const payload = data as { detail?: unknown; message?: string } | null
+  const detail = payload?.detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => (item as { msg?: string })?.msg)
+      .filter((msg): msg is string => Boolean(msg))
+    if (messages.length) return messages.join('. ')
   }
+  return payload?.message ?? fallback
+}
 
-  const response = await fetch(`${API_BASE}/auth/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  })
+/**
+ * A single in-flight refresh, shared by every caller.
+ *
+ * The hub rotates refresh tokens and revokes the one it was given, so two
+ * concurrent refreshes would race: the second would present a spent token and
+ * lose the session. Coalescing them is not an optimisation, it is required.
+ */
+let refreshInFlight: Promise<boolean> | null = null
 
-  if (!response.ok) {
-    clearTokens()
-    return false
-  }
+function refreshSession(): Promise<boolean> {
+  loadTokens()
+  if (!refreshToken) return Promise.resolve(false)
+  if (refreshInFlight) return refreshInFlight
 
-  const tokens = await parseResponse<AuthTokens>(response)
-  persistTokens(tokens)
-  return true
+  const attempted = refreshToken
+  refreshInFlight = (async () => {
+    try {
+      const response = await fetch(`${baseUrl}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: attempted }),
+      })
+      if (!response.ok) {
+        clearTokens()
+        onUnauthorized?.()
+        return false
+      }
+      persistTokens((await response.json()) as AuthTokens)
+      return true
+    } catch {
+      // A network failure is not proof the session is dead — keep the tokens so
+      // the next attempt can succeed once the hub is reachable again.
+      return false
+    } finally {
+      refreshInFlight = null
+    }
+  })()
+
+  return refreshInFlight
 }
 
 async function request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
+  loadTokens()
   const headers = new Headers(init.headers ?? {})
   const isFormData = init.body instanceof FormData
 
-  if (!isFormData && !headers.has('Content-Type')) {
+  // Setting Content-Type on a FormData body would clobber the multipart
+  // boundary the browser generates.
+  if (!isFormData && init.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
-
   if (accessToken) {
     headers.set('Authorization', `Bearer ${accessToken}`)
   }
 
-  const response = await fetch(`${API_BASE}${path}`, { ...init, headers })
+  let response: Response
+  try {
+    response = await fetch(`${baseUrl}${path}`, { ...init, headers })
+  } catch (error) {
+    throw new ApiError(0, unreachableMessage(error))
+  }
 
-  if (
-    response.status === 401 &&
-    retry &&
-    refreshToken &&
-    !['/auth/refresh', '/auth/login', '/auth/register'].includes(path)
-  ) {
-    const refreshed = await refreshSession()
-    if (refreshed) {
+  if (response.status === 401 && retry && refreshToken && !NO_RETRY_PATHS.includes(path)) {
+    if (await refreshSession()) {
       return request<T>(path, init, false)
     }
   }
@@ -101,11 +249,49 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
   return parseResponse<T>(response)
 }
 
+function unreachableMessage(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error)
+  return `Could not reach the Cosecre Hub at ${baseUrl}. ${detail}`
+}
+
+function documentPath(documentType: DocumentType) {
+  return documentType === 'invoice' ? '/documents/invoices' : '/documents/tickets'
+}
+
+/**
+ * Ask a hub to describe itself. Used to validate a URL before signing in, so it
+ * takes its own base URL and never sends credentials.
+ */
+export async function fetchHubMeta(url: string = baseUrl): Promise<HubMeta> {
+  const root = normalizeBaseUrl(url)
+  let response: Response
+  try {
+    response = await fetch(`${root}/meta`, { headers: { Accept: 'application/json' } })
+  } catch (error) {
+    throw new ApiError(0, `Could not reach a Cosecre Hub at ${root}. ${describeCause(error)}`)
+  }
+  const meta = await parseResponse<HubMeta>(response)
+  if (meta.product !== 'cosecre-hub') {
+    throw new ApiError(response.status, `${root} answered, but it is not a Cosecre Hub.`)
+  }
+  return meta
+}
+
+function describeCause(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export const api = {
-  async register(payload: { email: string; password: string }) {
+  // ── Discovery ───────────────────────────────────────────────────────────
+  meta() {
+    return request<HubMeta>('/meta')
+  },
+
+  // ── Auth ────────────────────────────────────────────────────────────────
+  async register(payload: { email: string; password: string; display_name?: string }) {
     const tokens = await request<AuthTokens>('/auth/register', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, client: clientName, client_label: clientLabel }),
     })
     persistTokens(tokens)
     return tokens
@@ -113,69 +299,132 @@ export const api = {
   async login(payload: { email: string; password: string }) {
     const tokens = await request<AuthTokens>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, client: clientName, client_label: clientLabel }),
     })
     persistTokens(tokens)
     return tokens
   },
+  /** Revoke this session on the hub, then forget it locally either way. */
+  async logout() {
+    loadTokens()
+    const token = refreshToken
+    clearTokens()
+    if (!token) return
+    try {
+      await request('/auth/logout', { method: 'POST', body: JSON.stringify({ refresh_token: token }) })
+    } catch {
+      // Signing out must never fail visibly: the tokens are already gone here.
+    }
+  },
   me() {
     return request<User>('/auth/me')
   },
+  sessions() {
+    return request<SessionInfo[]>('/auth/sessions')
+  },
+  changePassword(payload: { current_password: string; new_password: string }) {
+    return request<{ message: string }>('/auth/password', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
   async refreshIfNeeded() {
+    loadTokens()
     if (!accessToken && refreshToken) {
       await refreshSession()
     }
   },
   hasStoredSession() {
+    loadTokens()
     return Boolean(accessToken || refreshToken)
   },
-  getInvoices() {
-    return request<InvoiceRecord[]>('/invoices')
+
+  // ── Users (admin) ───────────────────────────────────────────────────────
+  listUsers() {
+    return request<User[]>('/users')
   },
-  getInvoice(internalDocNumber: string) {
-    return request<InvoiceRecord>(`/invoices/${internalDocNumber}`)
+  createUser(payload: UserCreate) {
+    return request<User>('/users', { method: 'POST', body: JSON.stringify(payload) })
   },
-  getJob(jobId: string) {
-    return request<JobRead>(`/invoices/jobs/${jobId}`)
+  updateUser(userId: number, payload: UserUpdate) {
+    return request<User>(`/users/${userId}`, { method: 'PATCH', body: JSON.stringify(payload) })
   },
-  refreshInvoices() {
-    return request<RefreshResult>('/invoices/refresh')
+  disableUser(userId: number) {
+    return request<{ message: string }>(`/users/${userId}`, { method: 'DELETE' })
   },
-  uploadInvoice(file: File) {
+
+  // ── Model gateway ───────────────────────────────────────────────────────
+  llmProviders() {
+    return request<LlmProvider[]>('/llm/providers')
+  },
+
+  // ── Documents ───────────────────────────────────────────────────────────
+  getDocuments(documentType: DocumentType) {
+    return request<InvoiceRecord[]>(documentPath(documentType))
+  },
+  getDocument(documentType: DocumentType, internalDocNumber: string) {
+    return request<InvoiceRecord>(`${documentPath(documentType)}/${internalDocNumber}`)
+  },
+  getJob(documentType: DocumentType, jobId: string) {
+    return request<JobRead>(`${documentPath(documentType)}/jobs/${jobId}`)
+  },
+  refreshDocuments(documentType: DocumentType) {
+    return request<RefreshResult>(`${documentPath(documentType)}/refresh`)
+  },
+  uploadDocument(documentType: DocumentType, file: File) {
     const formData = new FormData()
     formData.append('file', file)
-    return request<UploadResponse>('/invoices/upload', {
+    return request<UploadResponse>(`${documentPath(documentType)}/upload`, {
       method: 'POST',
       body: formData,
     })
   },
-  updateInvoice(internalDocNumber: string, payload: InvoiceUpdate) {
-    return request<InvoiceRecord>(`/invoices/${internalDocNumber}`, {
+  updateDocument(documentType: DocumentType, internalDocNumber: string, payload: InvoiceUpdate) {
+    return request<InvoiceRecord>(`${documentPath(documentType)}/${internalDocNumber}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     })
   },
-  validateInvoice(internalDocNumber: string) {
-    return request<InvoiceRecord>(`/invoices/${internalDocNumber}/validate`, {
+  validateDocument(documentType: DocumentType, internalDocNumber: string) {
+    return request<InvoiceRecord>(`${documentPath(documentType)}/${internalDocNumber}/validate`, {
       method: 'POST',
     })
   },
-  deleteInvoice(internalDocNumber: string) {
-    return request<void>(`/invoices/${internalDocNumber}`, { method: 'DELETE' })
+  deleteDocument(documentType: DocumentType, internalDocNumber: string) {
+    return request<void>(`${documentPath(documentType)}/${internalDocNumber}`, { method: 'DELETE' })
   },
-  async getInvoiceFileBlob(internalDocNumber: string): Promise<string> {
-    const headers = new Headers()
-    if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
-    const response = await fetch(`${API_BASE}/invoices/${internalDocNumber}/file`, { headers })
+  /**
+   * Fetch the stored original as an object URL.
+   *
+   * It goes through `fetch` rather than an `<img src>` because the endpoint
+   * needs a bearer token. Callers own the URL and must revoke it.
+   */
+  async getDocumentFileBlob(
+    documentType: DocumentType,
+    internalDocNumber: string,
+  ): Promise<string> {
+    loadTokens()
+    const path = `${documentPath(documentType)}/${internalDocNumber}/file`
+    const send = () => {
+      const headers = new Headers()
+      if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+      return fetch(`${baseUrl}${path}`, { headers })
+    }
+
+    let response = await send()
+    if (response.status === 401 && (await refreshSession())) {
+      response = await send()
+    }
     if (!response.ok) throw new ApiError(response.status, 'File not found')
-    const blob = await response.blob()
-    return URL.createObjectURL(blob)
+    return URL.createObjectURL(await response.blob())
   },
+
+  // ── Documents app settings ──────────────────────────────────────────────
   getSettings() {
-    return request<WorkspaceSettings>('/settings')
+    return request<WorkspaceSettings>('/documents/settings')
   },
   updateSettings(payload: WorkspaceSettings) {
-    return request<WorkspaceSettings>('/settings', {
+    return request<WorkspaceSettings>('/documents/settings', {
       method: 'PUT',
       body: JSON.stringify(payload),
     })
