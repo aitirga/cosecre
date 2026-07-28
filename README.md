@@ -92,6 +92,15 @@ The web dev server proxies `/api` to the hub, so the browser stays on one origin
 and there is no CORS to configure. The desktop app asks for the hub address on
 first launch — `http://127.0.0.1:8000` for a local one.
 
+### Deploying the web app
+
+Build it with `npm run build:web` and serve `frontend/dist` however you like.
+The simplest arrangement is one reverse proxy with the static files at `/` and
+the hub at `/api` — the client then asks for `/api/v1` on its own origin, and
+there is no CORS to configure in production either. If the two must live on
+different origins, set `VITE_API_BASE_URL` at build time and add the app's
+origin to `COSECRE_CORS_ORIGIN_REGEX`.
+
 ## Accounts
 
 There is no signup form once the hub has an account, and no seed file with
