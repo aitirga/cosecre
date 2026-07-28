@@ -2,12 +2,9 @@ import { createRouter, createWebHashHistory, createWebHistory, type Router } fro
 
 import AppShell from '../components/AppShell.vue'
 import { useAuth } from '../composables/useAuth'
-import AccountView from '../views/AccountView.vue'
+import { bootstrapModules, moduleGuard, moduleRoutes, useModules } from '../modules/registry'
 import ConnectHubView from '../views/ConnectHubView.vue'
-import InboxView from '../views/InboxView.vue'
-import InvoiceDetailView from '../views/InvoiceDetailView.vue'
 import LoginView from '../views/LoginView.vue'
-import SettingsView from '../views/SettingsView.vue'
 
 export interface RouterOptions {
   /**
@@ -21,66 +18,38 @@ export interface RouterOptions {
 
 export function createAppRouter(options: RouterOptions = {}): Router {
   const withHubPicker = options.withHubPicker ?? false
+  const { homeRoute } = useModules()
+  const routes = moduleRoutes()
 
   const router = createRouter({
     history: options.history === 'hash' ? createWebHashHistory() : createWebHistory(),
     routes: [
-      ...(withHubPicker
-        ? [{ path: '/connect', name: 'connect', component: ConnectHubView }]
-        : []),
+      ...(withHubPicker ? [{ path: '/connect', name: 'connect', component: ConnectHubView }] : []),
       {
         path: '/login',
         name: 'login',
         component: LoginView,
       },
+      ...routes.root,
       {
         path: '/',
         component: AppShell,
         meta: { requiresAuth: true },
-        children: [
-          { path: '', redirect: { name: 'invoices' } },
-          {
-            path: 'invoices',
-            name: 'invoices',
-            component: InboxView,
-            meta: { documentType: 'invoice' },
-          },
-          {
-            path: 'tickets',
-            name: 'tickets',
-            component: InboxView,
-            meta: { documentType: 'ticket' },
-          },
-          {
-            path: 'invoices/:internalDocNumber',
-            name: 'invoice',
-            component: InvoiceDetailView,
-            meta: { documentType: 'invoice' },
-          },
-          {
-            path: 'tickets/:internalDocNumber',
-            name: 'ticket',
-            component: InvoiceDetailView,
-            meta: { documentType: 'ticket' },
-          },
-          { path: 'account', name: 'account', component: AccountView },
-          {
-            path: 'settings',
-            name: 'settings',
-            component: SettingsView,
-            meta: { requiresAdmin: true },
-          },
-        ],
+        children: [{ path: '', redirect: () => homeRoute.value }, ...routes.shell],
       },
       // Anything unrecognised belongs on the default page rather than a blank
       // router view — a stale desktop deep link should not dead-end.
-      { path: '/:pathMatch(.*)*', redirect: { name: 'invoices' } },
+      { path: '/:pathMatch(.*)*', redirect: () => homeRoute.value },
     ],
   })
 
   router.beforeEach(async (to) => {
     const auth = useAuth()
     await auth.bootstrap()
+    // Modules resolve their own membership here, so `homeRoute` is already
+    // correct on first paint: a student lands in their waiting room instead of
+    // flashing a screen they have no business seeing.
+    await bootstrapModules()
 
     if (to.name === 'connect') {
       return true
@@ -97,14 +66,14 @@ export function createAppRouter(options: RouterOptions = {}): Router {
     }
 
     if (to.meta.requiresAdmin && !auth.isAdmin.value) {
-      return { name: 'invoices' }
+      return homeRoute.value
     }
 
     if (to.name === 'login' && auth.isAuthenticated.value) {
-      return { name: 'invoices' }
+      return homeRoute.value
     }
 
-    return true
+    return moduleGuard(to) ?? true
   })
 
   return router

@@ -11,12 +11,25 @@ import { createApp, type App as VueApp, type Component } from 'vue'
 
 import { configureApi, type TokenStorage } from './api/client'
 import App from './App.vue'
+import { documentsModule } from './modules/documents'
+import { registerModules } from './modules/registry'
+import type { CosecreModule } from './modules/types'
 import { PLATFORM_KEY, type PlatformIntegration } from './platform'
 import { createAppRouter } from './router'
 import './style.css'
 
 export type { TokenStorage } from './api/client'
+export type { CosecreModule } from './modules/types'
 export type { PlatformIntegration } from './platform'
+
+/**
+ * Specific modules first, general last.
+ *
+ * The first module to claim "home" wins, and documents claims it for everyone,
+ * so anything with a narrower claim has to be asked first. A deployment that
+ * wants only AIM passes `modules: [aimModule]` and gets a standalone app.
+ */
+const DEFAULT_MODULES: CosecreModule[] = [documentsModule]
 
 export interface CosecreAppOptions {
   apiBaseUrl?: string
@@ -27,6 +40,8 @@ export interface CosecreAppOptions {
   clientLabel?: string
   platform?: PlatformIntegration
   settingsPanel?: Component
+  /** Which apps this shell hosts. Order matters — see `DEFAULT_MODULES`. */
+  modules?: CosecreModule[]
 }
 
 export function createCosecreApp(options: CosecreAppOptions = {}): VueApp<Element> {
@@ -34,6 +49,9 @@ export function createCosecreApp(options: CosecreAppOptions = {}): VueApp<Elemen
   if (options.settingsPanel) {
     platform.settingsPanel = options.settingsPanel
   }
+
+  // Before the router: it reads the registry to build its route table.
+  registerModules(options.modules ?? DEFAULT_MODULES)
 
   configureApi({
     baseUrl: options.apiBaseUrl,

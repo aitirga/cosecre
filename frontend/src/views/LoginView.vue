@@ -48,7 +48,10 @@ const submitting = computed(() => auth.state.loading)
 async function submit() {
   try {
     await auth.authenticate(mode.value, { email: form.email, password: form.password })
-    await router.replace({ name: 'invoices' })
+    // `/` rather than a named route: the shell's index redirect asks the module
+    // registry where this particular person belongs, which is not knowable here
+    // — their modules have not resolved their membership yet.
+    await router.replace('/')
   } catch {
     // The message is already on auth.state.error.
   }

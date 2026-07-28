@@ -219,7 +219,52 @@ function refreshSession(): Promise<boolean> {
   return refreshInFlight
 }
 
-async function request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
+/**
+ * A bearer-authenticated `fetch`, with one refresh-and-retry, returning the raw
+ * `Response`.
+ *
+ * `request` cannot serve every caller: it reads the whole body as JSON, which is
+ * wrong for a file download and impossible for a stream. Retrying is safe here
+ * only because both of those are GETs — the retry replays the request, so this
+ * must never carry a body that writes.
+ */
+export async function authorizedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  loadTokens()
+
+  const send = () => {
+    const headers = new Headers(init.headers ?? {})
+    if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+    return fetch(`${baseUrl}${path}`, { ...init, headers })
+  }
+
+  let response: Response
+  try {
+    response = await send()
+  } catch (error) {
+    throw new ApiError(0, unreachableMessage(error))
+  }
+
+  if (response.status === 401 && (await refreshSession())) {
+    try {
+      response = await send()
+    } catch (error) {
+      throw new ApiError(0, unreachableMessage(error))
+    }
+  }
+
+  return response
+}
+
+/** Fetch a protected file as an object URL. Callers own it and must revoke it. */
+export async function fetchBlobUrl(path: string): Promise<string> {
+  const response = await authorizedFetch(path)
+  if (!response.ok) {
+    throw new ApiError(response.status, response.statusText || 'The file could not be fetched.')
+  }
+  return URL.createObjectURL(await response.blob())
+}
+
+export async function request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
   loadTokens()
   const headers = new Headers(init.headers ?? {})
   const isFormData = init.body instanceof FormData
@@ -399,24 +444,8 @@ export const api = {
    * It goes through `fetch` rather than an `<img src>` because the endpoint
    * needs a bearer token. Callers own the URL and must revoke it.
    */
-  async getDocumentFileBlob(
-    documentType: DocumentType,
-    internalDocNumber: string,
-  ): Promise<string> {
-    loadTokens()
-    const path = `${documentPath(documentType)}/${internalDocNumber}/file`
-    const send = () => {
-      const headers = new Headers()
-      if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
-      return fetch(`${baseUrl}${path}`, { headers })
-    }
-
-    let response = await send()
-    if (response.status === 401 && (await refreshSession())) {
-      response = await send()
-    }
-    if (!response.ok) throw new ApiError(response.status, 'File not found')
-    return URL.createObjectURL(await response.blob())
+  getDocumentFileBlob(documentType: DocumentType, internalDocNumber: string): Promise<string> {
+    return fetchBlobUrl(`${documentPath(documentType)}/${internalDocNumber}/file`)
   },
 
   // ── Documents app settings ──────────────────────────────────────────────

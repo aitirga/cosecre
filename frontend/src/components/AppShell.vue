@@ -3,40 +3,18 @@ import { computed, ref } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
 import { useAuth } from '../composables/useAuth'
+import { useModules } from '../modules/registry'
 import { usePlatform } from '../platform'
 import AppIcon from './AppIcon.vue'
 import BrandMark from './BrandMark.vue'
-import type { IconName } from './icons'
 
 const auth = useAuth()
 const router = useRouter()
 const route = useRoute()
 const platform = usePlatform()
+const { navItems, homeRoute, isActive } = useModules()
 
 const menuOpen = ref(false)
-
-interface NavItem {
-  name: string
-  label: string
-  icon: IconName
-  adminOnly?: boolean
-}
-
-const NAV: NavItem[] = [
-  { name: 'invoices', label: 'Invoices', icon: 'invoice' },
-  { name: 'tickets', label: 'Tickets', icon: 'ticket' },
-  { name: 'settings', label: 'Settings', icon: 'sliders', adminOnly: true },
-]
-
-const nav = computed(() => NAV.filter((item) => !item.adminOnly || auth.isAdmin.value))
-
-/** Detail routes are children of a list route, so highlight the parent too. */
-function isActive(name: string) {
-  if (route.name === name) return true
-  if (name === 'invoices') return route.name === 'invoice'
-  if (name === 'tickets') return route.name === 'ticket'
-  return false
-}
 
 const displayName = computed(
   () => auth.user.value?.display_name || auth.user.value?.email || 'Signed in',
@@ -64,17 +42,17 @@ async function handleLogout() {
 <template>
   <div class="shell">
     <aside class="sidebar" :class="{ open: menuOpen }">
-      <RouterLink class="brand" :to="{ name: 'invoices' }" @click="menuOpen = false">
+      <RouterLink class="brand" :to="homeRoute" @click="menuOpen = false">
         <BrandMark :size="24" />
         <span class="brand-name">Cosecre</span>
       </RouterLink>
 
       <nav class="nav" aria-label="Sections">
         <RouterLink
-          v-for="item in nav"
+          v-for="item in navItems"
           :key="item.name"
           class="nav-item"
-          :class="{ active: isActive(item.name) }"
+          :class="{ active: isActive(item, route.name as string) }"
           :to="{ name: item.name }"
           @click="menuOpen = false"
         >
