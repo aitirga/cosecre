@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from .aim import router as aim_router
 from .app_settings import router as app_settings_router
 from .auth import router as auth_router
 from .documents import router as documents_router
@@ -16,5 +17,6 @@ api_router.include_router(users_router, prefix="/users", tags=["users"])
 api_router.include_router(app_settings_router, prefix="/apps", tags=["apps"])
 api_router.include_router(llm_router, prefix="/llm", tags=["llm"])
 api_router.include_router(documents_router, prefix="/documents", tags=["documents"])
+api_router.include_router(aim_router, prefix="/aim", tags=["aim"])
 
 __all__ = ["api_router"]

@@ -16,6 +16,7 @@ class HubCapabilities(BaseModel):
     llm: bool = False
     documents: bool = False
     google_sheets: bool = False
+    aim: bool = False
 
 
 class HubMeta(BaseModel):

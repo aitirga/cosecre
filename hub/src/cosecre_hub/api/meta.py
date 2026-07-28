@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from .. import API_VERSION, __version__
-from ..config import DOCUMENTS_APP_SLUG, Settings
+from ..config import AIM_APP_SLUG, DOCUMENTS_APP_SLUG, Settings
 from ..deps import get_db, get_llm_registry, get_settings
 from ..models import AppSetting, User
 from ..schemas import HubCapabilities, HubMeta
@@ -31,6 +31,7 @@ def read_meta(
         slug for (slug,) in session.query(AppSetting.app_slug).distinct().all() if slug
     }
     registered_apps.add(DOCUMENTS_APP_SLUG)
+    registered_apps.add(AIM_APP_SLUG)
 
     return HubMeta(
         name=settings.app_name,
@@ -41,6 +42,7 @@ def read_meta(
             llm=registry.any_configured(),
             documents=True,
             google_sheets=settings.google_service_account_file is not None,
+            aim=True,
         ),
         apps=sorted(registered_apps),
         accepts_registration=settings.allow_open_registration or user_count == 0,
