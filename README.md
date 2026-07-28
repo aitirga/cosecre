@@ -41,8 +41,14 @@ gateway exists rather than each client calling OpenAI itself.
 ## Downloads
 
 Installers for every release are on the
-[releases page](https://github.com/aitirga/cosecre/releases). They are unsigned,
-so:
+[releases page](https://github.com/aitirga/cosecre/releases). To build one from
+source instead — a minute or so, this machine's architecture only:
+
+```bash
+just mac
+```
+
+Released builds are unsigned, so:
 
 - **macOS** — Gatekeeper will refuse a downloaded DMG until the quarantine flag
   is cleared:
@@ -52,6 +58,16 @@ so:
 - **Windows** — SmartScreen shows a warning; choose *More info → Run anyway*.
 
 ## Running the whole thing locally
+
+Everything below has a shortcut in the [`justfile`](justfile). Run `just` on its
+own for the grouped list:
+
+```bash
+just setup && just dev
+```
+
+The rest of this section is what those recipes do, for when you want to run the
+pieces by hand.
 
 ### 1. The hub
 
