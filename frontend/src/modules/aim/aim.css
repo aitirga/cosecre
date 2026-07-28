@@ -1,0 +1,53 @@
+/*
+  The AIM student surface.
+  ─────────────────────────────────────────────────────────────────────────────
+
+  The hub's accent is a terracotta at hue ≈16°. A "light red" sitting at 16°
+  would read as the terracotta rendering wrong, so this one is at ≈358° —
+  unmistakably crimson, still warm enough to sit beside the paper surfaces.
+
+  The mechanism is a scoped theme, not an override. The tokens in `style.css`
+  are inherited custom properties, so re-pointing them on `.aim-student`
+  cascades into `.card`, `.btn-primary`, `.badge-accent`, `.progress` and
+  `.input:focus` without touching a single primitive.
+
+  Only the student surface goes red. A teacher moving between AIM and Invoices
+  should not watch the chrome change hue, so their screens stay on the hub's
+  terracotta.
+
+  Ratios are measured, in the same discipline as `style.css` — the method here
+  reproduces that file's own stated numbers exactly.
+*/
+
+.aim-student {
+  --aim-red-50: #fff5f5; /* page wash */
+  --aim-red-100: #ffe7e6; /* fills, the student's own bubble */
+  --aim-red-200: #ffcecb; /* borders on those fills */
+  --aim-red-300: #fba9a4;
+  --aim-red-400: #f2736c;
+  --aim-red-500: #e04a44; /* graphics only — 4.0:1 on white, never body text */
+  --aim-red-600: #c4322d;
+  --aim-red-700: #a52823; /* text and filled buttons — 7.2:1 on white,
+                             6.7:1 on red-50, 6.1:1 on red-100 */
+  --aim-red-800: #86201c; /* hover for the above — 9.4:1 on white */
+
+  /* Re-point the shared tokens. Every primitive follows without being edited.
+     The `--ink-*` family is deliberately left alone: the weakest step,
+     `--ink-400`, is 5.5:1 on this wash and 5.0:1 on the bubble fill — both
+     clear AA, and the first is marginally better than its 5.4:1 on the hub's
+     cream. A theme that has to override the text tones is fighting the system
+     rather than extending it. */
+  --surface-1: var(--aim-red-50);
+  --surface-2: var(--aim-red-100);
+  --surface-3: var(--aim-red-200);
+  --line: #f4dcda;
+  --line-strong: #e3bab6;
+  --accent-100: var(--aim-red-100);
+  --accent-200: var(--aim-red-200);
+  --accent-500: var(--aim-red-500);
+  --accent-700: var(--aim-red-700);
+  --accent-800: var(--aim-red-800);
+
+  min-height: 100vh;
+  background: var(--surface-1);
+}

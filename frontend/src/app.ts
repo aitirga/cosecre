@@ -11,6 +11,7 @@ import { createApp, type App as VueApp, type Component } from 'vue'
 
 import { configureApi, type TokenStorage } from './api/client'
 import App from './App.vue'
+import { aimModule } from './modules/aim'
 import { documentsModule } from './modules/documents'
 import { registerModules } from './modules/registry'
 import type { CosecreModule } from './modules/types'
@@ -29,7 +30,7 @@ export type { PlatformIntegration } from './platform'
  * so anything with a narrower claim has to be asked first. A deployment that
  * wants only AIM passes `modules: [aimModule]` and gets a standalone app.
  */
-const DEFAULT_MODULES: CosecreModule[] = [documentsModule]
+const DEFAULT_MODULES: CosecreModule[] = [aimModule, documentsModule]
 
 export interface CosecreAppOptions {
   apiBaseUrl?: string

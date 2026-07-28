@@ -5,17 +5,26 @@
  * matching `composables/useAuth.ts`: the router factory needs to read this
  * *before* any component exists, so it cannot live behind `inject`.
  */
-import { computed, reactive } from 'vue'
+import { computed } from 'vue'
 import type { RouteLocationNormalized, RouteLocationRaw, RouteRecordRaw } from 'vue-router'
 
 import { useAuth } from '../composables/useAuth'
 import type { CosecreModule, CosecreNavItem } from './types'
 
-const state = reactive<{ modules: CosecreModule[] }>({ modules: [] })
+/**
+ * Plain, not `reactive`.
+ *
+ * The list is written once at startup and never mutated, so making it reactive
+ * buys nothing — and costs something real: `reactive` deep-proxies the route
+ * records, which means the *components* inside them become reactive objects
+ * and Vue warns about it on every render. What actually needs to be reactive is
+ * what `visible()` and `home()` read, and those own their own state.
+ */
+let modules: CosecreModule[] = []
 
 /** Called once by `createCosecreApp`, before the router is built. */
-export function registerModules(modules: CosecreModule[]) {
-  state.modules = modules
+export function registerModules(registered: CosecreModule[]) {
+  modules = registered
 }
 
 /**
@@ -28,7 +37,7 @@ export function registerModules(modules: CosecreModule[]) {
  */
 function activeModules(): CosecreModule[] {
   const auth = useAuth()
-  return state.modules.filter((module) => module.enabled?.(auth.state.hub) ?? true)
+  return modules.filter((module) => module.enabled?.(auth.state.hub) ?? true)
 }
 
 /**
@@ -40,18 +49,18 @@ function activeModules(): CosecreModule[] {
  */
 export function moduleRoutes(): { shell: RouteRecordRaw[]; root: RouteRecordRaw[] } {
   return {
-    shell: state.modules.flatMap((module) => module.routes),
-    root: state.modules.flatMap((module) => module.rootRoutes ?? []),
+    shell: modules.flatMap((module) => module.routes),
+    root: modules.flatMap((module) => module.rootRoutes ?? []),
   }
 }
 
 export async function bootstrapModules(): Promise<void> {
-  await Promise.all(state.modules.map((module) => module.bootstrap?.()))
+  await Promise.all(modules.map((module) => module.bootstrap?.()))
 }
 
 /** Runs every module's own authorisation. First redirect wins. */
 export function moduleGuard(to: RouteLocationNormalized): RouteLocationRaw | null {
-  for (const module of state.modules) {
+  for (const module of modules) {
     const redirect = module.guard?.(to)
     if (redirect) return redirect
   }

@@ -449,16 +449,6 @@ const isSelf = (user: User) => user.id === auth.user.value?.id
   max-width: 880px;
 }
 
-.page-title {
-  font-size: var(--text-xl);
-}
-
-.page-lead {
-  margin-top: 2px;
-  font-size: var(--text-base);
-  color: var(--ink-400);
-}
-
 .hub {
   display: grid;
   gap: 12px;

@@ -233,6 +233,28 @@ button {
   font-weight: 600;
 }
 
+/* ── Page headers ──────────────────────────────────────────────────────── */
+/* Title on the left, actions on the right. Four views had defined this
+   identically in their own scoped blocks, which is the drift the note above
+   warns about — a fifth copy is how a shared header stops being shared. */
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.page-title {
+  font-size: var(--text-xl);
+}
+
+.page-lead {
+  margin-top: 2px;
+  font-size: var(--text-base);
+  color: var(--ink-400);
+}
+
 /* ── Buttons ───────────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;

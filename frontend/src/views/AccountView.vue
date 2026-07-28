@@ -140,23 +140,6 @@ function describeSession(client: string | null, label: string | null) {
   max-width: 720px;
 }
 
-.page-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.page-title {
-  font-size: var(--text-xl);
-}
-
-.page-lead {
-  margin-top: 2px;
-  font-size: var(--text-base);
-  color: var(--ink-400);
-}
-
 .form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
