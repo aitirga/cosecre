@@ -57,7 +57,7 @@ def test_openai_service_extracts_images_without_uploading_files(tmp_path: Path, 
     settings = build_settings(tmp_path)
     file_calls: list[dict[str, str]] = []
     parse_calls: list[dict[str, object]] = []
-    parsed_payload = InvoiceExtraction(num_factura="F-123", proveidor="Vendor", num_doc_intern="")
+    parsed_payload = InvoiceExtraction(num_factura="F-123", proveidor="Vendor")
 
     class FakeFilesApi:
         def create(self, *, file, purpose: str):
@@ -93,10 +93,8 @@ def test_openai_service_extracts_images_without_uploading_files(tmp_path: Path, 
 
     content = parse_call["input"][0]["content"]
     assert content[0]["type"] == "input_text"
-    assert "INV-001" in content[0]["text"]
     assert content[1]["type"] == "input_image"
     assert str(content[1]["image_url"]).startswith("data:image/jpeg;base64,")
-    assert result.num_doc_intern == "INV-001"
     assert result.num_factura == "F-123"
 
 
@@ -118,7 +116,7 @@ def test_openai_service_uploads_pdfs_before_parsing(tmp_path: Path, monkeypatch:
             return type(
                 "ParsedResponse",
                 (),
-                {"output_parsed": InvoiceExtraction(num_factura="PDF-1", num_doc_intern="")},
+                {"output_parsed": InvoiceExtraction(num_factura="PDF-1")},
             )()
 
     class FakeClient:
@@ -140,7 +138,7 @@ def test_openai_service_uploads_pdfs_before_parsing(tmp_path: Path, monkeypatch:
     assert len(parse_calls) == 1
     content = parse_calls[0]["input"][0]["content"]
     assert content[1] == {"type": "input_file", "file_id": "file-456"}
-    assert result.num_doc_intern == "INV-PDF-1"
+    assert result.num_factura == "PDF-1"
 
 
 def test_openai_live_connection_smoke():

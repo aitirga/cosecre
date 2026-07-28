@@ -209,3 +209,27 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ── Cosecre ──────────────────────────────────────────────────────────────────
+.DS_Store
+
+# Build output
+out/
+release/
+*.tsbuildinfo
+
+# The icon master is generated (`npm run icons`) but committed on purpose:
+# packaging runs on CI runners that have no librsvg, so the build must never
+# depend on that script having run. It has to be un-ignored explicitly, because
+# the Python section above already claims every `build/`.
+!desktop/build/
+!desktop/build/icon.png
+
+# Hub runtime state and credentials
+hub/data/
+hub/secrets/
+hub/.env
+
+# Seed files hold PLAINTEXT passwords and must never be committed. Provision
+# accounts with COSECRE_BOOTSTRAP_ADMIN_* and `POST /api/v1/users` instead.
+seed_users.json

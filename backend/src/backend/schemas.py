@@ -39,6 +39,12 @@ def _parse_import_value(v: object) -> float | None:
         return None
 
 
+DocumentType = Literal[
+    "invoice",
+    "ticket",
+]
+
+
 ExtractionStatus = Literal[
     "pending",
     "processing",
@@ -89,7 +95,6 @@ class InvoiceExtraction(BaseModel):
     cif_proveit: str = ""
     descripcio: str = ""
     pressupost_afectat: str = ""
-    num_doc_intern: str = ""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -120,6 +125,8 @@ class InvoiceUpdate(BaseModel):
 
 
 class InvoiceRecord(InvoiceExtraction):
+    document_type: DocumentType = "invoice"
+    num_doc_intern: str = ""
     validat: bool = False
     file_link: str = ""
     file_url: str | None = None
@@ -134,6 +141,7 @@ class InvoiceRecord(InvoiceExtraction):
 
 class JobRead(BaseModel):
     id: str
+    document_type: DocumentType = "invoice"
     internal_doc_number: str
     status: ExtractionStatus
     error_message: str | None = None
@@ -145,6 +153,7 @@ class JobRead(BaseModel):
 
 class UploadResponse(BaseModel):
     job_id: str
+    document_type: DocumentType = "invoice"
     internal_doc_number: str
     status: ExtractionStatus
 
@@ -152,6 +161,7 @@ class UploadResponse(BaseModel):
 class WorkspaceSettingsRead(BaseModel):
     spreadsheet_url: str | None = None
     sheet_name: str = "Factures"
+    ticket_sheet_name: str = "Tiquets"
     openai_model: str = "gpt-5.4"
     extraction_prompt: str = ""
     polling_interval_seconds: int = 30
@@ -160,6 +170,7 @@ class WorkspaceSettingsRead(BaseModel):
 class WorkspaceSettingsUpdate(BaseModel):
     spreadsheet_url: str | None = None
     sheet_name: str = Field(min_length=1, max_length=255)
+    ticket_sheet_name: str = Field(default="Tiquets", min_length=1, max_length=255)
     openai_model: str = Field(min_length=1, max_length=120)
     extraction_prompt: str = ""
     polling_interval_seconds: int = Field(default=30, ge=10, le=300)

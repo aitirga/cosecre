@@ -12,7 +12,7 @@ from googleapiclient.http import MediaFileUpload
 
 from ..config import Settings
 from ..models import WorkspaceSetting
-from ..schemas import InvoiceExtraction, InvoiceRecord
+from ..schemas import DocumentType, InvoiceExtraction, InvoiceRecord
 
 FIELD_TO_HEADER = {
     "num_factura": "Núm. de la factura",
@@ -72,10 +72,13 @@ class GoogleSheetsService:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def is_ready(self, workspace: WorkspaceSetting) -> bool:
+    def _sheet_name(self, workspace: WorkspaceSetting, document_type: DocumentType) -> str:
+        return workspace.sheet_name if document_type == "invoice" else workspace.ticket_sheet_name
+
+    def is_ready(self, workspace: WorkspaceSetting, document_type: DocumentType = "invoice") -> bool:
         return bool(
             workspace.spreadsheet_url
-            and workspace.sheet_name
+            and self._sheet_name(workspace, document_type)
             and self.settings.google_service_account_file
         )
 
@@ -93,13 +96,18 @@ class GoogleSheetsService:
     def _drive_service(self):
         return build("drive", "v3", credentials=self._credentials(), cache_discovery=False)
 
-    def upload_file_to_drive(self, file_path: Path, filename: str, mime_type: str) -> tuple[str, str]:
+    def upload_file_to_drive(
+        self, file_path: Path, filename: str, mime_type: str, folder_id: str | None = None
+    ) -> tuple[str, str]:
         """Upload a file to Drive and return (web_view_link, file_id)."""
         drive = self._drive_service()
         media = MediaFileUpload(str(file_path), mimetype=mime_type, resumable=False)
+        body: dict = {"name": filename}
+        if folder_id:
+            body["parents"] = [folder_id]
         uploaded = (
             drive.files()
-            .create(body={"name": filename}, media_body=media, fields="id,webViewLink")
+            .create(body=body, media_body=media, fields="id,webViewLink")
             .execute()
         )
         drive.permissions().create(
@@ -108,6 +116,11 @@ class GoogleSheetsService:
         ).execute()
         return uploaded["webViewLink"], uploaded["id"]
 
+    def delete_drive_file(self, file_id: str) -> None:
+        """Delete a file from Drive by its file ID."""
+        drive = self._drive_service()
+        drive.files().delete(fileId=file_id).execute()
+
     def _spreadsheet_id(self, workspace: WorkspaceSetting) -> str:
         if workspace.spreadsheet_id:
             return workspace.spreadsheet_id
@@ -115,7 +128,7 @@ class GoogleSheetsService:
             raise RuntimeError("Spreadsheet URL is not configured.")
         return parse_spreadsheet_id(workspace.spreadsheet_url)
 
-    def _sheet_properties(self, workspace: WorkspaceSetting) -> tuple[str, int]:
+    def _sheet_properties(self, workspace: WorkspaceSetting, document_type: DocumentType) -> tuple[str, int]:
         service = self._service()
         spreadsheet_id = self._spreadsheet_id(workspace)
         metadata = (
@@ -123,20 +136,22 @@ class GoogleSheetsService:
             .get(spreadsheetId=spreadsheet_id, fields="sheets(properties(sheetId,title))")
             .execute()
         )
-        target = workspace.sheet_name.strip().lower()
+        target_name = self._sheet_name(workspace, document_type)
+        target = target_name.strip().lower()
         for sheet in metadata.get("sheets", []):
             properties = sheet.get("properties", {})
             if properties.get("title", "").strip().lower() == target:
                 return spreadsheet_id, int(properties["sheetId"])
-        raise RuntimeError(f"Sheet tab '{workspace.sheet_name}' was not found in the spreadsheet.")
+        raise RuntimeError(f"Sheet tab '{target_name}' was not found in the spreadsheet.")
 
-    def ensure_headers(self, workspace: WorkspaceSetting) -> list[str]:
+    def ensure_headers(self, workspace: WorkspaceSetting, document_type: DocumentType) -> list[str]:
         service = self._service()
         spreadsheet_id = self._spreadsheet_id(workspace)
+        sheet_name = self._sheet_name(workspace, document_type)
         response = (
             service.spreadsheets()
             .values()
-            .get(spreadsheetId=spreadsheet_id, range=f"{workspace.sheet_name}!A1:ZZ1")
+            .get(spreadsheetId=spreadsheet_id, range=f"{sheet_name}!A1:ZZ1")
             .execute()
         )
         values = response.get("values", [])
@@ -146,7 +161,7 @@ class GoogleSheetsService:
                 .values()
                 .update(
                     spreadsheetId=spreadsheet_id,
-                    range=f"{workspace.sheet_name}!A1:{column_letter(len(REQUIRED_HEADERS))}1",
+                    range=f"{sheet_name}!A1:{column_letter(len(REQUIRED_HEADERS))}1",
                     valueInputOption="RAW",
                     body={"values": [REQUIRED_HEADERS]},
                 )
@@ -164,7 +179,7 @@ class GoogleSheetsService:
                 .values()
                 .update(
                     spreadsheetId=spreadsheet_id,
-                    range=f"{workspace.sheet_name}!{next_col}1:{end_col}1",
+                    range=f"{sheet_name}!{next_col}1:{end_col}1",
                     valueInputOption="RAW",
                     body={"values": [missing]},
                 )
@@ -218,13 +233,20 @@ class GoogleSheetsService:
             },
         ).execute()
 
-    def _find_row(self, workspace: WorkspaceSetting, internal_doc_number: str) -> tuple[int, list[str], list[str]]:
-        headers = self.ensure_headers(workspace)
-        invoices = self.list_invoices(workspace)
-        for invoice in invoices:
-            if invoice.num_doc_intern == internal_doc_number and invoice.sheet_row_ref is not None:
-                return invoice.sheet_row_ref, headers, self._row_from_invoice(invoice, headers)
-        raise RuntimeError(f"Invoice '{internal_doc_number}' was not found in Google Sheets.")
+    def _find_row(
+        self,
+        workspace: WorkspaceSetting,
+        document_type: DocumentType,
+        internal_doc_number: str,
+    ) -> tuple[int, list[str], list[str]]:
+        headers = self.ensure_headers(workspace, document_type)
+        documents = self.list_documents(workspace, document_type)
+        for document in documents:
+            if document.num_doc_intern == internal_doc_number and document.sheet_row_ref is not None:
+                return document.sheet_row_ref, headers, self._row_from_invoice(document, headers)
+        raise RuntimeError(
+            f"{document_type.title()} '{internal_doc_number}' was not found in Google Sheets."
+        )
 
     def _row_has_meaningful_data(self, row_map: dict[str, str]) -> bool:
         for header in FIELD_TO_HEADER.values():
@@ -232,14 +254,15 @@ class GoogleSheetsService:
                 return True
         return False
 
-    def list_invoices(self, workspace: WorkspaceSetting) -> list[InvoiceRecord]:
-        headers = self.ensure_headers(workspace)
+    def list_documents(self, workspace: WorkspaceSetting, document_type: DocumentType) -> list[InvoiceRecord]:
+        headers = self.ensure_headers(workspace, document_type)
         service = self._service()
         spreadsheet_id = self._spreadsheet_id(workspace)
+        sheet_name = self._sheet_name(workspace, document_type)
         response = (
             service.spreadsheets()
             .values()
-            .get(spreadsheetId=spreadsheet_id, range=f"{workspace.sheet_name}!A:Z")
+            .get(spreadsheetId=spreadsheet_id, range=f"{sheet_name}!A:Z")
             .execute()
         )
         values = response.get("values", [])
@@ -260,6 +283,7 @@ class GoogleSheetsService:
             validat = parse_bool(row_map.get(VALIDAT_HEADER, ""))
             records.append(
                 InvoiceRecord(
+                    document_type=document_type,
                     num_factura=row_map.get(FIELD_TO_HEADER["num_factura"], ""),
                     data_factura=row_map.get(FIELD_TO_HEADER["data_factura"], ""),
                     proveidor=row_map.get(FIELD_TO_HEADER["proveidor"], ""),
@@ -278,14 +302,20 @@ class GoogleSheetsService:
             )
         return records
 
-    def append_invoice(self, workspace: WorkspaceSetting, invoice: InvoiceExtraction) -> SheetWriteResult:
-        headers = self.ensure_headers(workspace)
+    def append_document(
+        self,
+        workspace: WorkspaceSetting,
+        document_type: DocumentType,
+        invoice: InvoiceExtraction,
+    ) -> SheetWriteResult:
+        headers = self.ensure_headers(workspace, document_type)
         spreadsheet_id = self._spreadsheet_id(workspace)
         service = self._service()
-        # Place the new row immediately after the last row that has real invoice
+        sheet_name = self._sheet_name(workspace, document_type)
+        # Place the new row immediately after the last row that has real document
         # data, instead of using the Sheets append API which may skip over
         # pre-populated checkbox-only rows and land far below the visible data.
-        existing = self.list_invoices(workspace)
+        existing = self.list_documents(workspace, document_type)
         row_refs = [inv.sheet_row_ref for inv in existing if inv.sheet_row_ref is not None]
         row_number = (max(row_refs) + 1) if row_refs else 2
         end_column = column_letter(len(headers))
@@ -294,14 +324,14 @@ class GoogleSheetsService:
             .values()
             .update(
                 spreadsheetId=spreadsheet_id,
-                range=f"{workspace.sheet_name}!A{row_number}:{end_column}{row_number}",
+                range=f"{sheet_name}!A{row_number}:{end_column}{row_number}",
                 valueInputOption="USER_ENTERED",
                 body={"values": [self._row_from_invoice(invoice, headers)]},
             )
             .execute()
         )
         try:
-            _, sheet_id = self._sheet_properties(workspace)
+            _, sheet_id = self._sheet_properties(workspace, document_type)
             self._apply_row_color(
                 spreadsheet_id,
                 sheet_id,
@@ -312,12 +342,17 @@ class GoogleSheetsService:
             pass  # row colour is cosmetic — don't fail the write if it can't be applied
         return SheetWriteResult(row_number=row_number)
 
-    def delete_invoice(self, workspace: WorkspaceSetting, internal_doc_number: str) -> None:
+    def delete_document(
+        self,
+        workspace: WorkspaceSetting,
+        document_type: DocumentType,
+        internal_doc_number: str,
+    ) -> None:
         try:
-            row_number, _, _ = self._find_row(workspace, internal_doc_number)
+            row_number, _, _ = self._find_row(workspace, document_type, internal_doc_number)
         except RuntimeError:
             return  # not in sheet, nothing to do
-        spreadsheet_id, sheet_id = self._sheet_properties(workspace)
+        spreadsheet_id, sheet_id = self._sheet_properties(workspace, document_type)
         service = self._service()
         service.spreadsheets().batchUpdate(
             spreadsheetId=spreadsheet_id,
@@ -337,24 +372,30 @@ class GoogleSheetsService:
             },
         ).execute()
 
-    def update_invoice(self, workspace: WorkspaceSetting, invoice: InvoiceRecord) -> SheetWriteResult:
-        row_number, headers, _ = self._find_row(workspace, invoice.num_doc_intern)
+    def update_document(
+        self,
+        workspace: WorkspaceSetting,
+        document_type: DocumentType,
+        invoice: InvoiceRecord,
+    ) -> SheetWriteResult:
+        row_number, headers, _ = self._find_row(workspace, document_type, invoice.num_doc_intern)
         spreadsheet_id = self._spreadsheet_id(workspace)
         service = self._service()
+        sheet_name = self._sheet_name(workspace, document_type)
         end_column = column_letter(len(headers))
         (
             service.spreadsheets()
             .values()
             .update(
                 spreadsheetId=spreadsheet_id,
-                range=f"{workspace.sheet_name}!A{row_number}:{end_column}{row_number}",
+                range=f"{sheet_name}!A{row_number}:{end_column}{row_number}",
                 valueInputOption="USER_ENTERED",
                 body={"values": [self._row_from_invoice(invoice, headers)]},
             )
             .execute()
         )
         try:
-            _, sheet_id = self._sheet_properties(workspace)
+            _, sheet_id = self._sheet_properties(workspace, document_type)
             self._apply_row_color(
                 spreadsheet_id,
                 sheet_id,
@@ -366,3 +407,15 @@ class GoogleSheetsService:
         except Exception:  # noqa: BLE001
             pass  # row colour is cosmetic — don't fail the update if it can't be applied
         return SheetWriteResult(row_number=row_number)
+
+    def list_invoices(self, workspace: WorkspaceSetting) -> list[InvoiceRecord]:
+        return self.list_documents(workspace, "invoice")
+
+    def append_invoice(self, workspace: WorkspaceSetting, invoice: InvoiceExtraction) -> SheetWriteResult:
+        return self.append_document(workspace, "invoice", invoice)
+
+    def delete_invoice(self, workspace: WorkspaceSetting, internal_doc_number: str) -> None:
+        self.delete_document(workspace, "invoice", internal_doc_number)
+
+    def update_invoice(self, workspace: WorkspaceSetting, invoice: InvoiceRecord) -> SheetWriteResult:
+        return self.update_document(workspace, "invoice", invoice)

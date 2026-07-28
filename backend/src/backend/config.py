@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="COSECRE_",
-        env_file=".env",
+        env_file=BASE_DIR / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     upload_dir: Path = BASE_DIR / "data" / "uploads"
     seed_users_file: Path = BASE_DIR / "seed_users.json"
     google_service_account_file: Path | None = None
+    google_drive_invoices_folder_id: str | None = None
+    google_drive_tickets_folder_id: str | None = None
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.4"
     cors_origins: list[str] = Field(
@@ -35,7 +37,19 @@ class Settings(BaseSettings):
             "http://127.0.0.1:5173",
             "http://localhost:4173",
             "http://127.0.0.1:4173",
+            "http://localhost:5000",
+            "http://127.0.0.1:5000",
+            "http://localhost:9090",
+            "http://127.0.0.1:9090",
         ]
+    )
+    cors_origin_regex: str = (
+        r"^https?://("
+        r"localhost"
+        r"|127\.0\.0\.1"
+        r"|(?:\d{1,3}\.){3}\d{1,3}"
+        r"|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"
+        r")(?::(4173|5000|5173|8000|9090))?$"
     )
 
     @model_validator(mode="after")

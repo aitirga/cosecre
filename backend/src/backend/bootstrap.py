@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from .config import Settings
@@ -17,12 +18,44 @@ class SeedUser(BaseModel):
 
 
 def ensure_workspace_settings(session: Session, settings: Settings) -> None:
+    bind = session.get_bind()
+    inspector = inspect(bind)
+
+    workspace_columns = {column["name"] for column in inspector.get_columns("workspace_settings")}
+    if "ticket_sheet_name" not in workspace_columns:
+        session.execute(
+            text(
+                "ALTER TABLE workspace_settings "
+                "ADD COLUMN ticket_sheet_name VARCHAR(255) DEFAULT 'Tiquets' NOT NULL"
+            )
+        )
+        session.commit()
+
+    upload_columns = {column["name"] for column in inspector.get_columns("uploads")}
+    if "document_type" not in upload_columns:
+        session.execute(
+            text(
+                "ALTER TABLE uploads "
+                "ADD COLUMN document_type VARCHAR(40) DEFAULT 'invoice' NOT NULL"
+            )
+        )
+        session.commit()
+        session.execute(text("UPDATE uploads SET document_type = 'invoice' WHERE document_type IS NULL"))
+        session.commit()
+
+    if "drive_file_id" not in upload_columns:
+        session.execute(
+            text("ALTER TABLE uploads ADD COLUMN drive_file_id VARCHAR(255)")
+        )
+        session.commit()
+
     workspace = session.query(WorkspaceSetting).filter(WorkspaceSetting.id == 1).first()
     if workspace is None:
         session.add(
             WorkspaceSetting(
                 id=1,
                 openai_model=settings.openai_model,
+                ticket_sheet_name="Tiquets",
             )
         )
         session.commit()
@@ -32,7 +65,9 @@ def ensure_workspace_settings(session: Session, settings: Settings) -> None:
     # preserving any explicitly chosen custom model.
     if workspace.openai_model in {"", "gpt-4.1-mini"}:
         workspace.openai_model = settings.openai_model
-        session.commit()
+    if not workspace.ticket_sheet_name:
+        workspace.ticket_sheet_name = "Tiquets"
+    session.commit()
 
 
 def seed_users(session: Session, settings: Settings) -> None:

@@ -59,6 +59,7 @@ def test_admin_can_update_workspace_settings(tmp_path: Path):
             json={
                 "spreadsheet_url": "https://docs.google.com/spreadsheets/d/abc123/edit#gid=0",
                 "sheet_name": "Factures",
+                "ticket_sheet_name": "Tiquets",
                 "openai_model": "gpt-5.4",
                 "extraction_prompt": "Use the schema.",
                 "polling_interval_seconds": 30,
@@ -66,6 +67,7 @@ def test_admin_can_update_workspace_settings(tmp_path: Path):
         )
         assert update_response.status_code == 200
         assert update_response.json()["sheet_name"] == "Factures"
+        assert update_response.json()["ticket_sheet_name"] == "Tiquets"
 
 
 def test_seeded_users_can_login(tmp_path: Path):

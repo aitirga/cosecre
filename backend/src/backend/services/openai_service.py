@@ -6,16 +6,15 @@ from pathlib import Path
 from openai import OpenAI
 
 from ..config import Settings
-from ..schemas import InvoiceExtraction
+from ..schemas import DocumentType, InvoiceExtraction
 
 DEFAULT_PROMPT = """
-Extract invoice data from the provided document.
+Extract accounting document data from the provided document.
 Rules:
 - Return the response strictly in the provided schema.
 - Keep text exactly as seen when possible.
 - Use empty strings when a field is not present.
 - Preserve decimal separators in the amount.
-- Always set num_doc_intern to the provided internal document number.
 """.strip()
 
 
@@ -23,12 +22,14 @@ class OpenAIExtractionService:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def extract_invoice(
+    def extract_document(
         self,
         file_path: Path,
         mime_type: str,
+        internal_doc_number: str,
         model: str,
         prompt_override: str = "",
+        document_type: DocumentType = "invoice",
     ) -> InvoiceExtraction:
         if not self.settings.openai_api_key:
             raise RuntimeError("OpenAI API key is not configured.")
@@ -37,7 +38,7 @@ class OpenAIExtractionService:
         content: list[dict[str, str]] = [
             {
                 "type": "input_text",
-                "text": "Extract the invoice fields from this document.",
+                "text": f"Extract the {document_type} fields from this document.",
             }
         ]
 
@@ -63,6 +64,23 @@ class OpenAIExtractionService:
             reasoning={"effort": "medium"},
         )
         if response.output_parsed is None:
-            raise RuntimeError("OpenAI did not return a structured invoice payload.")
+            raise RuntimeError("OpenAI did not return a structured document payload.")
 
         return response.output_parsed
+
+    def extract_invoice(
+        self,
+        file_path: Path,
+        mime_type: str,
+        internal_doc_number: str,
+        model: str,
+        prompt_override: str = "",
+    ) -> InvoiceExtraction:
+        return self.extract_document(
+            file_path,
+            mime_type,
+            internal_doc_number,
+            model,
+            prompt_override,
+            document_type="invoice",
+        )
