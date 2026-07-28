@@ -14,6 +14,10 @@ import type {
   AimMember,
   AimRawBlocks,
   AimRole,
+  AimMonitor,
+  AimParticipant,
+  AimSession,
+  AimStudentState,
   AimTopic,
   AimUsage,
   AimVersion,
@@ -102,5 +106,42 @@ export const aimApi = {
   },
   deleteExercise(id: number) {
     return request<void>(`/aim/exercises/${id}`, { method: 'DELETE' })
+  },
+
+  // ── Sessions ──────────────────────────────────────────────────────────────
+  sessions() {
+    return request<AimSession[]>('/aim/sessions')
+  },
+  createSession(exerciseId: number, tokenBudget?: number) {
+    return request<AimSession>('/aim/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ exercise_id: exerciseId, token_budget: tokenBudget ?? null }),
+    })
+  },
+  startSession(id: string) {
+    return request<AimSession>(`/aim/sessions/${id}/start`, { method: 'POST' })
+  },
+  endSession(id: string) {
+    return request<AimSession>(`/aim/sessions/${id}/end`, { method: 'POST' })
+  },
+  monitor(id: string) {
+    return request<AimMonitor>(`/aim/sessions/${id}/monitor`)
+  },
+  setParticipantBudget(sessionId: string, participantId: number, budget: number) {
+    return request<AimParticipant>(`/aim/sessions/${sessionId}/participants/${participantId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ token_budget_override: budget }),
+    })
+  },
+
+  // ── Student ───────────────────────────────────────────────────────────────
+  studentState() {
+    return request<AimStudentState>('/aim/student/current')
+  },
+  join(code: string) {
+    return request<AimStudentState>('/aim/sessions/join', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    })
   },
 }

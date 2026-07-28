@@ -27,3 +27,11 @@ NOT_YOUR_EXERCISE = "Aquest exercici no és teu."
 EXERCISE_IN_USE = "No pots esborrar un exercici que ja s'ha fet servir en una sessió."
 NOT_REFINED = "Refina l'exercici amb la IA abans de publicar-lo."
 NO_MODEL = "Aquest hub no té cap model configurat."
+
+# ── Sessions ────────────────────────────────────────────────────────────────
+SESSION_NOT_FOUND = "Aquesta sessió no existeix."
+NOT_YOUR_SESSION = "Aquesta sessió no és teva."
+SESSION_ENDED = "Aquesta sessió ja s'ha acabat."
+PARTICIPANT_NOT_FOUND = "Aquest alumne no és en aquesta sessió."
+BAD_JOIN_CODE = "Aquest codi no serveix per a cap sessió oberta."
+NO_JOIN_CODE = "No s'ha pogut generar un codi. Torna-ho a provar."

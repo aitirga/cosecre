@@ -12,7 +12,9 @@ import { useAimMembership } from './composables/useAimMembership'
 import { CA } from './strings'
 import AimExercisesView from './views/AimExercisesView.vue'
 import AimLibraryView from './views/AimLibraryView.vue'
+import AimMonitorView from './views/AimMonitorView.vue'
 import AimRosterView from './views/AimRosterView.vue'
+import AimSessionsView from './views/AimSessionsView.vue'
 import AimStudentView from './views/AimStudentView.vue'
 import AimWizardView from './views/AimWizardView.vue'
 
@@ -20,7 +22,14 @@ import AimWizardView from './views/AimWizardView.vue'
 const TUTOR_ROUTE = { name: 'aim-tutor' } as const
 
 /** Route names that belong to the teacher side of AIM. */
-const TEACHER_ROUTES = new Set(['aim-exercises', 'aim-wizard', 'aim-library', 'aim-roster'])
+const TEACHER_ROUTES = new Set([
+  'aim-exercises',
+  'aim-wizard',
+  'aim-library',
+  'aim-sessions',
+  'aim-monitor',
+  'aim-roster',
+])
 
 export const aimModule: CosecreModule = {
   id: 'aim',
@@ -30,6 +39,8 @@ export const aimModule: CosecreModule = {
     { path: 'aim/exercicis', name: 'aim-exercises', component: AimExercisesView },
     { path: 'aim/exercicis/:id', name: 'aim-wizard', component: AimWizardView },
     { path: 'aim/biblioteca', name: 'aim-library', component: AimLibraryView },
+    { path: 'aim/sessions', name: 'aim-sessions', component: AimSessionsView },
+    { path: 'aim/sessions/:id', name: 'aim-monitor', component: AimMonitorView },
     { path: 'aim/alumnat', name: 'aim-roster', component: AimRosterView },
   ],
 
@@ -56,6 +67,13 @@ export const aimModule: CosecreModule = {
       name: 'aim-library',
       label: CA.nav.library,
       icon: 'books',
+      visible: () => useAimMembership().isTeacher.value,
+    },
+    {
+      name: 'aim-sessions',
+      label: CA.nav.sessions,
+      icon: 'play',
+      childRoutes: ['aim-monitor'],
       visible: () => useAimMembership().isTeacher.value,
     },
     {

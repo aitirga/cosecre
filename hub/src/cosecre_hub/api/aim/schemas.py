@@ -139,3 +139,77 @@ class AimPlotResponse(BaseModel):
 class AimPublishRequest(BaseModel):
     topics: list[str] = Field(default_factory=list)
     level: str = ""
+
+
+# ── Sessions ────────────────────────────────────────────────────────────────
+AimSessionStatus = Literal["waiting", "live", "ended"]
+AimParticipantStatus = Literal["waiting", "active", "finished"]
+
+
+class AimSessionCreate(BaseModel):
+    exercise_id: int
+    token_budget: int | None = Field(default=None, ge=1_000)
+
+
+class AimSessionRead(BaseModel):
+    id: str
+    exercise_id: int
+    exercise_title: str
+    status: AimSessionStatus
+    join_code: str
+    token_budget: int
+    participant_count: int
+    created_at: datetime
+    started_at: datetime | None
+    ended_at: datetime | None
+
+
+class AimParticipantRead(BaseModel):
+    id: int
+    user_id: int
+    display_name: str
+    status: AimParticipantStatus
+    tokens_used: int
+    #: Summary refreshes. Billed, but kept off the student's own progress bar.
+    context_tokens: int
+    effective_budget: int
+    turn_count: int
+    last_activity_at: datetime | None
+    last_message_preview: str
+    #: Derived, never stored: several turns with no sign of moving on.
+    stuck: bool
+
+
+class AimParticipantUpdate(BaseModel):
+    token_budget_override: int | None = Field(default=None, ge=0)
+    status: AimParticipantStatus | None = None
+
+
+class AimMonitorRead(BaseModel):
+    session: AimSessionRead
+    participants: list[AimParticipantRead]
+
+
+class AimJoinRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=8)
+
+
+class AimStudentExercise(BaseModel):
+    """What the student is allowed to see: the problem, never the ladder.
+
+    The difficulty ladder and the anticipated issues are the tutor's script.
+    Handing them over would be handing over the answers.
+    """
+
+    title: str
+    statement_md: str
+    plots: list[AimPlotSpec]
+
+
+class AimStudentState(BaseModel):
+    state: Literal["idle", "waiting", "live", "ended"]
+    session: AimSessionRead | None = None
+    participant_id: int | None = None
+    exercise: AimStudentExercise | None = None
+    tokens_used: int = 0
+    effective_budget: int = 0

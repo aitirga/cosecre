@@ -134,3 +134,55 @@ export interface AimGeometryPlot {
 }
 
 export type AimPlotSpec = AimFunctionPlot | AimPointsPlot | AimBarsPlot | AimGeometryPlot
+
+// ── Sessions ────────────────────────────────────────────────────────────────
+export type AimSessionStatus = 'waiting' | 'live' | 'ended'
+export type AimParticipantStatus = 'waiting' | 'active' | 'finished'
+
+export interface AimSession {
+  id: string
+  exercise_id: number
+  exercise_title: string
+  status: AimSessionStatus
+  join_code: string
+  token_budget: number
+  participant_count: number
+  created_at: string
+  started_at: string | null
+  ended_at: string | null
+}
+
+export interface AimParticipant {
+  id: number
+  user_id: number
+  display_name: string
+  status: AimParticipantStatus
+  tokens_used: number
+  context_tokens: number
+  effective_budget: number
+  turn_count: number
+  last_activity_at: string | null
+  last_message_preview: string
+  stuck: boolean
+}
+
+export interface AimMonitor {
+  session: AimSession
+  participants: AimParticipant[]
+}
+
+/** What a student is allowed to see: the problem, never the tutor's script. */
+export interface AimStudentExercise {
+  title: string
+  statement_md: string
+  plots: AimPlotSpec[]
+}
+
+export interface AimStudentState {
+  state: 'idle' | 'waiting' | 'live' | 'ended'
+  session: AimSession | null
+  participant_id: number | null
+  exercise: AimStudentExercise | null
+  tokens_used: number
+  effective_budget: number
+}
