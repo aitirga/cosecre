@@ -10,20 +10,28 @@
 import type { CosecreModule } from '../types'
 import { useAimMembership } from './composables/useAimMembership'
 import { CA } from './strings'
+import AimExercisesView from './views/AimExercisesView.vue'
+import AimLibraryView from './views/AimLibraryView.vue'
 import AimRosterView from './views/AimRosterView.vue'
 import AimStudentView from './views/AimStudentView.vue'
+import AimWizardView from './views/AimWizardView.vue'
 
 /** The student surface, which has no hub sidebar. */
 const TUTOR_ROUTE = { name: 'aim-tutor' } as const
 
 /** Route names that belong to the teacher side of AIM. */
-const TEACHER_ROUTES = new Set(['aim-roster'])
+const TEACHER_ROUTES = new Set(['aim-exercises', 'aim-wizard', 'aim-library', 'aim-roster'])
 
 export const aimModule: CosecreModule = {
   id: 'aim',
   appSlug: 'cosecre-aim',
 
-  routes: [{ path: 'aim/alumnat', name: 'aim-roster', component: AimRosterView }],
+  routes: [
+    { path: 'aim/exercicis', name: 'aim-exercises', component: AimExercisesView },
+    { path: 'aim/exercicis/:id', name: 'aim-wizard', component: AimWizardView },
+    { path: 'aim/biblioteca', name: 'aim-library', component: AimLibraryView },
+    { path: 'aim/alumnat', name: 'aim-roster', component: AimRosterView },
+  ],
 
   // Outside `AppShell`, so it must ask for authentication itself — the shell's
   // parent route is what supplies that to everything else.
@@ -37,6 +45,19 @@ export const aimModule: CosecreModule = {
   ],
 
   nav: [
+    {
+      name: 'aim-exercises',
+      label: CA.nav.exercises,
+      icon: 'sigma',
+      childRoutes: ['aim-wizard'],
+      visible: () => useAimMembership().isTeacher.value,
+    },
+    {
+      name: 'aim-library',
+      label: CA.nav.library,
+      icon: 'books',
+      visible: () => useAimMembership().isTeacher.value,
+    },
     {
       name: 'aim-roster',
       label: CA.nav.roster,

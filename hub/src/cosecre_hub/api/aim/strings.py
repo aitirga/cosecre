@@ -20,3 +20,10 @@ LAST_TEACHER = "No pots treure l'últim professor d'AIM."
 MEMBER_NOT_FOUND = "Aquesta persona no és membre d'AIM."
 USER_NOT_FOUND = "Aquest usuari no existeix."
 UNKNOWN_ROLE = "El rol ha de ser 'teacher' o 'student'."
+
+# ── Exercises ───────────────────────────────────────────────────────────────
+EXERCISE_NOT_FOUND = "Aquest exercici no existeix."
+NOT_YOUR_EXERCISE = "Aquest exercici no és teu."
+EXERCISE_IN_USE = "No pots esborrar un exercici que ja s'ha fet servir en una sessió."
+NOT_REFINED = "Refina l'exercici amb la IA abans de publicar-lo."
+NO_MODEL = "Aquest hub no té cap model configurat."

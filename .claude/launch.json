@@ -4,7 +4,18 @@
     {
       "name": "cosecre",
       "runtimeExecutable": "just",
-      "runtimeArgs": ["dev"],
+      "runtimeArgs": [
+        "dev"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "cosecre-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:web"
+      ],
       "port": 5173
     }
   ]
