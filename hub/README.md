@@ -76,6 +76,13 @@ Everything below is prefixed with `/api/v1`.
 | LLM | `GET /llm/providers`, `POST /llm/complete`, `/llm/structured`, `/llm/extract` | `structured` takes a JSON Schema; `extract` takes a file. |
 | Documents | `GET/PUT /documents/settings` | Google Sheet target, tab names, model, prompt. |
 | Documents | `.../documents/invoices`, `.../documents/tickets` | `upload`, list, get, `PATCH`, `validate`, `file`, `DELETE`, `jobs/{id}` |
+| AIM · roster | `GET /aim/me`, `GET /aim/members`, `PUT/DELETE /aim/members/{user_id}`, `GET /aim/roster/candidates` | `me` answers for anyone, including "no role". Teacher-only otherwise. |
+| AIM · exercises | `GET /aim/topics`, `GET/POST /aim/exercises`, `GET/PATCH/DELETE /aim/exercises/{id}` | `?scope=mine\|library`. Delete is refused once a session exists. |
+| AIM · authoring | `PUT .../draft`, `POST .../refine`, `.../plots`, `.../publish`, `.../clone` | The prompt and the schema stay on the server. |
+| AIM · sessions | `GET/POST /aim/sessions`, `POST .../start`, `.../end`, `GET .../monitor`, `PATCH .../participants/{id}` | Teacher-only. A session pins the exercise version it opened with. |
+| AIM · student | `GET /aim/student/current`, `POST /aim/sessions/join` | `current` attaches the student on first call. |
+| AIM · chat | `GET/POST /aim/participants/{id}/messages`, `POST .../attachments`, `GET /aim/attachments/{id}/file` | Readable by the student and by that session's teacher, nobody else. |
+| AIM · chat | `GET /aim/messages/{id}/stream` | **NDJSON.** Replayable: a finished message re-emits its stored text. |
 
 ### `GET /meta` is the integration point
 
@@ -88,8 +95,8 @@ A new app does not need to be told what a hub can do — it asks:
   "api_version": "1",
   "api_prefix": "/api/v1",
   "capabilities": { "auth": true, "app_settings": true, "llm": true, "documents": true,
-                    "google_sheets": false },
-  "apps": ["cosecre-docs", "cosecre-print"],
+                    "google_sheets": false, "aim": true },
+  "apps": ["cosecre-aim", "cosecre-docs"],
   "accepts_registration": false,
   "has_users": true
 }
@@ -108,6 +115,19 @@ typed before it holds any credentials for it.
 
 No server-side change is needed for any of that.
 
+An app that *does* want server-side code is one directory and one line.
+[`api/aim/`](src/cosecre_hub/api/aim) is the worked example: its models, schemas,
+dependencies and routes all live together, and `api/__init__.py` gains a single
+`include_router`. That is a deliberate departure from `api/documents/`, which
+spreads across the shared `models.py` and `schemas/` because it inherited a
+schema that has to stay byte-compatible with the original backend — a constraint
+a new app does not have.
+
+**New tables need nothing in `ADDED_COLUMNS`.** `Base.metadata.create_all` makes
+them. That list is only for columns added to a table an already-deployed
+database has, so it becomes relevant the *second* time an app ships — at which
+point add the column there rather than hand-editing a live SQLite file.
+
 ## Design notes
 
 **Refresh tokens are stored hashed and rotate on every use.** A leaked database
@@ -125,6 +145,18 @@ nobody can administer and no API path back.
 **The LLM registry is injected, not imported.** `create_app(settings,
 llm_registry=…)` is what lets the whole test suite exercise the model paths
 without a network call, and what makes a second provider a one-file change.
+
+**`stream()` is concrete on the provider contract, not abstract.** The default
+answers in one shot and yields it as a single delta. Making it abstract would
+break every provider that cannot stream, and the test fake, for no benefit: a
+vendor with no streaming API should give a slow answer, not a 500.
+`test_llm.py` has a test whose only job is to stop someone tidying that away.
+
+**A streaming endpoint must not use the request-scoped session.** `get_db`'s
+teardown races a response that is still producing bytes. `api/aim/chat.py` takes
+`app.state.session_factory` and opens a short-lived session at the terminal
+event instead — the failure mode otherwise is detached-instance errors that only
+appear under load.
 
 **Strict JSON Schema is normalised for you.** Structured-output modes require
 every object to list all its properties as required and to forbid extras;
