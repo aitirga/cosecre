@@ -18,12 +18,16 @@ Three pieces, one of which does all the work:
 | [**frontend/**](frontend) | `@cosecre/web` | The web app. Vue 3 + Vite, installable as a PWA — which is what makes phone camera capture work. |
 | [**desktop/**](desktop) | `cosecre-desktop` | Windows, macOS and Linux. Renders the *same* Vue app, with its own hub picker and auto-updates. |
 
-Two apps run on it today, and the shell hosts both without knowing what either does:
+One app runs on it today, and the shell hosts it without knowing what it does:
 
 | | |
 |---|---|
 | **Documents** | Photograph an invoice or a receipt, and it comes back as structured fields in a shared spreadsheet — checked by a person before it counts. |
-| **AIM** | Artificial Intelligence and Mathematics. A teacher writes an exercise, runs it for a class, and every student gets their own tutor that guides without giving the solution. |
+
+A second, [AIM](https://github.com/aitirga/aim), runs as its own server and its
+own client and uses this hub for sign-in. That is the arrangement the hub was
+built for and the one worth copying: an app that outgrows being a module here
+does not have to be rewritten to leave — see *Apps on the hub* below.
 
 ```
 ┌──────────────┐   ┌──────────────┐   ┌───────────────┐
@@ -228,25 +232,27 @@ The hub is not invoice-specific. A new app needs no server-side change:
 4. `POST /api/v1/llm/complete`, `/llm/structured` or `/llm/extract` instead of
    shipping a model API key.
 
-[hub/README.md](hub/README.md) has the full API table, and
-[`hub/src/cosecre_hub/api/aim/`](hub/src/cosecre_hub/api/aim) is a worked example
-— one package, one `include_router` line.
+[hub/README.md](hub/README.md) has the full API table.
 
 On the client, an app is a `CosecreModule`: its routes, its navigation, its own
 bootstrap and its own route authorisation, registered in
 [`frontend/src/app.ts`](frontend/src/app.ts). The shell knows none of it and asks
-the registry instead.
+[the registry](frontend/src/modules/registry.ts) instead.
 
 **One rule keeps a module liftable: nothing outside `frontend/src/modules/<id>/`
-imports from inside it.** AIM borrows only transport (`api/client`), session
-(`composables/useAuth`) and two shared components — which is what makes
+imports from inside it.** A module may borrow transport (`api/client`), session
+(`composables/useAuth`) and shared components, and nothing else.
 
-```ts
-createCosecreApp({ modules: [aimModule], client: 'aim' })
-```
+That rule has been paid off once. [AIM](https://github.com/aitirga/aim) started
+as a module here — `api/aim/` on the server, `modules/aim/` on the client — and
+moved to its own repository without either side being rewritten: the routes were
+already one package behind one `include_router`, and the client already imported
+nothing but transport and session. It now runs its own server and signs people
+in against this hub over `/auth/login` and `/auth/hub/exchange`.
 
-a standalone deployment of AIM alone rather than an aspiration. Write that file
-the day you need it; an unused build target only rots.
+Which is the point. A module here is a cheap way to start an app, and leaving is
+a move, not a rewrite — as long as nobody reaches across the boundary in the
+meantime.
 
 ## Tests
 
@@ -270,22 +276,11 @@ are in [`frontend/src/style.css`](frontend/src/style.css). Shared primitives
 component, because a button that is 6px in one view and 8px in another is what
 made the previous UI look improvised.
 
-AIM's student surface re-points those same tokens on `.aim-student` rather than
-overriding any primitive, so `.card`, `.btn-primary` and `.progress` follow into
-red-and-white without being touched. Its red sits at hue ~358° rather than the
-hub accent's ~16°, which would read as the terracotta rendering wrong. The
-`--ink-*` family is deliberately left alone: every text tone still clears AA on
-the new surfaces, which is the test of whether a theme extends the system or
-fights it.
-
-**Language.** The hub speaks English; AIM's own screens speak Catalan, because
-its users are Catalan-speaking teachers and students. The seam is deliberate —
-half-translating one surface reads worse than a clean boundary, and the hub
-already speaks Catalan in its domain (`Factures`, `Tiquets`, `proveidor`). AIM's
-copy is one typed object in
-[`frontend/src/modules/aim/strings.ts`](frontend/src/modules/aim/strings.ts), so
-`vue-tsc` catches a typo'd key at build time — which is exactly what an i18n
-library gives up.
+A module that wants to look different re-points those tokens on a scoped class
+rather than overriding a primitive, so `.card`, `.btn-primary` and `.progress`
+follow without being touched. Leave the `--ink-*` family alone: whether every
+text tone still clears AA on the new surfaces is the test of whether a theme
+extends the system or fights it.
 
 The interface uses a system font stack and no webfont. That is not only a
 performance choice: the packaged desktop app may have no internet access on first
@@ -305,9 +300,7 @@ npm run icons
 hub/                    # the server (Python, uv)
 ├── src/cosecre_hub/
 │   ├── api/            # meta, auth, users, apps, llm, documents
-│   │   └── aim/        # AIM: models, schemas, routes — one directory
 │   ├── services/llm/   # provider contract + OpenAI implementation
-│   ├── services/aim/   # exercise authoring, plots, tutoring, profiles
 │   └── services/       # Sheets/Drive sync, storage, extraction
 └── tests/              # no credentials, no network
 
@@ -316,7 +309,6 @@ frontend/               # @cosecre/web — the UI both clients render
     ├── api/client.ts   # runtime-configurable base URL + pluggable token store
     ├── app.ts          # createCosecreApp(), the shared entry point
     ├── modules/        # one directory per app; registry.ts is the plug point
-    │   └── aim/        # AIM's whole client: views, plots, Catalan strings
     └── platform.ts     # what the surrounding shell can do
 
 desktop/                # cosecre-desktop — Electron

@@ -254,3 +254,186 @@ def test_a_provider_without_a_stream_implementation_falls_back_to_complete():
     assert [event.type for event in events] == ["delta", "completed"]
     assert events[0].text == "one shot"
     assert events[1].usage.total_tokens == 4
+
+
+# ── Streaming ───────────────────────────────────────────────────────────────
+#
+# The gateway exists so exactly one machine holds a model key. Streaming had to
+# join it for the same reason a client app streams at all: a tutor that answers
+# in one silent lump reads as broken, and buying a second API key to avoid that
+# would defeat the gateway.
+
+
+def _frames(response) -> list[dict]:
+    return [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+
+def test_a_stream_arrives_as_deltas_then_one_completed_frame(hub):
+    client, fake = hub
+    headers = register_admin(client)
+
+    response = client.post(
+        "/api/v1/llm/stream", headers=headers, json={"prompt": "explain gradients"}
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    frames = _frames(response)
+
+    assert [frame["type"] for frame in frames[:-1]] == ["delta"] * (len(frames) - 1)
+    assert frames[-1]["type"] == "completed"
+    # The joined deltas and the terminal text are the same answer, which is what
+    # lets a client render optimistically and then trust the final frame.
+    assert "".join(frame["text"] for frame in frames[:-1]) == fake.text
+    assert frames[-1]["text"] == fake.text
+    assert frames[-1]["usage"]["total_tokens"] == 18
+    assert frames[-1]["model"] == "fake-model-1"
+
+
+def test_a_mid_stream_failure_is_a_frame_and_never_a_silent_close(hub):
+    """The 200 has already gone out, so a failure cannot be a status code.
+
+    A client that only counts deltas must be able to tell a finished answer from
+    an abandoned one, and the only thing that distinguishes them is this frame.
+    """
+    client, fake = hub
+    fake.stream_error = "the provider gave up"
+    headers = register_admin(client)
+
+    frames = _frames(
+        client.post("/api/v1/llm/stream", headers=headers, json={"prompt": "hello"})
+    )
+
+    assert frames[-1] == {
+        "type": "error",
+        "code": "provider_failed",
+        "detail": "the provider gave up",
+    }
+    assert not any(frame["type"] == "completed" for frame in frames)
+
+
+def test_an_unconfigured_provider_says_so_in_the_stream(hub):
+    client, fake = hub
+    fake.configured = False
+    headers = register_admin(client)
+
+    frames = _frames(
+        client.post("/api/v1/llm/stream", headers=headers, json={"prompt": "hello"})
+    )
+
+    assert frames == [
+        {
+            "type": "error",
+            "code": "not_configured",
+            "detail": "The fake provider has no credentials.",
+        }
+    ]
+
+
+def test_streaming_needs_a_token(hub):
+    client, _ = hub
+    assert client.post("/api/v1/llm/stream", json={"prompt": "hello"}).status_code == 401
+
+
+# ── Inline images ───────────────────────────────────────────────────────────
+#
+# A client with its own storage cannot hand the hub a path — the file is on the
+# client's disk. So the bytes travel in the message and the hub materialises
+# them for the duration of the call.
+
+#: The smallest valid PNG: 1×1, transparent.
+_PNG = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+    "YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
+
+
+def test_an_inline_image_reaches_the_provider_as_a_readable_file(hub):
+    """The fake opens it during the call, because that is when it exists.
+
+    `Attachment` carries a path rather than bytes so a provider can stream a
+    4 MB photo off disk; this proves the path it gets is one it can open.
+    """
+    client, fake = hub
+    headers = register_admin(client)
+
+    response = client.post(
+        "/api/v1/llm/complete",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "what is this?", "images": [_PNG]}]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(fake.seen_images) == 1
+    mime_type, raw = fake.seen_images[0]
+    assert mime_type == "image/png"
+    assert raw.startswith(b"\x89PNG")
+
+
+def test_the_temp_file_does_not_outlive_the_request(hub):
+    """It is a passthrough. The hub stores documents; it does not store these."""
+    client, fake = hub
+    headers = register_admin(client)
+
+    client.post(
+        "/api/v1/llm/complete",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "what is this?", "images": [_PNG]}]},
+    )
+
+    assert not fake.completions[-1].messages[0].attachments[0].path.exists()
+
+
+def test_an_image_on_an_assistant_turn_is_dropped(hub):
+    """There is no output-image input part; sending one would be a 400."""
+    client, fake = hub
+    headers = register_admin(client)
+
+    client.post(
+        "/api/v1/llm/complete",
+        headers=headers,
+        json={
+            "messages": [
+                {"role": "user", "content": "here"},
+                {"role": "assistant", "content": "and here", "images": [_PNG]},
+            ]
+        },
+    )
+
+    assert fake.seen_images == []
+
+
+def test_something_that_is_not_a_data_url_is_refused(hub):
+    client, _ = hub
+    headers = register_admin(client)
+
+    response = client.post(
+        "/api/v1/llm/complete",
+        headers=headers,
+        json={
+            "messages": [
+                {"role": "user", "content": "hi", "images": ["https://example.com/cat.png"]}
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert "data:" in response.json()["detail"]
+
+
+def test_a_pdf_data_url_is_refused_because_it_is_not_an_inline_type(hub):
+    client, _ = hub
+    headers = register_admin(client)
+
+    response = client.post(
+        "/api/v1/llm/complete",
+        headers=headers,
+        json={
+            "messages": [
+                {"role": "user", "content": "hi", "images": ["data:application/pdf;base64,JVBERi0="]}
+            ]
+        },
+    )
+
+    assert response.status_code == 422

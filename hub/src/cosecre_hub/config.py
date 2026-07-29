@@ -12,10 +12,6 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 #: settings in the shared per-app settings bag.
 DOCUMENTS_APP_SLUG = "cosecre-docs"
 
-#: Slug of the maths-tutoring app. Its settings live in the same bag; see
-#: ``services/aim/settings.py`` for the keys it reads.
-AIM_APP_SLUG = "cosecre-aim"
-
 
 class Settings(BaseSettings):
     """Hub configuration.

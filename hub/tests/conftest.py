@@ -45,6 +45,11 @@ class FakeProvider(LLMProvider):
     structures: list[StructuredRequest] = field(default_factory=list)
     extractions: list[FileExtractionRequest] = field(default_factory=list)
     streams: list[CompletionRequest] = field(default_factory=list)
+    #: `(mime_type, bytes)` for every image the provider was handed, read while
+    #: the request was still in flight. Recorded here rather than checked by the
+    #: test afterwards because the gateway's temp files are gone by then — which
+    #: is the point of them, and its own assertion.
+    seen_images: list[tuple[str, bytes]] = field(default_factory=list)
     #: How many `delta` frames one answer arrives in.
     stream_chunks: int = 3
     #: Set to make the stream die partway, which is the case worth testing.
@@ -63,8 +68,15 @@ class FakeProvider(LLMProvider):
         if not self.configured:
             raise LLMNotConfigured("The fake provider has no credentials.")
 
+    def _read_attachments(self, request) -> None:
+        """Open every attachment now, the way a real provider would."""
+        for message in request.messages:
+            for item in message.attachments:
+                self.seen_images.append((item.mime_type, item.path.read_bytes()))
+
     def complete(self, request: CompletionRequest) -> CompletionResult:
         self._guard()
+        self._read_attachments(request)
         self.completions.append(request)
         return CompletionResult(
             text=self.text,
@@ -81,6 +93,7 @@ class FakeProvider(LLMProvider):
         endpoint that assembles these.
         """
         self._guard()
+        self._read_attachments(request)
         self.streams.append(request)
         for index, part in enumerate(_split(self.text, self.stream_chunks)):
             if index == 1 and self.stream_error:
@@ -96,6 +109,7 @@ class FakeProvider(LLMProvider):
 
     def structured(self, request: StructuredRequest) -> StructuredResult:
         self._guard()
+        self._read_attachments(request)
         self.structures.append(request)
         return StructuredResult(
             data=dict(self.structured_payload),

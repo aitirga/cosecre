@@ -81,9 +81,9 @@ export function useModules() {
    * Where "home" is.
    *
    * First module to claim it wins, so modules are registered specific-first and
-   * general-last: AIM claims home only for a student who belongs nowhere else,
-   * while documents claims `invoices` for everybody. Reversing that order would
-   * strand students on the invoice table.
+   * general-last: documents claims `invoices` for everybody, so a module that
+   * only claims home for *some* people has to be asked before it. Reversing
+   * that order strands those people on a screen that was never theirs.
    *
    * The fallback is `account` rather than `/`, because `/` redirects *here* and
    * a home route that resolves to itself is an infinite redirect. Every

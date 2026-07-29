@@ -22,6 +22,11 @@ class UsageRead(BaseModel):
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
+    #: Inline images, as `data:` URLs. A client that has its own storage cannot
+    #: hand the hub a path — the file is on the client's disk, not this one — so
+    #: the bytes travel with the message. Ignored on an assistant turn: there is
+    #: no output-image input part, and a provider would reject one.
+    images: list[str] = Field(default_factory=list)
 
 
 class _BaseLLMRequest(BaseModel):

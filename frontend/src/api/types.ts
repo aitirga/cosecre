@@ -16,7 +16,6 @@ export interface HubCapabilities {
   llm: boolean
   documents: boolean
   google_sheets: boolean
-  aim: boolean
 }
 
 /** The shape of `GET /meta` — the one hub endpoint that answers without a token. */

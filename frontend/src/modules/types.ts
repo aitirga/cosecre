@@ -27,8 +27,8 @@ export interface CosecreNavItem {
   childRoutes?: string[]
   /**
    * Runtime gate, re-evaluated as reactive state changes. Distinct from
-   * `adminOnly`, which is about the hub; this is about the module — AIM hides
-   * the teacher entries from students.
+   * `adminOnly`, which is about the hub; this is about the module, and about
+   * whatever standing it gives people of its own.
    */
   visible?: () => boolean
 }

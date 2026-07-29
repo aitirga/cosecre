@@ -19,14 +19,6 @@ ALLOWED_CONTENT_TYPES = {
     "image/png": ".png",
 }
 
-#: Images only. AIM's chat takes photos of a student's working; a PDF
-#: mid-conversation is not useful, and it would need the upload-then-reference
-#: path rather than an inline part.
-IMAGE_CONTENT_TYPES = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-}
-
 #: Generous for a phone photo of an invoice, small enough that a runaway client
 #: cannot fill the disk in one request.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -38,35 +30,18 @@ def sanitize_filename(filename: str) -> str:
     return safe_name or "document"
 
 
-async def save_upload_file(
-    file: UploadFile,
-    internal_doc_number: str,
-    settings: Settings,
-    *,
-    allowed: dict[str, str] | None = None,
-    subdirectory: str | None = None,
-) -> Path:
-    """Stream an upload to disk.
-
-    Both keyword arguments default to the documents module's original
-    behaviour. AIM passes an image-only allow-list and its own subdirectory, so
-    a student's photo never lands beside an invoice.
-    """
-    accepted = allowed or ALLOWED_CONTENT_TYPES
-    if file.content_type not in accepted:
+async def save_upload_file(file: UploadFile, internal_doc_number: str, settings: Settings) -> Path:
+    if file.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Only {', '.join(sorted(accepted))} files are supported.",
+            detail="Only PDF, PNG, and JPEG files are supported.",
         )
 
-    extension = Path(file.filename or "").suffix.lower() or accepted[file.content_type]
+    extension = Path(file.filename or "").suffix.lower() or ALLOWED_CONTENT_TYPES[file.content_type]
     if extension == ".jpeg":
         extension = ".jpg"
     safe_name = sanitize_filename(file.filename or f"{internal_doc_number}{extension}")
-
-    directory = settings.upload_dir / subdirectory if subdirectory else settings.upload_dir
-    directory.mkdir(parents=True, exist_ok=True)
-    target_path = directory / f"{internal_doc_number}-{safe_name}"
+    target_path = settings.upload_dir / f"{internal_doc_number}-{safe_name}"
 
     written = 0
     try:
