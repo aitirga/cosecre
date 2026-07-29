@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from ...config import Settings
@@ -13,6 +15,7 @@ from .base import (
     LLMNotConfigured,
     LLMProvider,
     Message,
+    StreamEvent,
     StructuredRequest,
     StructuredResult,
     Usage,
@@ -92,6 +95,58 @@ class OpenAIProvider(LLMProvider):
             usage=_usage(response),
         )
 
+    def stream(self, request: CompletionRequest) -> Iterator[StreamEvent]:
+        """Stream a completion off the Responses API.
+
+        Event names verified against the installed SDK rather than assumed:
+        ``response.output_text.delta`` carries increments, ``response.completed``
+        carries the finished response with its usage, and ``error`` is the
+        vendor reporting a mid-stream failure — which is raised, not yielded,
+        so a partial answer can never be mistaken for a whole one.
+        """
+        client = self._openai()
+        model = request.model or self.default_model()
+        chunks: list[str] = []
+
+        try:
+            stream = client.responses.create(
+                model=model,
+                instructions=request.instructions or None,
+                input=_as_input(request.messages),
+                max_output_tokens=request.max_output_tokens,
+                stream=True,
+                **self._extra_args(request.temperature),
+            )
+            for event in stream:
+                kind = getattr(event, "type", "")
+                if kind == "response.output_text.delta":
+                    delta = getattr(event, "delta", "") or ""
+                    if delta:
+                        chunks.append(delta)
+                        yield StreamEvent(type="delta", text=delta)
+                elif kind == "error":
+                    raise LLMError(getattr(event, "message", "") or "El model ha fallat.")
+                elif kind == "response.completed":
+                    response = getattr(event, "response", None)
+                    yield StreamEvent(
+                        type="completed",
+                        text=getattr(response, "output_text", None) or "".join(chunks),
+                        usage=_usage(response),
+                        model=model,
+                        provider=self.id,
+                    )
+                    return
+        except LLMError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — SDK raises a wide family
+            raise LLMError(_describe(exc)) from exc
+
+        # The stream ended without a terminal event. Everything received is
+        # still worth returning; usage is simply unknown.
+        yield StreamEvent(
+            type="completed", text="".join(chunks), usage=Usage(), model=model, provider=self.id
+        )
+
     def structured(self, request: StructuredRequest) -> StructuredResult:
         client = self._openai()
         model = request.model or self.default_model()
@@ -120,14 +175,7 @@ class OpenAIProvider(LLMProvider):
         content: list[dict[str, Any]] = [{"type": "input_text", "text": request.prompt}]
 
         if request.mime_type in _INLINE_IMAGE_TYPES:
-            encoded = base64.b64encode(request.file_path.read_bytes()).decode("utf-8")
-            content.append(
-                {
-                    "type": "input_image",
-                    "image_url": f"data:{request.mime_type};base64,{encoded}",
-                    "detail": "high",
-                }
-            )
+            content.append(_image_part(request.file_path, request.mime_type))
         else:
             # PDFs (and anything else) have to be uploaded first; there is no
             # base64 input part for them.
@@ -160,21 +208,36 @@ class OpenAIProvider(LLMProvider):
 # --------------------------------------------------------------------- helpers
 
 
+def _image_part(path: Path, mime_type: str) -> dict[str, Any]:
+    encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
+    return {
+        "type": "input_image",
+        "image_url": f"data:{mime_type};base64,{encoded}",
+        "detail": "high",
+    }
+
+
 def _as_input(messages: list[Message]) -> list[dict[str, Any]]:
-    return [
-        {
-            "role": message.role,
-            "content": [
-                {
-                    # The Responses API distinguishes input from output text, and
-                    # an assistant turn replayed as `input_text` is rejected.
-                    "type": "output_text" if message.role == "assistant" else "input_text",
-                    "text": message.content,
-                }
-            ],
-        }
-        for message in messages
-    ]
+    payload: list[dict[str, Any]] = []
+    for message in messages:
+        content: list[dict[str, Any]] = [
+            {
+                # The Responses API distinguishes input from output text, and an
+                # assistant turn replayed as `input_text` is rejected.
+                "type": "output_text" if message.role == "assistant" else "input_text",
+                "text": message.content,
+            }
+        ]
+        # User turns only: there is no output-image input part, so attaching one
+        # to an assistant turn would be a 400 rather than a picture.
+        if message.role != "assistant":
+            content.extend(
+                _image_part(item.path, item.mime_type)
+                for item in message.attachments
+                if item.mime_type in _INLINE_IMAGE_TYPES
+            )
+        payload.append({"role": message.role, "content": content})
+    return payload
 
 
 def _json_schema_format(name: str, schema: dict[str, Any]) -> dict[str, Any]:

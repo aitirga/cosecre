@@ -213,3 +213,34 @@ class AimStudentState(BaseModel):
     exercise: AimStudentExercise | None = None
     tokens_used: int = 0
     effective_budget: int = 0
+
+
+# ── Chat ────────────────────────────────────────────────────────────────────
+class AimAttachmentRead(BaseModel):
+    id: int
+    content_type: str
+    source_file_name: str
+
+
+class AimMessageRead(BaseModel):
+    id: int
+    role: Literal["user", "assistant"]
+    content: str
+    status: Literal["complete", "streaming", "failed"]
+    total_tokens: int | None
+    error_message: str | None
+    created_at: datetime
+    attachments: list[AimAttachmentRead] = Field(default_factory=list)
+
+
+class AimSendMessage(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+    #: Photos uploaded ahead of the message, adopted when it is sent.
+    attachment_ids: list[int] = Field(default_factory=list)
+
+
+class AimSentMessages(BaseModel):
+    """The student's turn and the empty assistant row waiting to be streamed."""
+
+    question: AimMessageRead
+    reply: AimMessageRead

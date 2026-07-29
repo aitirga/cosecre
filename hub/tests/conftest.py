@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -13,9 +14,11 @@ from cosecre_hub.services.llm import (
     CompletionRequest,
     CompletionResult,
     FileExtractionRequest,
+    LLMError,
     LLMNotConfigured,
     LLMProvider,
     LLMRegistry,
+    StreamEvent,
     StructuredRequest,
     StructuredResult,
     Usage,
@@ -41,6 +44,11 @@ class FakeProvider(LLMProvider):
     completions: list[CompletionRequest] = field(default_factory=list)
     structures: list[StructuredRequest] = field(default_factory=list)
     extractions: list[FileExtractionRequest] = field(default_factory=list)
+    streams: list[CompletionRequest] = field(default_factory=list)
+    #: How many `delta` frames one answer arrives in.
+    stream_chunks: int = 3
+    #: Set to make the stream die partway, which is the case worth testing.
+    stream_error: str | None = None
 
     def is_configured(self) -> bool:
         return self.configured
@@ -63,6 +71,27 @@ class FakeProvider(LLMProvider):
             model=request.model or self.default_model(),
             provider=self.id,
             usage=Usage(input_tokens=11, output_tokens=7, total_tokens=18),
+        )
+
+    def stream(self, request: CompletionRequest) -> Iterator[StreamEvent]:
+        """Answer in pieces, so a test can see the frames arrive in order.
+
+        Overriding rather than inheriting the base default on purpose: the
+        default answers in one shot, which would hide any ordering bug in the
+        endpoint that assembles these.
+        """
+        self._guard()
+        self.streams.append(request)
+        for index, part in enumerate(_split(self.text, self.stream_chunks)):
+            if index == 1 and self.stream_error:
+                raise LLMError(self.stream_error)
+            yield StreamEvent(type="delta", text=part)
+        yield StreamEvent(
+            type="completed",
+            text=self.text,
+            usage=Usage(input_tokens=11, output_tokens=7, total_tokens=18),
+            model=request.model or self.default_model(),
+            provider=self.id,
         )
 
     def structured(self, request: StructuredRequest) -> StructuredResult:
@@ -99,6 +128,11 @@ class FakeProvider(LLMProvider):
             provider=self.id,
             usage=Usage(total_tokens=9),
         )
+
+
+def _split(text: str, parts: int) -> list[str]:
+    size = max(1, -(-len(text) // parts))
+    return [text[index : index + size] for index in range(0, len(text), size)] or [""]
 
 
 def build_settings(tmp_path: Path, **overrides: Any) -> Settings:

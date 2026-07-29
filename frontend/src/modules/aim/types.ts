@@ -186,3 +186,26 @@ export interface AimStudentState {
   tokens_used: number
   effective_budget: number
 }
+
+// ── Chat ────────────────────────────────────────────────────────────────────
+export interface AimAttachment {
+  id: number
+  content_type: string
+  source_file_name: string
+}
+
+export interface AimMessage {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  status: 'complete' | 'streaming' | 'failed'
+  total_tokens: number | null
+  error_message: string | null
+  created_at: string
+  attachments: AimAttachment[]
+}
+
+export interface AimSentMessages {
+  question: AimMessage
+  reply: AimMessage
+}

@@ -55,12 +55,15 @@ def _new_session(client: TestClient, admin: dict[str, str], exercise_id: int) ->
 def test_a_session_starts_waiting_with_a_readable_join_code(classroom):
     client, admin, exercise_id, _, _ = classroom
 
-    body = _new_session(client, admin, exercise_id)
+    codes = {_new_session(client, admin, exercise_id)["join_code"] for _ in range(12)}
 
-    assert body["status"] == "waiting"
-    assert len(body["join_code"]) == 6
-    # No vowels and no look-alikes — this gets read off a projector.
-    assert not set(body["join_code"]) & set("AEIOU01ILO")
+    assert len(codes) == 12, "codes must not repeat"
+    for code in codes:
+        assert len(code) == 6
+        # Read off a projector: no vowels, so it can never spell anything, and
+        # none of the glyph pairs people mistype. `L` is kept — it is only
+        # confusable with `I` and `1`, and both of those are already gone.
+        assert not set(code) & set("AEIOU01IO")
 
 
 def test_an_unrefined_exercise_cannot_be_run(classroom):

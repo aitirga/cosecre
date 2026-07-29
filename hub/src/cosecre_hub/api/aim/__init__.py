@@ -16,6 +16,7 @@ contract literally true: one package, one ``include_router`` line.
 from fastapi import APIRouter
 
 from . import models  # noqa: F401 — registers the tables on Base before init_db
+from .chat import router as chat_router
 from .exercises import router as exercises_router
 from .roster import router as roster_router
 from .sessions import router as sessions_router
@@ -24,5 +25,6 @@ router = APIRouter()
 router.include_router(roster_router)
 router.include_router(exercises_router)
 router.include_router(sessions_router)
+router.include_router(chat_router)
 
 __all__ = ["router"]

@@ -35,3 +35,11 @@ SESSION_ENDED = "Aquesta sessió ja s'ha acabat."
 PARTICIPANT_NOT_FOUND = "Aquest alumne no és en aquesta sessió."
 BAD_JOIN_CODE = "Aquest codi no serveix per a cap sessió oberta."
 NO_JOIN_CODE = "No s'ha pogut generar un codi. Torna-ho a provar."
+
+# ── Chat ────────────────────────────────────────────────────────────────────
+NOT_YOUR_CHAT = "Aquesta conversa no és teva."
+MESSAGE_NOT_FOUND = "Aquest missatge no existeix."
+SESSION_NOT_LIVE = "La sessió no és en marxa."
+BUDGET_SPENT = "Has esgotat el pressupost de tokens d'aquesta sessió. Parla'n amb el teu professor."
+STREAM_LOST = "S'ha perdut la connexió amb el tutor."
+ATTACHMENT_NOT_FOUND = "Aquesta imatge no existeix."

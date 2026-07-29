@@ -8,6 +8,7 @@ Anthropic or a local model means one new module and one registry entry.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -24,9 +25,24 @@ class LLMNotConfigured(LLMError):
 
 
 @dataclass(slots=True)
+class Attachment:
+    """An image sent alongside a message.
+
+    A path rather than bytes: the file is already on disk, and a 4 MB photo has
+    no business sitting in memory for the length of a request.
+    """
+
+    path: Path
+    mime_type: str
+
+
+@dataclass(slots=True)
 class Message:
     role: Role
     content: str
+    #: Defaults to empty, which is why no existing caller had to change. A
+    #: sibling field rather than a union-typed `content` for exactly that reason.
+    attachments: list[Attachment] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -85,6 +101,25 @@ class StructuredResult:
     usage: Usage = field(default_factory=Usage)
 
 
+@dataclass(slots=True)
+class StreamEvent:
+    """One frame of a streamed answer.
+
+    ``delta`` carries incremental text. Exactly one terminal ``completed``
+    carries the joined text, the usage totals and which model answered.
+
+    A failure is raised as :class:`LLMError` from the generator rather than
+    signalled as an event: a provider that half-answers and then dies must not
+    look like a success to a caller that only inspects event types.
+    """
+
+    type: Literal["delta", "completed"]
+    text: str = ""
+    usage: Usage = field(default_factory=Usage)
+    model: str = ""
+    provider: str = ""
+
+
 class LLMProvider(ABC):
     """One model vendor."""
 
@@ -104,6 +139,24 @@ class LLMProvider(ABC):
 
     @abstractmethod
     def complete(self, request: CompletionRequest) -> CompletionResult: ...
+
+    def stream(self, request: CompletionRequest) -> Iterator[StreamEvent]:
+        """Stream a completion. This default answers in one shot.
+
+        Concrete rather than abstract on purpose: a provider that cannot stream
+        still satisfies the contract, every existing implementation keeps
+        working untouched, and a caller gets a slow answer rather than a 500.
+        Override it where the vendor supports streaming.
+        """
+        result = self.complete(request)
+        yield StreamEvent(type="delta", text=result.text)
+        yield StreamEvent(
+            type="completed",
+            text=result.text,
+            usage=result.usage,
+            model=result.model,
+            provider=result.provider,
+        )
 
     @abstractmethod
     def structured(self, request: StructuredRequest) -> StructuredResult: ...

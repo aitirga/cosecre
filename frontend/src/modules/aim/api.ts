@@ -14,8 +14,11 @@ import type {
   AimMember,
   AimRawBlocks,
   AimRole,
+  AimAttachment,
+  AimMessage,
   AimMonitor,
   AimParticipant,
+  AimSentMessages,
   AimSession,
   AimStudentState,
   AimTopic,
@@ -142,6 +145,26 @@ export const aimApi = {
     return request<AimStudentState>('/aim/sessions/join', {
       method: 'POST',
       body: JSON.stringify({ code }),
+    })
+  },
+
+  // ── Chat ──────────────────────────────────────────────────────────────────
+  transcript(participantId: number) {
+    return request<AimMessage[]>(`/aim/participants/${participantId}/messages`)
+  },
+  sendMessage(participantId: number, content: string, attachmentIds: number[] = []) {
+    return request<AimSentMessages>(`/aim/participants/${participantId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content, attachment_ids: attachmentIds }),
+    })
+  },
+  uploadAttachment(participantId: number, file: File) {
+    const body = new FormData()
+    body.append('file', file)
+    // No Content-Type header: the browser has to set the multipart boundary.
+    return request<AimAttachment>(`/aim/participants/${participantId}/attachments`, {
+      method: 'POST',
+      body,
     })
   },
 }

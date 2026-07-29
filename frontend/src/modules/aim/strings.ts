@@ -157,6 +157,22 @@ export const CA = {
     joinCode: 'Tens un codi?',
     join: 'Entra-hi',
   },
+  chat: {
+    title: 'Tutor',
+    placeholder: 'Escriu la teva pregunta…',
+    send: 'Envia',
+    photo: 'Fes una foto',
+    attach: 'Adjunta una imatge',
+    remove: 'Treu-la',
+    thinking: 'Pensant…',
+    opener:
+      'Explica’m per on comences i t’acompanyo. No et donaré la solució: et faré les preguntes que t’hi portin.',
+    budget: (used: number, total: number) =>
+      `${used.toLocaleString('ca')} de ${total.toLocaleString('ca')} tokens`,
+    budgetSpent: 'Has esgotat el pressupost d’aquesta sessió.',
+    you: 'Tu',
+    tutor: 'Tutor',
+  },
   common: {
     retry: 'Torna-ho a provar',
     loading: 'Carregant…',
@@ -164,5 +180,7 @@ export const CA = {
   },
   errors: {
     generic: 'Alguna cosa no ha anat bé.',
+    stream: 'S’ha perdut la connexió amb el tutor.',
+    photo: 'No s’ha pogut pujar la imatge.',
   },
 } as const

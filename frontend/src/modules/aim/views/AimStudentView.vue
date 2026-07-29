@@ -11,13 +11,14 @@
  * so the progress bar needs no request of its own.
  */
 import { useMutation, useQuery } from '@tanstack/vue-query'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { ApiError } from '../../../api/client'
 import BrandMark from '../../../components/BrandMark.vue'
 import { useAuth } from '../../../composables/useAuth'
 import { aimApi } from '../api'
+import AimChat from '../components/AimChat.vue'
 import AimPlotCard from '../plot/AimPlotCard.vue'
 import { CA } from '../strings'
 import '../aim.css'
@@ -48,6 +49,26 @@ const join = useMutation({
 
 const status = computed(() => state.data.value?.state ?? 'idle')
 const exercise = computed(() => state.data.value?.exercise ?? null)
+const participantId = computed(() => state.data.value?.participant_id ?? null)
+
+/**
+ * The budget the bar shows.
+ *
+ * Seeded from the poll, then advanced by the stream's own usage frame so the
+ * bar moves the moment an answer lands instead of up to five seconds later.
+ */
+const spent = ref<number | null>(null)
+const tokensUsed = computed(() => spent.value ?? state.data.value?.tokens_used ?? 0)
+const tokenBudget = computed(() => state.data.value?.effective_budget ?? 0)
+
+watch(
+  () => state.data.value?.tokens_used,
+  (fromServer) => {
+    if (fromServer !== undefined && (spent.value === null || fromServer > spent.value)) {
+      spent.value = fromServer
+    }
+  },
+)
 </script>
 
 <template>
@@ -102,16 +123,27 @@ const exercise = computed(() => state.data.value?.exercise ?? null)
         </div>
       </div>
 
-      <!-- Live: the problem, plainly. The chat lands beside it next. -->
-      <article v-else-if="exercise" class="card sheet">
-        <div class="card-head">
-          <h1 class="card-title">{{ exercise.title }}</h1>
-        </div>
-        <div class="card-body">
-          <p class="statement">{{ exercise.statement_md }}</p>
-          <AimPlotCard v-for="(spec, index) in exercise.plots" :key="index" :spec="spec" />
-        </div>
-      </article>
+      <!-- Live: the problem on one side, deliberately plain, the tutor on the
+           other. The exercise is reference material; the work happens in the chat. -->
+      <div v-else-if="exercise" class="work">
+        <article class="card sheet">
+          <div class="card-head">
+            <h1 class="card-title">{{ exercise.title }}</h1>
+          </div>
+          <div class="card-body">
+            <p class="statement">{{ exercise.statement_md }}</p>
+            <AimPlotCard v-for="(spec, index) in exercise.plots" :key="index" :spec="spec" />
+          </div>
+        </article>
+
+        <AimChat
+          v-if="participantId !== null"
+          :participant-id="participantId"
+          :tokens-used="tokensUsed"
+          :token-budget="tokenBudget"
+          @spent="spent = $event"
+        />
+      </div>
 
       <RouterLink class="escape" :to="{ name: 'account' }">{{ CA.student.account }}</RouterLink>
     </main>
@@ -192,8 +224,16 @@ const exercise = computed(() => state.data.value?.exercise ?? null)
   text-transform: uppercase;
 }
 
+.work {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  width: min(1180px, 100%);
+}
+
 .sheet {
-  width: min(720px, 100%);
+  width: 100%;
 }
 
 .sheet .card-body {
@@ -215,5 +255,11 @@ const exercise = computed(() => state.data.value?.exercise ?? null)
 
 .escape:hover {
   color: var(--accent-700);
+}
+
+@media (max-width: 940px) {
+  .work {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

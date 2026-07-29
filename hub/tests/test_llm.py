@@ -216,3 +216,41 @@ def test_strict_schema_recurses_into_nested_shapes():
     assert strict["properties"]["rows"]["items"]["additionalProperties"] is False
     assert strict["properties"]["rows"]["items"]["required"] == ["x"]
     assert strict["properties"]["either"]["anyOf"][0]["required"] == ["y"]
+
+
+def test_a_provider_without_a_stream_implementation_falls_back_to_complete():
+    """`stream` is concrete on the contract, and must stay that way.
+
+    Making it abstract would break every provider that cannot stream — and the
+    fake in `conftest` — for no benefit. A vendor with no streaming API should
+    give a slow answer, not a 500.
+    """
+    from cosecre_hub.services.llm import CompletionRequest, Message
+    from cosecre_hub.services.llm.base import CompletionResult, LLMProvider, Usage
+
+    class Silent(LLMProvider):
+        id = "silent"
+        label = "Silent"
+
+        def is_configured(self):
+            return True
+
+        def default_model(self):
+            return "silent-1"
+
+        def complete(self, request):
+            return CompletionResult(
+                text="one shot", model="silent-1", provider=self.id, usage=Usage(total_tokens=4)
+            )
+
+        def structured(self, request):  # pragma: no cover - not exercised here
+            raise NotImplementedError
+
+        def extract_file(self, request):  # pragma: no cover - not exercised here
+            raise NotImplementedError
+
+    events = list(Silent().stream(CompletionRequest(messages=[Message(role="user", content="hi")])))
+
+    assert [event.type for event in events] == ["delta", "completed"]
+    assert events[0].text == "one shot"
+    assert events[1].usage.total_tokens == 4

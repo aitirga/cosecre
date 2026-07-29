@@ -1,4 +1,5 @@
 from .base import (
+    Attachment,
     CompletionRequest,
     CompletionResult,
     FileExtractionRequest,
@@ -6,6 +7,7 @@ from .base import (
     LLMNotConfigured,
     LLMProvider,
     Message,
+    StreamEvent,
     StructuredRequest,
     StructuredResult,
     Usage,
@@ -15,6 +17,7 @@ from .openai_provider import OpenAIProvider
 from .registry import LLMRegistry, ProviderInfo
 
 __all__ = [
+    "Attachment",
     "CompletionRequest",
     "CompletionResult",
     "FileExtractionRequest",
@@ -25,6 +28,7 @@ __all__ = [
     "Message",
     "OpenAIProvider",
     "ProviderInfo",
+    "StreamEvent",
     "StructuredRequest",
     "StructuredResult",
     "Usage",
