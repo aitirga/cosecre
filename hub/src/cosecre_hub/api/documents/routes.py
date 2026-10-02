@@ -1,489 +1,335 @@
-"""Invoice and ticket intake — the first domain module on top of the hub core.
+"""The accounting register — one list for every kind of document.
 
-Both document types behave identically apart from their label, sheet tab and
-reference prefix, so one router factory serves both rather than two near-copies.
+Invoices and tickets used to be two routers writing to two tabs. The models now
+tell the kinds apart (``tipus_document``), so there is one register, one tab
+and one Drive folder.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from ...deps import get_current_user, get_db, get_settings, get_workspace_setting
-from ...models import ExtractionJob, Upload, User
-from ...schemas import (
-    DocumentType,
-    InvoiceExtraction,
-    InvoiceRecord,
-    InvoiceUpdate,
-    JobRead,
-    RefreshResult,
-    UploadResponse,
-)
-from ...services.extraction import DocumentExtractionService
-from ...services.sheets import GoogleSheetsService
+from ...models import Document, ExtractionJob, Upload, User
+from ...schemas import DocumentRecord, DocumentUpdate, JobRead, SyncResult, UploadResponse
+from ...schemas.documents import DiffEntryRead, FieldChangeRead, SyncApplied, SyncApply, SyncDiff
+from ...schemas.documents import CaptureSource
+from ...services.sheets import GoogleSheetsService, SheetDocumentNotFound
 from ...services.storage import save_upload_file
-
-DOCUMENT_META = {
-    "invoice": {
-        "label": "Invoice",
-        "route_segment": "documents/invoices",
-        "prefix": "INV",
-    },
-    "ticket": {
-        "label": "Ticket",
-        "route_segment": "documents/tickets",
-        "prefix": "TKT",
-    },
-}
-
-_IMAGE_MIME_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"}
+from .register import (
+    confirm_hints,
+    generate_reference,
+    process_job,
+    push_document,
+    rename_on_drive,
+    status_after_review,
+    sync_register,
+    to_record,
+)
 
 logger = logging.getLogger(__name__)
 
-
-def utcnow() -> datetime:
-    return datetime.now(UTC)
+router = APIRouter()
 
 
-def generate_internal_doc_number(document_type: DocumentType) -> str:
-    prefix = DOCUMENT_META[document_type]["prefix"]
-    return f"{prefix}-{utcnow():%Y%m%d}-{uuid.uuid4().hex[:8].upper()}"
-
-
-def document_sort_value(document: InvoiceRecord) -> float:
-    reference = document.updated_at or document.created_at
-    if reference is None:
-        return 0
-    if reference.tzinfo is None:
-        reference = reference.replace(tzinfo=UTC)
-    return reference.timestamp()
-
-
-def merge_sheet_and_jobs(
-    session: Session,
-    document_type: DocumentType,
-    sheet_records: list[InvoiceRecord],
-) -> list[InvoiceRecord]:
-    """Overlay in-flight local jobs on top of what the spreadsheet says.
-
-    The sheet is the source of truth for anything that made it there; jobs that
-    have not landed yet only exist locally, and would otherwise be invisible
-    between upload and sync.
-    """
-    route_segment = DOCUMENT_META[document_type]["route_segment"]
-    merged = {record.num_doc_intern: record for record in sheet_records}
-
-    uploads_by_doc: dict[str, Upload] = {
-        upload.internal_doc_number: upload
-        for upload in session.query(Upload).filter(Upload.document_type == document_type).all()
-    }
-
-    jobs = (
-        session.query(ExtractionJob).join(Upload).filter(Upload.document_type == document_type).all()
+def _document(session: Session, reference: str) -> Document:
+    document = (
+        session.query(Document).filter(Document.internal_doc_number == reference).first()
     )
-    for job in jobs:
-        internal_doc_number = job.upload.internal_doc_number
-        if internal_doc_number in merged:
-            # Already in the sheet — the only thing worth adding is a local
-            # preview URL for documents we still hold the original of.
-            upload = uploads_by_doc.get(internal_doc_number)
-            if upload and upload.source_file_type in _IMAGE_MIME_TYPES:
-                existing = merged[internal_doc_number]
-                merged[internal_doc_number] = existing.model_copy(
-                    update={
-                        "document_type": document_type,
-                        "file_url": f"/{route_segment}/{internal_doc_number}/file",
-                        "source_file_type": upload.source_file_type,
-                    }
-                )
-            continue
-
-        if job.status not in {"pending", "processing", "written_to_sheet", "error"}:
-            continue
-
-        extracted_payload = job.extracted_payload or {}
-        file_url = (
-            f"/{route_segment}/{internal_doc_number}/file"
-            if job.upload.source_file_type in _IMAGE_MIME_TYPES
-            else None
-        )
-        merged[internal_doc_number] = InvoiceRecord(
-            document_type=document_type,
-            num_doc_intern=internal_doc_number,
-            source_file_name=job.upload.source_file_name,
-            source_file_type=job.upload.source_file_type,
-            file_url=file_url,
-            extraction_status=job.status,
-            created_at=job.created_at,
-            updated_at=job.updated_at,
-            error_message=job.error_message,
-            **{
-                "num_factura": extracted_payload.get("num_factura", ""),
-                "data_factura": extracted_payload.get("data_factura", ""),
-                "proveidor": extracted_payload.get("proveidor", ""),
-                "cif_proveidor": extracted_payload.get("cif_proveidor", ""),
-                "adreca_proveidor": extracted_payload.get("adreca_proveidor", ""),
-                "import": extracted_payload.get("import", ""),
-                "cif_proveit": extracted_payload.get("cif_proveit", ""),
-                "descripcio": extracted_payload.get("descripcio", ""),
-                "pressupost_afectat": extracted_payload.get("pressupost_afectat", ""),
-            },
-        )
-
-    return sorted(merged.values(), key=document_sort_value, reverse=True)
+    if document is None:
+        raise HTTPException(status_code=404, detail="No s'ha trobat el document.")
+    return document
 
 
-def sync_sheet_records(session: Session, app, document_type: DocumentType) -> list[InvoiceRecord]:
+def _sort_key(document: Document):
+    when = document.data_factura or (document.created_at.date() if document.created_at else None)
+    return (when.toordinal() if when else 0, document.created_at.timestamp() if document.created_at else 0)
+
+
+async def process_job_in_background(app, job_id: str) -> None:
+    # Wait outside the thread pool: queued uploads must not starve health,
+    # authentication or job polling while a large document is being extracted.
+    async with app.state.extraction_limiter:
+        await run_in_threadpool(process_job, app, job_id)
+
+
+@router.post("/upload", response_model=UploadResponse)
+async def upload_document(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    source: CaptureSource = Form("file"),
+    session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    settings=Depends(get_settings),
+):
+    """Queue one file. Several can be in flight at once; they are read in order."""
+    reference = generate_reference()
+    stored_path = await save_upload_file(file, reference, settings)
+
+    upload = Upload(
+        user_id=user.id,
+        internal_doc_number=reference,
+        document_type="document",
+        source_file_name=file.filename or stored_path.name,
+        source_file_type=file.content_type or "application/octet-stream",
+        stored_path=str(stored_path),
+        capture_source=source,
+        status="pending",
+    )
+    job = ExtractionJob(id=str(uuid.uuid4()), user_id=user.id, upload=upload, status="pending")
+    document = Document(
+        internal_doc_number=reference,
+        upload=upload,
+        created_by_id=user.id,
+        origen="Foto" if source == "camera" else "Original",
+        status="pending",
+        sheet_state="pending",
+    )
+    session.add_all([upload, job, document])
+    session.commit()
+    background_tasks.add_task(process_job_in_background, request.app, job.id)
+    return UploadResponse(job_id=job.id, internal_doc_number=reference, status="pending")
+
+
+@router.post("/sync", response_model=SyncResult)
+def sync_documents(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Pull the sheet now, rather than waiting for the next list to do it."""
+    return sync_register(request.app, session, force=True)
+
+
+@router.get("/sync/diff", response_model=SyncDiff)
+def sync_diff(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Every difference between the sheet and the database, and who made it."""
+    from . import sync
+
     workspace = get_workspace_setting(session)
-    sheet_service = GoogleSheetsService(app.state.settings)
-    if not sheet_service.is_ready(workspace, document_type):
-        return []
+    if not request.app.state.sheet_service.is_ready(workspace):
+        return SyncDiff(sheet_configured=False)
     try:
-        return sheet_service.list_documents(workspace, document_type)
-    except Exception:  # noqa: BLE001
-        # A Sheets outage degrades the list to local jobs only rather than
-        # failing the whole request.
-        logger.exception("Failed to fetch %s records from Google Sheets", document_type)
-        return []
+        entries = sync.diff(request.app, session)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Could not compare the sheet with the database")
+        raise HTTPException(status_code=502, detail=f"No s'ha pogut llegir el full: {exc}") from exc
+    return SyncDiff(
+        entries=[
+            DiffEntryRead(
+                reference=e.reference, status=e.status, row=e.row,
+                num_factura=e.num_factura, proveidor=e.proveidor,
+                changes=[FieldChangeRead(**vars(c)) for c in e.changes],
+            )
+            for e in entries
+        ],
+        counts=sync.summarize(entries),
+    )
 
 
-def process_job(app, job_id: str) -> None:
-    """Extract, upload to Drive, then append to the sheet.
+def _apply(request: Request, session: Session, user: User, payload: SyncApply, direction: str):
+    from . import sync
 
-    Runs as a background task, so nothing here may raise: every failure is
-    recorded on the job for the client to poll.
-    """
-    session_factory = app.state.session_factory
-    settings = app.state.settings
-    extraction = DocumentExtractionService(app.state.llm_registry)
-    sheet_service = GoogleSheetsService(settings)
-    session = session_factory()
+    workspace = get_workspace_setting(session)
+    if not request.app.state.sheet_service.is_ready(workspace):
+        raise HTTPException(status_code=400, detail="No hi ha cap full de càlcul configurat.")
+    action = sync.pull if direction == "pull" else sync.push
     try:
-        job = session.get(ExtractionJob, job_id)
-        if job is None:
-            return
-        upload = job.upload
-        document_type: DocumentType = upload.document_type  # type: ignore[assignment]
-        workspace = get_workspace_setting(session)
-        job.status = "processing"
-        upload.status = "processing"
-        session.commit()
-
-        extracted = extraction.extract(
-            Path(upload.stored_path),
-            upload.source_file_type,
-            model=workspace.openai_model or settings.openai_model,
-            prompt_override=workspace.extraction_prompt,
-            document_type=document_type,
-        )
-        job.extracted_payload = extracted.model_dump(by_alias=True)
-        job.status = "written_to_sheet"
-        session.commit()
-
-        drive_link = ""
-        drive_file_id = ""
-        try:
-            folder_id = (
-                settings.google_drive_invoices_folder_id
-                if document_type == "invoice"
-                else settings.google_drive_tickets_folder_id
-            )
-            drive_link, drive_file_id = sheet_service.upload_file_to_drive(
-                Path(upload.stored_path),
-                upload.source_file_name,
-                upload.source_file_type,
-                folder_id=folder_id,
-            )
-            upload.drive_file_id = drive_file_id
-        except Exception:  # noqa: BLE001
-            # The extraction is the valuable part; a missing Drive copy only costs
-            # the sheet its thumbnail.
-            logger.warning("Drive upload failed for %s", upload.internal_doc_number, exc_info=True)
-
-        is_image = upload.source_file_type in {"image/jpeg", "image/jpg", "image/png"}
-        if is_image and drive_file_id:
-            file_cell = f'=IMAGE("https://drive.google.com/uc?export=view&id={drive_file_id}")'
-        else:
-            file_cell = drive_link
-
-        document_for_sheet = InvoiceRecord(
-            **extracted.model_dump(by_alias=False),
-            document_type=document_type,
-            num_doc_intern=upload.internal_doc_number,
-            file_link=file_cell,
-            source_file_type=upload.source_file_type,
-        )
-        write_result = sheet_service.append_document(workspace, document_type, document_for_sheet)
-        job.sheet_row_ref = write_result.row_number
-        job.status = "needs_validation"
-        job.error_message = None
-        upload.status = "written_to_sheet"
-        session.commit()
+        return SyncApplied(**action(request.app, session, references=payload.references, author=user.email))
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         session.rollback()
-        failed_job = session.get(ExtractionJob, job_id)
-        if failed_job is not None:
-            failed_job.status = "error"
-            failed_job.error_message = str(exc)
-            failed_job.upload.status = "error"
-            session.commit()
-    finally:
-        session.close()
+        logger.exception("Sync %s failed", direction)
+        raise HTTPException(status_code=502, detail=f"No s'ha pogut completar: {exc}") from exc
 
 
-def create_documents_router(document_type: DocumentType) -> APIRouter:
-    router = APIRouter()
-    document_label = DOCUMENT_META[document_type]["label"]
+@router.post("/sync/pull", response_model=SyncApplied)
+def sync_pull(
+    request: Request,
+    payload: SyncApply,
+    session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Integrate the sheet's changes into the database. Takes a backup first."""
+    return _apply(request, session, user, payload, "pull")
 
-    @router.post("/upload", response_model=UploadResponse)
-    async def upload_document(
-        request: Request,
-        background_tasks: BackgroundTasks,
-        file: UploadFile = File(...),
-        session: Session = Depends(get_db),
-        user: User = Depends(get_current_user),
-        settings=Depends(get_settings),
-    ):
-        internal_doc_number = generate_internal_doc_number(document_type)
-        stored_path = await save_upload_file(file, internal_doc_number, settings)
 
-        upload = Upload(
-            user_id=user.id,
-            internal_doc_number=internal_doc_number,
-            document_type=document_type,
-            source_file_name=file.filename or stored_path.name,
-            source_file_type=file.content_type or "application/octet-stream",
-            stored_path=str(stored_path),
-            status="pending",
-        )
-        job = ExtractionJob(
-            id=str(uuid.uuid4()),
-            user_id=user.id,
-            upload=upload,
-            status="pending",
-        )
-        session.add_all([upload, job])
-        session.commit()
-        background_tasks.add_task(process_job, request.app, job.id)
-        return UploadResponse(
-            job_id=job.id,
-            document_type=document_type,
-            internal_doc_number=internal_doc_number,
-            status="pending",
-        )
+@router.post("/sync/push", response_model=SyncApplied)
+def sync_push(
+    request: Request,
+    payload: SyncApply,
+    session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Write the database's version over the sheet's. Takes a backup first."""
+    return _apply(request, session, user, payload, "push")
 
-    @router.get("/refresh", response_model=RefreshResult)
-    def refresh_documents(
-        request: Request,
-        session: Session = Depends(get_db),
-        _: User = Depends(get_current_user),
-    ):
-        records = sync_sheet_records(session, request.app, document_type)
-        return RefreshResult(refreshed=len(records))
 
-    @router.get("", response_model=list[InvoiceRecord])
-    def list_documents(
-        request: Request,
-        session: Session = Depends(get_db),
-        _: User = Depends(get_current_user),
-    ):
-        records = sync_sheet_records(session, request.app, document_type)
-        return merge_sheet_and_jobs(session, document_type, records)
+@router.get("", response_model=list[DocumentRecord])
+def list_documents(
+    request: Request,
+    session: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    sync_register(request.app, session)
+    documents = session.query(Document).all()
+    return [to_record(d) for d in sorted(documents, key=_sort_key, reverse=True)]
 
-    @router.get("/jobs/{job_id}", response_model=JobRead)
-    def get_job(
-        job_id: str, session: Session = Depends(get_db), _: User = Depends(get_current_user)
-    ):
-        job = (
-            session.query(ExtractionJob)
-            .join(Upload)
-            .filter(ExtractionJob.id == job_id, Upload.document_type == document_type)
-            .first()
-        )
-        if job is None:
-            raise HTTPException(status_code=404, detail="Job not found")
-        extracted_payload = (
-            InvoiceExtraction.model_validate(job.extracted_payload)
-            if job.extracted_payload is not None
-            else None
-        )
-        return JobRead(
-            id=job.id,
-            document_type=document_type,
-            internal_doc_number=job.upload.internal_doc_number,
-            status=job.status,
-            error_message=job.error_message,
-            extracted_payload=extracted_payload,
-            sheet_row_ref=job.sheet_row_ref,
-            created_at=job.created_at,
-            updated_at=job.updated_at,
-        )
 
-    @router.get("/{internal_doc_number}", response_model=InvoiceRecord)
-    def get_document(
-        internal_doc_number: str,
-        request: Request,
-        session: Session = Depends(get_db),
-        _: User = Depends(get_current_user),
-    ):
-        records = merge_sheet_and_jobs(
-            session, document_type, sync_sheet_records(session, request.app, document_type)
-        )
-        for record in records:
-            if record.num_doc_intern == internal_doc_number:
-                return record
-        raise HTTPException(status_code=404, detail=f"{document_label} not found")
+@router.get("/jobs/{job_id}", response_model=JobRead)
+def get_job(job_id: str, session: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    job = session.get(ExtractionJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No s'ha trobat la tasca.")
+    return JobRead(
+        id=job.id,
+        internal_doc_number=job.upload.internal_doc_number,
+        status=job.status,
+        error_message=job.error_message,
+        sheet_row_ref=job.sheet_row_ref,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
 
-    @router.patch("/{internal_doc_number}", response_model=InvoiceRecord)
-    def update_document(
-        internal_doc_number: str,
-        payload: InvoiceUpdate,
-        request: Request,
-        session: Session = Depends(get_db),
-        _: User = Depends(get_current_user),
-    ):
-        workspace = get_workspace_setting(session)
-        sheet_service = GoogleSheetsService(request.app.state.settings)
-        if not sheet_service.is_ready(workspace, document_type):
-            raise HTTPException(status_code=400, detail="Google Sheets is not configured")
-        records = {
-            record.num_doc_intern: record
-            for record in sync_sheet_records(session, request.app, document_type)
-        }
-        record = records.get(internal_doc_number)
-        if record is None:
-            raise HTTPException(status_code=404, detail=f"{document_label} not found")
 
-        updated_record = record.model_copy(
-            update={
-                "document_type": document_type,
-                **payload.model_dump(exclude_none=True, by_alias=False),
-            }
-        )
-        result = sheet_service.update_document(workspace, document_type, updated_record)
-        job = (
-            session.query(ExtractionJob)
-            .join(Upload)
-            .filter(
-                Upload.internal_doc_number == internal_doc_number,
-                Upload.document_type == document_type,
-            )
-            .first()
-        )
-        if job is not None:
-            job.sheet_row_ref = result.row_number
-            job.status = "validated" if updated_record.validat else "needs_validation"
-        session.commit()
-        refreshed_records = {
-            item.num_doc_intern: item
-            for item in sync_sheet_records(session, request.app, document_type)
-        }
-        return refreshed_records.get(internal_doc_number, updated_record)
+@router.get("/{reference}", response_model=DocumentRecord)
+def get_document(
+    reference: str,
+    request: Request,
+    session: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    sync_register(request.app, session)
+    return to_record(_document(session, reference))
 
-    @router.post("/{internal_doc_number}/validate", response_model=InvoiceRecord)
-    def validate_document(
-        internal_doc_number: str,
-        request: Request,
-        session: Session = Depends(get_db),
-        _: User = Depends(get_current_user),
-    ):
-        record = get_document(internal_doc_number, request, session)
-        updated = record.model_copy(
-            update={
-                "document_type": document_type,
-                "validat": True,
-                "extraction_status": "validated",
-            }
-        )
-        workspace = get_workspace_setting(session)
-        sheet_service = GoogleSheetsService(request.app.state.settings)
-        sheet_service.update_document(workspace, document_type, updated)
-        job = (
-            session.query(ExtractionJob)
-            .join(Upload)
-            .filter(
-                Upload.internal_doc_number == internal_doc_number,
-                Upload.document_type == document_type,
-            )
-            .first()
-        )
-        if job is not None:
-            job.status = "validated"
-        session.commit()
-        refreshed = {
-            item.num_doc_intern: item
-            for item in sync_sheet_records(session, request.app, document_type)
-        }
-        return refreshed.get(internal_doc_number, updated)
 
-    @router.get("/{internal_doc_number}/file")
-    def get_document_file(
-        internal_doc_number: str,
-        session: Session = Depends(get_db),
-        _: User = Depends(get_current_user),
-    ):
-        upload = (
-            session.query(Upload)
-            .filter(
-                Upload.internal_doc_number == internal_doc_number,
-                Upload.document_type == document_type,
-            )
-            .first()
+def _save(app, session: Session, document: Document, changes: dict) -> DocumentRecord:
+    if document.status in {"pending", "processing", "written_to_sheet"}:
+        raise HTTPException(
+            status_code=409,
+            detail="El document encara s'està processant. Espera que acabi abans d'editar-lo.",
         )
-        if upload is None:
-            raise HTTPException(status_code=404, detail="File not found")
-        file_path = Path(upload.stored_path)
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail="File not found on disk")
-        return FileResponse(
-            path=file_path,
-            media_type=upload.source_file_type,
-            filename=upload.source_file_name,
-        )
+    changed = [name for name, value in changes.items() if getattr(document, name) != value]
+    for name, value in changes.items():
+        setattr(document, name, "" if value is None and isinstance(getattr(document, name), str) else value)
+    if document.validat:
+        confirm_hints(document)
+    else:
+        confirm_hints(document, changed)
+    # A person saving an entry has the document in hand — even one the models
+    # could not read becomes an ordinary entry to review.
+    document.status = status_after_review(document)
+    document.error_message = None
+    # Database first: from here on the edit survives whatever Google does.
+    document.sheet_state = "pending"
+    session.commit()
 
-    @router.delete("/{internal_doc_number}", status_code=204, response_model=None)
-    def delete_document_record(
-        internal_doc_number: str,
-        request: Request,
-        session: Session = Depends(get_db),
-        _: User = Depends(get_current_user),
-    ) -> None:
-        workspace = get_workspace_setting(session)
-        sheet_service = GoogleSheetsService(request.app.state.settings)
-        if sheet_service.is_ready(workspace, document_type):
+    if {"data_factura", "num_factura"} & set(changed):
+        rename_on_drive(app, document)
+    error = push_document(app, session, document)
+    session.commit()
+    record = to_record(document)
+    if error:
+        record.error_message = error
+    return record
+
+
+@router.patch("/{reference}", response_model=DocumentRecord)
+def update_document(
+    reference: str,
+    payload: DocumentUpdate,
+    request: Request,
+    session: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    changes = payload.model_dump(exclude_unset=True, by_alias=False)
+    return _save(request.app, session, _document(session, reference), changes)
+
+
+@router.post("/{reference}/validate", response_model=DocumentRecord)
+def validate_document(
+    reference: str,
+    request: Request,
+    session: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    return _save(request.app, session, _document(session, reference), {"validat": True})
+
+
+@router.get("/{reference}/file")
+def get_document_file(
+    reference: str,
+    session: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    upload = _document(session, reference).upload
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Aquest document no té cap fitxer local.")
+    file_path = Path(upload.stored_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="El fitxer ja no és al servidor.")
+    return FileResponse(
+        path=file_path, media_type=upload.source_file_type, filename=upload.source_file_name
+    )
+
+
+@router.delete("/{reference}", status_code=204, response_model=None)
+def delete_document(
+    reference: str,
+    request: Request,
+    session: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> None:
+    app = request.app
+    document = _document(session, reference)
+    workspace = get_workspace_setting(session)
+    service: GoogleSheetsService = app.state.sheet_service
+    if service.is_ready(workspace) and document.sheet_state != "removed":
+        with app.state.register_lock:
             try:
-                sheet_service.delete_document(workspace, document_type, internal_doc_number)
-            except RuntimeError:
+                service.delete_row(workspace, service.find_row(workspace, reference))
+            except SheetDocumentNotFound:
                 pass
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Could not delete %s from Google Sheets", reference)
+                raise HTTPException(
+                    status_code=502,
+                    detail="No s'ha pogut esborrar la fila del full. Torna-ho a provar.",
+                ) from exc
 
-        upload = (
-            session.query(Upload)
-            .filter(
-                Upload.internal_doc_number == internal_doc_number,
-                Upload.document_type == document_type,
-            )
-            .first()
-        )
-        if upload is not None:
-            if upload.drive_file_id:
-                try:
-                    sheet_service.delete_drive_file(upload.drive_file_id)
-                except Exception:  # noqa: BLE001
-                    logger.warning(
-                        "Could not remove Drive file for %s", internal_doc_number, exc_info=True
-                    )
-            if upload.job is not None:
-                session.delete(upload.job)
-                session.flush()
-            session.delete(upload)
+    if document.drive_file_id and service.drive_ready:
+        try:
+            service.delete_drive_file(document.drive_file_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not remove Drive file for %s", reference, exc_info=True)
 
-        session.commit()
-
-    return router
+    upload = document.upload
+    session.delete(document)
+    if upload is not None:
+        if upload.job is not None:
+            session.delete(upload.job)
+        session.flush()
+        session.delete(upload)
+    session.commit()

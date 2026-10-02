@@ -42,7 +42,7 @@ function normalize(input: string): string {
 async function check() {
   const target = normalize(url.value)
   if (!target) {
-    error.value = 'Enter the address of your Cosecre Hub.'
+    error.value = 'Escriu l\'adreça del teu hub de Cosecre.'
     return
   }
   checking.value = true
@@ -52,7 +52,7 @@ async function check() {
     found.value = await fetchHubMeta(target)
     url.value = target
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'That address did not answer.'
+    error.value = cause instanceof Error ? cause.message : 'Aquesta adreça no respon.'
   } finally {
     checking.value = false
   }
@@ -65,7 +65,7 @@ async function connect() {
     await platform.changeHub(normalize(url.value))
     await router.replace({ name: 'login' })
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'The hub could not be saved.'
+    error.value = cause instanceof Error ? cause.message : "No s'ha pogut desar el hub."
   } finally {
     checking.value = false
   }
@@ -79,13 +79,13 @@ async function connect() {
         <BrandMark :size="34" />
         <div>
           <p class="wordmark">Cosecre</p>
-          <p class="tagline">Desktop {{ platform.version }}</p>
+          <p class="tagline">Escriptori {{ platform.version }}</p>
         </div>
       </header>
 
       <div class="card">
         <div class="card-body">
-          <h1 class="title">Connect to your hub</h1>
+          <h1 class="title">Connecta amb el teu hub</h1>
           <p class="lead">
             Cosecre keeps your documents, accounts and model access on a server you run — the
             Cosecre Hub. Enter its address to get started.
@@ -93,7 +93,7 @@ async function connect() {
 
           <form class="form" @submit.prevent="check">
             <label class="field">
-              <span class="label">Hub address</span>
+              <span class="label">Adreça del hub</span>
               <div class="row">
                 <input
                   v-model="url"
@@ -106,12 +106,12 @@ async function connect() {
                   required
                 />
                 <button class="btn btn-outline" type="submit" :disabled="checking">
-                  {{ checking ? 'Checking…' : 'Check' }}
+                  {{ checking ? 'Comprovant…' : 'Comprova' }}
                 </button>
               </div>
               <span class="hint">
-                The <code class="mono">/api/v1</code> suffix is added for you. Use
-                <code class="mono">http://127.0.0.1:8000</code> for a hub on this machine.
+                El sufix <code class="mono">/api/v1</code> s'afegeix sol. Fes servir
+                <code class="mono">http://127.0.0.1:8000</code> per a un hub en aquest ordinador.
               </span>
             </label>
           </form>
@@ -126,7 +126,7 @@ async function connect() {
               <span
                 v-for="cap in [
                   { label: 'Documents', on: found.capabilities.documents },
-                  { label: 'Model access', on: found.capabilities.llm },
+                  { label: 'Models', on: found.capabilities.llm },
                   { label: 'Google Sheets', on: found.capabilities.google_sheets },
                 ]"
                 :key="cap.label"
@@ -139,10 +139,10 @@ async function connect() {
             </div>
             <p v-if="!found.has_users" class="notice notice-info">
               <AppIcon name="alert" :size="15" />
-              <span>This hub has no accounts yet — you will create the first administrator.</span>
+              <span>Aquest hub encara no té comptes: crearàs el primer administrador.</span>
             </p>
             <button class="btn btn-primary btn-block" type="button" :disabled="checking" @click="connect">
-              Connect to this hub
+              Connecta amb aquest hub
             </button>
           </div>
 

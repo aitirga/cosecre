@@ -24,7 +24,7 @@ export function buildMenu(actions: MenuActions): void {
             label: app.getName(),
             submenu: [
               { role: 'about' },
-              { label: 'Check for Updates…', click: actions.onCheckForUpdates },
+              { label: 'Busca actualitzacions…', click: actions.onCheckForUpdates },
               { type: 'separator' },
               { role: 'services' },
               { type: 'separator' },
@@ -38,20 +38,20 @@ export function buildMenu(actions: MenuActions): void {
         ] as MenuItemConstructorOptions[])
       : []),
     {
-      label: 'File',
+      label: 'Fitxer',
       submenu: [
-        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: actions.onReload },
+        { label: 'Recarrega', accelerator: 'CmdOrCtrl+R', click: actions.onReload },
         ...(isMac
           ? ([{ role: 'close' }] as MenuItemConstructorOptions[])
           : ([
-              { label: 'Check for Updates…', click: actions.onCheckForUpdates },
+              { label: 'Busca actualitzacions…', click: actions.onCheckForUpdates },
               { type: 'separator' },
               { role: 'quit' },
             ] as MenuItemConstructorOptions[])),
       ],
     },
     {
-      label: 'Edit',
+      label: 'Edita',
       submenu: [
         { role: 'undo' },
         { role: 'redo' },
@@ -63,7 +63,7 @@ export function buildMenu(actions: MenuActions): void {
       ],
     },
     {
-      label: 'View',
+      label: 'Visualització',
       submenu: [
         { role: 'resetZoom' },
         { role: 'zoomIn' },
@@ -74,7 +74,7 @@ export function buildMenu(actions: MenuActions): void {
       ],
     },
     {
-      label: 'Window',
+      label: 'Finestra',
       submenu: isMac
         ? [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }]
         : [{ role: 'minimize' }, { role: 'close' }],
@@ -83,7 +83,7 @@ export function buildMenu(actions: MenuActions): void {
       role: 'help',
       submenu: [
         {
-          label: 'Cosecre on GitHub',
+          label: 'Cosecre a GitHub',
           click: () => void shell.openExternal(REPO_URL),
         },
       ],

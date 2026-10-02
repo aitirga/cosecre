@@ -48,7 +48,7 @@ async function bootstrap() {
       })
       .catch((error: unknown) => {
         state.hub = null
-        state.hubError = error instanceof ApiError ? error.message : 'The hub is unreachable.'
+        state.hubError = error instanceof ApiError ? error.message : 'No es pot connectar amb el hub.'
       })
 
     try {
@@ -91,7 +91,7 @@ async function authenticate(
       .catch(() => undefined)
     return result.user
   } catch (error) {
-    state.error = error instanceof ApiError ? error.message : 'Unexpected authentication error.'
+    state.error = error instanceof ApiError ? error.message : 'Error inesperat en iniciar la sessió.'
     throw error
   } finally {
     state.loading = false

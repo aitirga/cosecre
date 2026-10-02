@@ -1,21 +1,15 @@
 import { computed, ref } from 'vue'
 
 import { api } from '../api/client'
-import type {
-  DocumentType,
-  ExtractionStatus,
-  InvoiceRecord,
-  JobRead,
-  UploadResponse,
-} from '../api/types'
+import type { DocumentRecord, ExtractionStatus, JobRead, UploadResponse } from '../api/types'
 
-const STORAGE_KEY = 'cosecre.extractionTracker'
+// v2: entries no longer carry a document type, so v1 state is not reused.
+const STORAGE_KEY = 'cosecre.extractionTracker.v2'
 const POLL_INTERVAL_MS = 2000
 const STALE_COMPLETED_MS = 1000 * 60 * 60 * 12
 
 export interface TrackedExtractionJob {
   jobId: string
-  documentType: DocumentType
   internalDocNumber: string
   fileName: string
   status: ExtractionStatus
@@ -40,38 +34,38 @@ function getStatusMeta(status: ExtractionStatus, errorMessage?: string | null) {
     case 'pending':
       return {
         progress: 18,
-        stageLabel: 'Queued',
-        detail: 'Upload finished. Waiting to start AI extraction.',
+        stageLabel: 'En cua',
+        detail: "Pujat. Esperant torn per llegir-lo.",
       }
     case 'processing':
       return {
         progress: 62,
-        stageLabel: 'Running AI extraction',
-        detail: 'Reading the document and generating structured fields.',
+        stageLabel: 'Llegint',
+        detail: 'Els models estan llegint el document i omplint els camps.',
       }
     case 'written_to_sheet':
       return {
         progress: 86,
-        stageLabel: 'Syncing to Google Sheets',
-        detail: 'Extraction completed. Writing the result to the shared sheet.',
+        stageLabel: 'Desant',
+        detail: 'Lectura feta. Desant-ho a Drive i al full de càlcul.',
       }
     case 'needs_validation':
       return {
         progress: 100,
-        stageLabel: 'Ready for review',
-        detail: 'Extraction finished. Check the fields and validate the document.',
+        stageLabel: 'Per revisar',
+        detail: 'Fet. Revisa els camps i valida el document.',
       }
     case 'validated':
       return {
         progress: 100,
-        stageLabel: 'Validated',
-        detail: 'The document is already confirmed in the app and sheet.',
+        stageLabel: 'Validat',
+        detail: 'El document ja està confirmat.',
       }
     case 'error':
       return {
         progress: 100,
-        stageLabel: 'Failed',
-        detail: errorMessage || 'The extraction job failed before completion.',
+        stageLabel: 'Error',
+        detail: errorMessage || "No s'ha pogut llegir el document.",
       }
   }
 }
@@ -91,10 +85,7 @@ function loadState(): TrackedExtractionJob[] {
     if (!Array.isArray(parsed)) {
       return []
     }
-    return parsed.map((job) => ({
-      ...job,
-      documentType: job.documentType ?? 'invoice',
-    }))
+    return parsed
   } catch {
     window.localStorage.removeItem(STORAGE_KEY)
     return []
@@ -144,7 +135,6 @@ function syncTrackedJob(job: JobRead, fileName?: string) {
   const statusMeta = getStatusMeta(job.status, job.error_message)
   upsertTrackedJob({
     jobId: job.id,
-    documentType: job.document_type,
     internalDocNumber: job.internal_doc_number,
     fileName: fileName || existing?.fileName || job.internal_doc_number,
     status: job.status,
@@ -171,7 +161,7 @@ async function pollActiveJobs() {
   polling = true
   try {
     const results = await Promise.allSettled(
-      activeJobs.map((job) => api.getJob(job.documentType, job.jobId)),
+      activeJobs.map((job) => api.getJob(job.jobId)),
     )
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') {
@@ -205,7 +195,6 @@ function trackUpload(fileName: string, response: UploadResponse) {
   const statusMeta = getStatusMeta(response.status)
   upsertTrackedJob({
     jobId: response.job_id,
-    documentType: response.document_type,
     internalDocNumber: response.internal_doc_number,
     fileName,
     status: response.status,
@@ -219,12 +208,10 @@ function trackUpload(fileName: string, response: UploadResponse) {
   ensurePolling()
 }
 
-function syncFromDocuments(documents: InvoiceRecord[]) {
+function syncFromDocuments(documents: DocumentRecord[]) {
   documents.forEach((document) => {
     const existing = trackedJobs.value.find(
-      (job) =>
-        job.documentType === document.document_type &&
-        job.internalDocNumber === document.num_doc_intern,
+      (job) => job.internalDocNumber === document.num_doc_intern,
     )
     if (!existing) {
       return
@@ -256,7 +243,7 @@ function dismissTrackedJob(jobId: string) {
   }
 }
 
-export function useExtractionTracker(documentType?: DocumentType) {
+export function useExtractionTracker() {
   pruneCompletedJobs()
   persistState()
   if (trackedJobs.value.some((job) => !isTerminalStatus(job.status))) {
@@ -264,24 +251,12 @@ export function useExtractionTracker(documentType?: DocumentType) {
   }
 
   return {
-    trackedJobs: computed(() =>
-      sortJobs(
-        trackedJobs.value.filter((job) => !documentType || job.documentType === documentType),
-      ),
-    ),
+    trackedJobs: computed(() => sortJobs(trackedJobs.value)),
     activeTrackedJobs: computed(() =>
-      trackedJobs.value.filter(
-        (job) => (!documentType || job.documentType === documentType) && !isTerminalStatus(job.status),
-      ),
+      trackedJobs.value.filter((job) => !isTerminalStatus(job.status)),
     ),
     getTrackedJob(internalDocNumber: string) {
-      return (
-        trackedJobs.value.find(
-          (job) =>
-            (!documentType || job.documentType === documentType) &&
-            job.internalDocNumber === internalDocNumber,
-        ) ?? null
-      )
+      return trackedJobs.value.find((job) => job.internalDocNumber === internalDocNumber) ?? null
     },
     trackUpload,
     syncFromDocuments,

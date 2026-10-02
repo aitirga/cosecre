@@ -1,3 +1,4 @@
+import { trackedFetch } from './loading'
 /**
  * The Cosecre Hub client.
  *
@@ -8,14 +9,19 @@
  */
 import type {
   AuthTokens,
-  DocumentType,
+  BackupComparison,
+  BackupOverview,
+  CaptureSource,
+  DocumentRecord,
+  DocumentUpdate,
   HubMeta,
-  InvoiceRecord,
-  InvoiceUpdate,
   JobRead,
   LlmProvider,
-  RefreshResult,
+  MigrationReport,
   SessionInfo,
+  SyncApplied,
+  SyncDiff,
+  SyncResult,
   UploadResponse,
   User,
   UserCreate,
@@ -153,7 +159,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
       if (!response.ok) {
         throw new ApiError(response.status, text)
       }
-      throw new ApiError(response.status, 'The server returned an invalid JSON response.')
+      throw new ApiError(response.status, 'El servidor ha retornat una resposta no vàlida.')
     }
   }
 
@@ -171,7 +177,7 @@ function describeError(data: unknown, fallback: string): string {
   if (typeof detail === 'string') return detail
   if (Array.isArray(detail)) {
     const messages = detail
-      .map((item) => (item as { msg?: string })?.msg)
+      .map((item) => (item as { msg?: string })?.msg?.replace(/^Value error, /, ''))
       .filter((msg): msg is string => Boolean(msg))
     if (messages.length) return messages.join('. ')
   }
@@ -195,7 +201,7 @@ function refreshSession(): Promise<boolean> {
   const attempted = refreshToken
   refreshInFlight = (async () => {
     try {
-      const response = await fetch(`${baseUrl}/auth/refresh`, {
+      const response = await trackedFetch(`${baseUrl}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: attempted }),
@@ -234,7 +240,7 @@ export async function authorizedFetch(path: string, init: RequestInit = {}): Pro
   const send = () => {
     const headers = new Headers(init.headers ?? {})
     if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
-    return fetch(`${baseUrl}${path}`, { ...init, headers })
+    return trackedFetch(`${baseUrl}${path}`, { ...init, headers })
   }
 
   let response: Response
@@ -259,7 +265,7 @@ export async function authorizedFetch(path: string, init: RequestInit = {}): Pro
 export async function fetchBlobUrl(path: string): Promise<string> {
   const response = await authorizedFetch(path)
   if (!response.ok) {
-    throw new ApiError(response.status, response.statusText || 'The file could not be fetched.')
+    throw new ApiError(response.status, response.statusText || "No s'ha pogut obtenir el fitxer.")
   }
   return URL.createObjectURL(await response.blob())
 }
@@ -280,7 +286,7 @@ export async function request<T>(path: string, init: RequestInit = {}, retry = t
 
   let response: Response
   try {
-    response = await fetch(`${baseUrl}${path}`, { ...init, headers })
+    response = await trackedFetch(`${baseUrl}${path}`, { ...init, headers })
   } catch (error) {
     throw new ApiError(0, unreachableMessage(error))
   }
@@ -296,12 +302,10 @@ export async function request<T>(path: string, init: RequestInit = {}, retry = t
 
 function unreachableMessage(error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error)
-  return `Could not reach the Cosecre Hub at ${baseUrl}. ${detail}`
+  return `No s'ha pogut connectar amb el hub de Cosecre a ${baseUrl}. ${detail}`
 }
 
-function documentPath(documentType: DocumentType) {
-  return documentType === 'invoice' ? '/documents/invoices' : '/documents/tickets'
-}
+const RECORDS = '/documents/records'
 
 /**
  * Ask a hub to describe itself. Used to validate a URL before signing in, so it
@@ -311,7 +315,7 @@ export async function fetchHubMeta(url: string = baseUrl): Promise<HubMeta> {
   const root = normalizeBaseUrl(url)
   let response: Response
   try {
-    response = await fetch(`${root}/meta`, { headers: { Accept: 'application/json' } })
+    response = await trackedFetch(`${root}/meta`, { headers: { Accept: 'application/json' } })
   } catch (error) {
     throw new ApiError(0, `Could not reach a Cosecre Hub at ${root}. ${describeCause(error)}`)
   }
@@ -404,39 +408,53 @@ export const api = {
   },
 
   // ── Documents ───────────────────────────────────────────────────────────
-  getDocuments(documentType: DocumentType) {
-    return request<InvoiceRecord[]>(documentPath(documentType))
+  getDocuments() {
+    return request<DocumentRecord[]>(RECORDS)
   },
-  getDocument(documentType: DocumentType, internalDocNumber: string) {
-    return request<InvoiceRecord>(`${documentPath(documentType)}/${internalDocNumber}`)
+  getDocument(reference: string) {
+    return request<DocumentRecord>(`${RECORDS}/${reference}`)
   },
-  getJob(documentType: DocumentType, jobId: string) {
-    return request<JobRead>(`${documentPath(documentType)}/jobs/${jobId}`)
+  getJob(jobId: string) {
+    return request<JobRead>(`${RECORDS}/jobs/${jobId}`)
   },
-  refreshDocuments(documentType: DocumentType) {
-    return request<RefreshResult>(`${documentPath(documentType)}/refresh`)
+  syncDocuments() {
+    return request<SyncResult>(`${RECORDS}/sync`, { method: 'POST' })
   },
-  uploadDocument(documentType: DocumentType, file: File) {
-    const formData = new FormData()
-    formData.append('file', file)
-    return request<UploadResponse>(`${documentPath(documentType)}/upload`, {
+  syncDiff() {
+    return request<SyncDiff>(`${RECORDS}/sync/diff`)
+  },
+  /** Sheet → database. `references` limits it; `row:<n>` picks a typed row. */
+  syncPull(references?: string[]) {
+    return request<SyncApplied>(`${RECORDS}/sync/pull`, {
       method: 'POST',
-      body: formData,
+      body: JSON.stringify({ references: references ?? null }),
     })
   },
-  updateDocument(documentType: DocumentType, internalDocNumber: string, payload: InvoiceUpdate) {
-    return request<InvoiceRecord>(`${documentPath(documentType)}/${internalDocNumber}`, {
+  /** Database → sheet. */
+  syncPush(references?: string[]) {
+    return request<SyncApplied>(`${RECORDS}/sync/push`, {
+      method: 'POST',
+      body: JSON.stringify({ references: references ?? null }),
+    })
+  },
+  /** `camera` marks the entry as a photo; anything picked from disk is an original. */
+  uploadDocument(file: File, source: CaptureSource) {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('source', source)
+    return request<UploadResponse>(`${RECORDS}/upload`, { method: 'POST', body: formData })
+  },
+  updateDocument(reference: string, payload: DocumentUpdate) {
+    return request<DocumentRecord>(`${RECORDS}/${reference}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     })
   },
-  validateDocument(documentType: DocumentType, internalDocNumber: string) {
-    return request<InvoiceRecord>(`${documentPath(documentType)}/${internalDocNumber}/validate`, {
-      method: 'POST',
-    })
+  validateDocument(reference: string) {
+    return request<DocumentRecord>(`${RECORDS}/${reference}/validate`, { method: 'POST' })
   },
-  deleteDocument(documentType: DocumentType, internalDocNumber: string) {
-    return request<void>(`${documentPath(documentType)}/${internalDocNumber}`, { method: 'DELETE' })
+  deleteDocument(reference: string) {
+    return request<void>(`${RECORDS}/${reference}`, { method: 'DELETE' })
   },
   /**
    * Fetch the stored original as an object URL.
@@ -444,8 +462,50 @@ export const api = {
    * It goes through `fetch` rather than an `<img src>` because the endpoint
    * needs a bearer token. Callers own the URL and must revoke it.
    */
-  getDocumentFileBlob(documentType: DocumentType, internalDocNumber: string): Promise<string> {
-    return fetchBlobUrl(`${documentPath(documentType)}/${internalDocNumber}/file`)
+  getDocumentFileBlob(reference: string): Promise<string> {
+    return fetchBlobUrl(`${RECORDS}/${reference}/file`)
+  },
+
+  // ── Migration from the two old tabs ─────────────────────────────────────
+  previewMigration() {
+    return request<MigrationReport>('/documents/migration')
+  },
+  migrationStatus() {
+    return request<MigrationReport>('/documents/migration/status')
+  },
+  runMigration() {
+    return request<MigrationReport>('/documents/migration', { method: 'POST' })
+  },
+  resumeEnrichment() {
+    return request<MigrationReport>('/documents/migration/enrich', { method: 'POST' })
+  },
+  uploadOriginalsToDrive() {
+    return request<MigrationReport>('/documents/migration/drive', { method: 'POST' })
+  },
+
+  // ── Backups ─────────────────────────────────────────────────────────────
+  listBackups() {
+    return request<BackupOverview>('/backups')
+  },
+  createBackup() {
+    return request<BackupOverview>('/backups', { method: 'POST' })
+  },
+  downloadBackup(name: string): Promise<string> {
+    return fetchBlobUrl(`/backups/${encodeURIComponent(name)}`)
+  },
+  compareBackup(name: string) {
+    return request<BackupComparison>(`/backups/${encodeURIComponent(name)}/compare`)
+  },
+  restoreBackup(name: string) {
+    return request<{ restored: number; safety_backup: string; overview: BackupOverview }>(
+      `/backups/${encodeURIComponent(name)}/restore`,
+      { method: 'POST' },
+    )
+  },
+  uploadBackup(file: File) {
+    const formData = new FormData()
+    formData.append('file', file)
+    return request<BackupOverview>('/backups/upload', { method: 'POST', body: formData })
   },
 
   // ── Documents app settings ──────────────────────────────────────────────

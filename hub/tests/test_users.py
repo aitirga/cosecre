@@ -86,7 +86,7 @@ def test_the_last_admin_cannot_be_demoted(hub):
     )
 
     assert response.status_code == 400
-    assert "last administrator" in response.json()["detail"]
+    assert "últim compte d'administrador" in response.json()["detail"]
 
 
 def test_an_admin_cannot_disable_themselves(hub):

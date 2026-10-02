@@ -56,7 +56,7 @@ def test_registration_closes_after_the_first_account(hub):
     )
 
     assert second.status_code == 403
-    assert "closed" in second.json()["detail"].lower()
+    assert "tancat" in second.json()["detail"].lower()
 
 
 def test_open_registration_can_be_enabled(tmp_path: Path):
@@ -175,7 +175,7 @@ def test_requests_without_a_token_are_rejected(hub):
     register_admin(client)
 
     assert client.get("/api/v1/auth/me").status_code == 401
-    assert client.get("/api/v1/documents/invoices").status_code == 401
+    assert client.get("/api/v1/documents/records").status_code == 401
 
 
 def test_bootstrap_admin_comes_from_the_environment(tmp_path: Path):

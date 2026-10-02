@@ -28,11 +28,18 @@ export default defineConfig(({ mode }) => {
       vue(),
       VitePWA({
         registerType: 'autoUpdate',
+        workbox: {
+          // Serve the cached shell immediately, even while Fly is waking up.
+          // Never serve or cache private API responses as navigation pages.
+          navigateFallback: '/index.html',
+          navigateFallbackDenylist: [/^\/api(?:\/|$)/, /^\/healthz$/],
+          globPatterns: ['**/*.{js,css,html,svg,woff2}'],
+        },
         includeAssets: ['favicon.svg'],
         manifest: {
           name: 'Cosecre',
           short_name: 'Cosecre',
-          description: 'Document intake, extraction and review.',
+          description: 'Registre de documents comptables.',
           // Matches --accent-700 and --surface-1 in style.css, so the splash and
           // the address bar do not flash a colour the app never uses.
           theme_color: '#b83c14',

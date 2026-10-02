@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ca">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -7,7 +7,7 @@
     <!-- Matches --accent-700 and --surface-1 in style.css. -->
     <meta name="theme-color" content="#b83c14" />
     <meta name="color-scheme" content="light" />
-    <meta name="description" content="Document intake, extraction and review." />
+    <meta name="description" content="Registre de documents comptables." />
     <title>Cosecre</title>
     <style>
       /* Painted before the bundle parses, so the first frame is the app's own
@@ -15,10 +15,23 @@
       html {
         background: #fbf5ea;
       }
+      .boot-splash { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; font: 16px system-ui, sans-serif; color: #36342e; }
+      .boot-splash strong { font-size: 28px; }
+      .boot-track { width: min(300px, 80vw); height: 4px; overflow: hidden; border-radius: 4px; background: #e8decb; }
+      .boot-track span { display: block; width: 35%; height: 100%; background: #b83c14; animation: boot-slide 1.4s ease-in-out infinite; }
+      @keyframes boot-slide { from { transform: translateX(-100%); } to { transform: translateX(386%); } }
+      @media (prefers-reduced-motion: reduce) { .boot-track span { animation: none; width: 100%; opacity: .65; } }
     </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="boot-splash" role="status">
+        <strong>Cosecre</strong>
+        <p>Carregant…</p>
+        <div class="boot-track" role="progressbar" aria-label="Carregant Cosecre"><span></span></div>
+        <noscript>Cal activar JavaScript per fer servir Cosecre.</noscript>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

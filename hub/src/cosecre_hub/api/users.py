@@ -26,7 +26,7 @@ def create_user(
     _: User = Depends(require_admin),
 ):
     if session.query(User).filter(User.email == payload.email).first() is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aquest correu ja està registrat.")
 
     user = User(
         email=payload.email,
@@ -56,7 +56,7 @@ def update_user(
     # administer — and no way to undo it through the API.
     if user.id == admin.id and payload.is_active is False:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot disable your own account"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No pots desactivar el teu propi compte."
         )
     if payload.is_admin is False and user.is_admin:
         remaining_admins = (
@@ -67,7 +67,7 @@ def update_user(
         if remaining_admins == 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="This is the last administrator account",
+                detail="És l'últim compte d'administrador.",
             )
 
     if payload.display_name is not None:
@@ -103,7 +103,7 @@ def deactivate_user(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.id == admin.id:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot disable your own account"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No pots desactivar el teu propi compte."
         )
 
     user.is_active = False

@@ -121,6 +121,42 @@ doctor:
 
 # ── Develop ──────────────────────────────────────────────────────────────────
 
+[group('operations')]
+[doc('Download and verify a Fly database + documents backup into backups/')]
+backup:
+    uv run --no-project python scripts/backup.py
+
+[group('operations')]
+[doc('Show Fly worker RAM usage and its peak since startup')]
+memory:
+    uv run --no-project python scripts/fly_memory.py
+
+[group('operations')]
+[doc('Show Fly machine status and HTTP health checks')]
+status:
+    flyctl status -a cosecre-aitirga
+    flyctl checks list -a cosecre-aitirga
+
+[group('operations')]
+[doc('Tail production logs on Fly')]
+logs:
+    flyctl logs -a cosecre-aitirga
+
+[group('operations')]
+[doc('Deploy the single persistent Fly machine after backend tests')]
+deploy: test
+    flyctl deploy --remote-only --ha=false --strategy immediate -a cosecre-aitirga
+
+[group('develop')]
+[doc('Run the production hub; honours COSECRE_IDLE_TIMEOUT_SECONDS')]
+run:
+    cd hub && uv run python -m cosecre_hub.server
+
+[group('check')]
+[doc('Test idle shutdown, background-job protection and clean process exit')]
+test-idle:
+    cd hub && uv run pytest tests/test_idle.py -q
+
 [group('develop')]
 [doc('Run the hub and the web client together')]
 dev:

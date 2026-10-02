@@ -75,8 +75,10 @@ Everything below is prefixed with `/api/v1`.
 | Apps | `GET /apps`, `GET/PUT /apps/{slug}/settings`, `GET/PUT/DELETE /apps/{slug}/settings/{key}` | Read: any user. Write: admin. |
 | LLM | `GET /llm/providers`, `POST /llm/complete`, `/llm/structured`, `/llm/extract` | `structured` takes a JSON Schema; `extract` takes a file. A message may carry `images` as `data:` URLs. |
 | LLM | `POST /llm/stream` | **NDJSON.** `delta` frames, then exactly one `completed` or `error`. |
-| Documents | `GET/PUT /documents/settings` | Google Sheet target, tab names, model, prompt. |
-| Documents | `.../documents/invoices`, `.../documents/tickets` | `upload`, list, get, `PATCH`, `validate`, `file`, `DELETE`, `jobs/{id}` |
+| Documents | `GET/PUT /documents/settings` | Google Sheet target, register tab, model, prompt. |
+| Documents | `.../documents/records` | `upload` (with `source=camera\|file`), list, `sync`, get, `PATCH`, `validate`, `file`, `DELETE`, `jobs/{id}`. One register for every document type. |
+| Documents | `GET/POST /documents/migration`, `GET .../status`, `POST .../enrich` | Admin. Copies the old Factures/Tiquets tabs into the register, then re-reads originals with the models. |
+| Backups | `GET/POST /backups`, `GET /backups/{name}` | Admin. Daily zips of the database and the register. |
 
 ### `GET /meta` is the integration point
 
@@ -189,7 +191,7 @@ What changed for clients:
 | Old | New |
 |---|---|
 | `/api/auth/*` | `/api/v1/auth/*` |
-| `/api/invoices`, `/api/tickets` | `/api/v1/documents/invoices`, `/api/v1/documents/tickets` |
+| `/api/invoices`, `/api/tickets` | `/api/v1/documents/records` (one register since October 2026) |
 | `/api/settings` | `/api/v1/documents/settings` |
 | — | `/api/v1/meta`, `/api/v1/users`, `/api/v1/apps/*`, `/api/v1/llm/*` |
 

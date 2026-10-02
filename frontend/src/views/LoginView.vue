@@ -29,18 +29,18 @@ const isFirstAccount = computed(() => auth.state.hub?.has_users === false)
 
 const heading = computed(() => {
   if (mode.value === 'register') {
-    return isFirstAccount.value ? 'Create the first account' : 'Create an account'
+    return isFirstAccount.value ? 'Crea el primer compte' : 'Crea un compte'
   }
-  return 'Sign in'
+  return 'Inicia la sessió'
 })
 
 const lead = computed(() => {
   if (auth.state.hubError) return auth.state.hubError
   if (mode.value === 'register' && isFirstAccount.value) {
-    return 'This hub has no accounts yet. The first one you create becomes the administrator and can add everyone else.'
+    return 'Aquest hub encara no té comptes. El primer que creïs serà l\'administrador i podrà afegir la resta.'
   }
-  if (mode.value === 'register') return 'Register a new account on this hub.'
-  return 'Use the account an administrator created for you.'
+  if (mode.value === 'register') return 'Registra un compte nou en aquest hub.'
+  return 'Fes servir el compte que t\'ha creat un administrador.'
 })
 
 const submitting = computed(() => auth.state.loading)
@@ -65,7 +65,7 @@ async function submit() {
         <BrandMark :size="34" />
         <div>
           <p class="wordmark">Cosecre</p>
-          <p class="tagline">Document intake, extraction and review</p>
+          <p class="tagline">Registre de documents comptables</p>
         </div>
       </header>
 
@@ -82,7 +82,7 @@ async function submit() {
               :class="{ active: mode === 'login' }"
               @click="mode = 'login'"
             >
-              Sign in
+              Entra
             </button>
             <button
               type="button"
@@ -91,25 +91,25 @@ async function submit() {
               :class="{ active: mode === 'register' }"
               @click="mode = 'register'"
             >
-              Register
+              Registra't
             </button>
           </div>
 
           <form class="form" @submit.prevent="submit">
             <label class="field">
-              <span class="label">Email</span>
+              <span class="label">Correu electrònic</span>
               <input
                 v-model="form.email"
                 class="input"
                 type="email"
                 autocomplete="username"
-                placeholder="you@company.com"
+                placeholder="nom@centre.cat"
                 required
               />
             </label>
 
             <label class="field">
-              <span class="label">Password</span>
+              <span class="label">Contrasenya</span>
               <input
                 v-model="form.password"
                 class="input"
@@ -118,16 +118,16 @@ async function submit() {
                 :minlength="mode === 'register' ? 8 : undefined"
                 required
               />
-              <span v-if="mode === 'register'" class="hint">At least 8 characters.</span>
+              <span v-if="mode === 'register'" class="hint">Mínim 8 caràcters.</span>
             </label>
 
             <button class="btn btn-primary btn-lg btn-block" type="submit" :disabled="submitting">
               {{
                 submitting
-                  ? 'Working…'
+                  ? 'Un moment…'
                   : mode === 'register'
-                    ? 'Create account'
-                    : 'Sign in'
+                    ? 'Crea el compte'
+                    : 'Entra'
               }}
             </button>
 
@@ -145,7 +145,7 @@ async function submit() {
             <span v-if="auth.state.hub" class="muted">v{{ auth.state.hub.version }}</span>
           </span>
           <RouterLink v-if="platform.changeHub" class="btn btn-ghost btn-sm" :to="{ name: 'connect' }">
-            Change hub
+            Canvia de hub
           </RouterLink>
         </footer>
       </div>

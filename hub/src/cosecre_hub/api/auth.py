@@ -66,12 +66,12 @@ def register(
     if not is_first_user and not settings.allow_open_registration:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Registration is closed on this hub. Ask an administrator for an account.",
+            detail="El registre està tancat en aquest hub. Demana un compte a un administrador.",
         )
 
     existing_user = session.query(User).filter(User.email == payload.email).first()
     if existing_user is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aquest correu ja està registrat.")
 
     user = User(
         email=payload.email,
@@ -100,9 +100,9 @@ def login(
     # One message for "no such account" and "wrong password" alike, so the
     # endpoint cannot be used to enumerate who has an account here.
     if user is None or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Correu o contrasenya incorrectes.")
     if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Aquest compte està desactivat.")
 
     user.last_login_at = utcnow()
     tokens = _tokens(
@@ -185,11 +185,11 @@ def change_password(
 ):
     if not verify_password(payload.current_password, user.password_hash):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="La contrasenya actual no és correcta."
         )
     user.password_hash = hash_password(payload.new_password)
     # A password change is also how someone reacts to a suspected compromise, so
     # every other session goes with it.
     revoke_all_sessions(session, user)
     session.commit()
-    return MessageResponse(message="Password updated. Other sessions were signed out.")
+    return MessageResponse(message="Contrasenya canviada. S'han tancat les altres sessions.")

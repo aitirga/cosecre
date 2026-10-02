@@ -17,7 +17,7 @@ const { navItems, homeRoute, isActive } = useModules()
 const menuOpen = ref(false)
 
 const displayName = computed(
-  () => auth.user.value?.display_name || auth.user.value?.email || 'Signed in',
+  () => auth.user.value?.display_name || auth.user.value?.email || 'Sessió iniciada',
 )
 
 const initials = computed(() => {
@@ -47,7 +47,7 @@ async function handleLogout() {
         <span class="brand-name">Cosecre</span>
       </RouterLink>
 
-      <nav class="nav" aria-label="Sections">
+      <nav class="nav" aria-label="Seccions">
         <RouterLink
           v-for="item in navItems"
           :key="item.name"
@@ -66,12 +66,12 @@ async function handleLogout() {
           <span class="avatar" aria-hidden="true">{{ initials }}</span>
           <span class="account-text">
             <span class="account-name truncate">{{ displayName }}</span>
-            <span class="account-role">{{ auth.isAdmin.value ? 'Administrator' : 'Member' }}</span>
+            <span class="account-role">{{ auth.isAdmin.value ? 'Administrador/a' : 'Membre' }}</span>
           </span>
         </RouterLink>
-        <button class="btn btn-ghost btn-icon" type="button" title="Sign out" @click="handleLogout">
+        <button class="btn btn-ghost btn-icon" type="button" title="Tanca la sessió" @click="handleLogout">
           <AppIcon name="logout" />
-          <span class="sr-only">Sign out</span>
+          <span class="sr-only">Tanca la sessió</span>
         </button>
       </div>
     </aside>
@@ -82,7 +82,7 @@ async function handleLogout() {
         class="btn btn-ghost btn-icon"
         type="button"
         :aria-expanded="menuOpen"
-        aria-label="Toggle navigation"
+        aria-label="Mostra o amaga el menú"
         @click="menuOpen = !menuOpen"
       >
         <AppIcon :name="menuOpen ? 'close' : 'sliders'" />
@@ -96,7 +96,7 @@ async function handleLogout() {
     <main class="content">
       <RouterView :key="route.fullPath" />
       <p v-if="platform.name === 'desktop'" class="platform-note">
-        Connected to {{ platform.hubUrl }}
+        Connectat a {{ platform.hubUrl }}
       </p>
     </main>
   </div>

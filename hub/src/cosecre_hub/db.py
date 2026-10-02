@@ -14,6 +14,9 @@ def create_sqlalchemy_engine(database_url: str):
         # FastAPI runs sync endpoints on a threadpool, so the connection is not
         # guaranteed to stay on the thread that opened it.
         connect_args["check_same_thread"] = False
+        # Parallel extractions commit from several threads; wait for the
+        # write lock rather than failing with "database is locked".
+        connect_args["timeout"] = 30
     return create_engine(database_url, connect_args=connect_args, future=True)
 
 

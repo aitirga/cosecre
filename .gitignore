@@ -233,3 +233,13 @@ hub/.env
 # Seed files hold PLAINTEXT passwords and must never be committed. Provision
 # accounts with COSECRE_BOOTSTRAP_ADMIN_* and `POST /api/v1/users` instead.
 seed_users.json
+
+# Downloaded production backups contain private data.
+backups/
+
+# Local browser verification artifacts.
+.playwright-cli/
+output/playwright/
+
+# Local process supervisor state.
+.services/

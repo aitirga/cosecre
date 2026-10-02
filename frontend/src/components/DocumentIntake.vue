@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 
 import { api, ApiError } from '../api/client'
-import { DOCUMENT_CONFIG } from '../document-config'
 import { useExtractionTracker } from '../composables/useExtractionTracker'
-import type { DocumentType } from '../api/types'
+import type { CaptureSource } from '../api/types'
 import AppIcon from './AppIcon.vue'
 import CameraCapture from './CameraCapture.vue'
 
-const props = defineProps<{ documentType: DocumentType }>()
 const emit = defineEmits<{ uploaded: [] }>()
 
 /** An upload that has not reached the hub yet, so it has no job to poll. */
@@ -26,9 +25,7 @@ const error = ref('')
 const loading = ref(false)
 const isDragging = ref(false)
 const isMobile = ref(false)
-const queueRef = ref<HTMLElement | null>(null)
-const config = computed(() => DOCUMENT_CONFIG[props.documentType])
-const { trackedJobs, trackUpload, dismissTrackedJob } = useExtractionTracker(props.documentType)
+const { trackedJobs, trackUpload, dismissTrackedJob } = useExtractionTracker()
 
 const activityItems = computed(() => [
   ...localUploads.value.map((item) => ({
@@ -39,15 +36,19 @@ const activityItems = computed(() => [
     progress: item.progress,
     failed: Boolean(item.failed),
     canDismiss: Boolean(item.failed),
+    reference: null as string | null,
   })),
   ...trackedJobs.value.map((job) => ({
     id: job.jobId,
     name: job.fileName,
     status: job.stageLabel,
-    detail: `${job.detail} Ref ${job.internalDocNumber}.`,
+    detail: job.detail,
     progress: job.progress,
     failed: job.status === 'error',
     canDismiss: ['needs_validation', 'validated', 'error'].includes(job.status),
+    reference: ['needs_validation', 'validated', 'error'].includes(job.status)
+      ? job.internalDocNumber
+      : null,
   })),
 ])
 
@@ -61,7 +62,7 @@ function updateLocalUpload(id: string, patch: Partial<LocalUpload>) {
   )
 }
 
-async function processFiles(files: File[]) {
+async function processFiles(files: File[], source: CaptureSource) {
   if (!files.length) return
 
   loading.value = true
@@ -69,8 +70,8 @@ async function processFiles(files: File[]) {
   const created = files.map((file) => ({
     id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     name: file.name,
-    status: 'Uploading',
-    detail: 'Sending the file to the hub.',
+    status: 'Pujant',
+    detail: 'Enviant el fitxer al servidor.',
     progress: 12,
   }))
   localUploads.value = [...created, ...localUploads.value]
@@ -80,12 +81,12 @@ async function processFiles(files: File[]) {
       const localItem = created[index]
       if (localItem) {
         updateLocalUpload(localItem.id, {
-          status: 'Creating job',
-          detail: 'Upload complete. Waiting for the extraction worker.',
+          status: 'Pujant',
+          detail: 'Enviant el fitxer al servidor.',
           progress: 28,
         })
       }
-      const response = await api.uploadDocument(props.documentType, file)
+      const response = await api.uploadDocument(file, source)
       // Once the hub owns the job, the tracker takes over reporting it.
       trackUpload(file.name, response)
       localUploads.value = localUploads.value.filter((item) => item.id !== localItem?.id)
@@ -98,11 +99,11 @@ async function processFiles(files: File[]) {
     if (!localItem) return
     updateLocalUpload(localItem.id, {
       failed: true,
-      status: 'Upload failed',
+      status: 'Error en pujar',
       detail:
         result.reason instanceof ApiError
           ? result.reason.message
-          : 'The upload could not be queued.',
+          : "No s'ha pogut afegir a la cua.",
       progress: 100,
     })
   })
@@ -113,7 +114,7 @@ async function processFiles(files: File[]) {
     error.value =
       first.status === 'rejected' && first.reason instanceof ApiError
         ? first.reason.message
-        : 'One or more uploads failed.'
+        : "Algun fitxer no s'ha pogut pujar."
   }
 
   if (results.some((result) => result.status === 'fulfilled')) {
@@ -125,15 +126,13 @@ async function processFiles(files: File[]) {
 
 function handleFileSelection(event: Event) {
   const input = event.target as HTMLInputElement
-  void processFiles(input.files ? Array.from(input.files) : [])
+  void processFiles(input.files ? Array.from(input.files) : [], 'file')
   input.value = ''
 }
 
+/** The camera stays open between shots, so nothing here moves the page. */
 function handleCapture(file: File) {
-  void processFiles([file])
-  if (isMobile.value) {
-    void nextTick(() => queueRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
-  }
+  void processFiles([file], 'camera')
 }
 
 function handleDragOver(event: DragEvent) {
@@ -151,7 +150,7 @@ function handleDragLeave(event: DragEvent) {
 function handleDrop(event: DragEvent) {
   event.preventDefault()
   isDragging.value = false
-  void processFiles(event.dataTransfer?.files ? Array.from(event.dataTransfer.files) : [])
+  void processFiles(event.dataTransfer?.files ? Array.from(event.dataTransfer.files) : [], 'file')
 }
 
 function dismiss(itemId: string) {
@@ -173,8 +172,11 @@ function dismiss(itemId: string) {
   >
     <div class="card-head">
       <div>
-        <h2 class="card-title">{{ config.uploadHeading }}</h2>
-        <p class="hint">{{ config.uploadLead }}</p>
+        <h2 class="card-title">Afegeix documents</h2>
+        <p class="hint">
+          Factures, tiquets, pressupostos, albarans o rebuts: la IA en reconeix el tipus. Cada
+          fitxer o foto és un document.
+        </p>
       </div>
     </div>
 
@@ -188,14 +190,14 @@ function dismiss(itemId: string) {
             @change="handleFileSelection"
           />
           <AppIcon name="upload" :size="22" />
-          <span class="dropzone-title">Drop PDFs or images here</span>
-          <span class="btn btn-outline btn-sm">Choose files</span>
+          <span class="dropzone-title">Arrossega aquí PDF o imatges</span>
+          <span class="btn btn-outline btn-sm">Tria fitxers</span>
         </label>
 
         <CameraCapture :auto-start="isMobile" @captured="handleCapture" />
       </div>
 
-      <div v-if="activityItems.length" ref="queueRef" class="queue">
+      <div v-if="activityItems.length" class="queue">
         <article
           v-for="item in activityItems"
           :key="item.id"
@@ -205,15 +207,22 @@ function dismiss(itemId: string) {
           <div class="queue-top">
             <span class="queue-name truncate">{{ item.name }}</span>
             <span class="queue-status">{{ item.status }}</span>
+            <RouterLink
+              v-if="item.reference && !item.failed"
+              class="btn btn-ghost btn-sm"
+              :to="{ name: 'document', params: { internalDocNumber: item.reference } }"
+            >
+              Obre
+            </RouterLink>
             <button
               v-if="item.canDismiss"
               class="btn btn-ghost btn-icon btn-sm"
               type="button"
-              title="Dismiss"
+              title="Treu de la llista"
               @click="dismiss(item.id)"
             >
               <AppIcon name="close" />
-              <span class="sr-only">Dismiss</span>
+              <span class="sr-only">Treu de la llista</span>
             </button>
           </div>
           <div class="progress" role="presentation">
@@ -222,9 +231,11 @@ function dismiss(itemId: string) {
           <p class="queue-detail">{{ item.detail }}</p>
         </article>
       </div>
-      <p v-else class="hint queue-empty">{{ config.queueLead }}</p>
+      <p v-else class="hint queue-empty">
+        Aquí veuràs el progrés de cada document, encara que recarreguis la pàgina.
+      </p>
 
-      <p v-if="loading" class="hint">Sending files to the hub…</p>
+      <p v-if="loading" class="hint">Enviant fitxers…</p>
       <p v-if="error" class="notice notice-error">
         <AppIcon name="alert" :size="15" />
         <span>{{ error }}</span>

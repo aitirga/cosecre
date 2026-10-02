@@ -13,12 +13,12 @@ const props = defineProps<{ status: ExtractionStatus }>()
  * each pipeline stage separately just made the table noisy.
  */
 const STATUSES: Record<ExtractionStatus, { label: string; tone: string; pulse: boolean }> = {
-  pending: { label: 'Queued', tone: 'badge-neutral', pulse: true },
-  processing: { label: 'Extracting', tone: 'badge-accent', pulse: true },
-  written_to_sheet: { label: 'Syncing', tone: 'badge-accent', pulse: true },
-  needs_validation: { label: 'Needs review', tone: 'badge-gold', pulse: false },
-  validated: { label: 'Validated', tone: 'badge-olive', pulse: false },
-  error: { label: 'Failed', tone: 'badge-danger', pulse: false },
+  pending: { label: 'En cua', tone: 'badge-neutral', pulse: true },
+  processing: { label: 'Llegint', tone: 'badge-accent', pulse: true },
+  written_to_sheet: { label: 'Desant', tone: 'badge-accent', pulse: true },
+  needs_validation: { label: 'Per revisar', tone: 'badge-gold', pulse: false },
+  validated: { label: 'Validat', tone: 'badge-olive', pulse: false },
+  error: { label: 'Error', tone: 'badge-danger', pulse: false },
 }
 
 const meta = computed(() => STATUSES[props.status] ?? STATUSES.pending)

@@ -1,28 +1,90 @@
-"""Google Sheets and Drive sync for the documents app.
+"""Google Sheets and Drive for the accounting register.
 
-The spreadsheet — not this database — is the record the accountants actually
-work in, so every read reconciles against it rather than trusting local state.
-Column order is discovered from the header row instead of assumed, which is what
-lets someone rearrange the sheet without breaking the sync.
+The database holds the register; the spreadsheet is where people read and edit
+it. Two rules keep the two honest:
+
+* **Typed writes.** Every cell is written with ``updateCells`` as a string,
+  number, date serial, boolean or formula — never as text for Sheets to parse.
+  "1/2" stays an invoice number instead of becoming the 1st of February, a
+  postcode keeps its leading zero, and dates are ``dd/mm/yyyy`` whatever the
+  spreadsheet's locale is.
+* **Known columns only.** Columns are found by header, and only those cells are
+  touched. Someone can add, reorder or rename-by-case columns, and add their
+  own, without the sync noticing or overwriting them.
 """
 
 from __future__ import annotations
 
+import io
 import re
-from dataclasses import dataclass
+import time
+import unicodedata
+from dataclasses import dataclass, field
+from datetime import date
+from functools import wraps
 from pathlib import Path
-from typing import Iterable
+from threading import RLock
+from typing import Any, Literal
 from urllib.parse import urlparse
-
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 
 from ..config import Settings
 from ..models import WorkspaceSetting
-from ..schemas import DocumentType, InvoiceExtraction, InvoiceRecord
+from ..schemas.documents import CHOICES, canonical_choice
+from .text_format import parse_amount, parse_date, to_sheets_serial
 
-FIELD_TO_HEADER = {
+
+def build(*args, **kwargs):
+    # Google discovery is only needed for sheet/drive operations, not startup.
+    from googleapiclient.discovery import build as google_build
+
+    return google_build(*args, **kwargs)
+
+
+ColumnKind = Literal["text", "choice", "date", "amount", "bool", "file"]
+
+
+@dataclass(frozen=True, slots=True)
+class Column:
+    field: str
+    header: str
+    kind: ColumnKind = "text"
+    width: int = 140
+    #: Earlier headers of this column; an existing sheet is relabelled in place.
+    aliases: tuple[str, ...] = ()
+    hidden: bool = False
+
+
+#: The register, in the order a new tab is laid out.
+REGISTER_COLUMNS: tuple[Column, ...] = (
+    # The sync key: still written, but hidden — people don't need to see it.
+    Column("num_doc_intern", "Núm. doc. intern", width=170, hidden=True),
+    Column("tipus_document", "Tipus document", "choice", 150),
+    Column("origen", "Foto o original", "choice", 110),
+    Column("num_factura", "Núm. factura"),
+    Column("data_factura", "Data factura", "date", 100),
+    Column("proveidor", "Proveïdor/a", width=220),
+    Column("cif_proveidor", "CIF proveïdor", width=110),
+    Column("carrer", "Carrer i núm.", width=200),
+    Column("codi_postal", "Codi postal", width=90),
+    Column("ciutat", "Ciutat"),
+    Column("compte_corrent", "Compte corrent", width=230),
+    Column("cif_proveit", "CIF proveït", width=110),
+    Column("import_value", "Import", "amount", 100),
+    Column("descripcio", "Descripció", width=280),
+    Column("descripcio_compra", "Descripció de la compra/servei", width=280),
+    Column("pagament", "Pagament", "choice", 160),
+    Column("pagament_observacions", "Pagament (altres)", width=180),
+    Column("metode_pagament", "Mètode de pagament", "choice", 180),
+    Column("data_pagament", "Data de pagament", "date", 110),
+    Column("subministrat", "Subministrat", "choice", 130),
+    Column("pressupost_afectat", "Compte", "choice", 170, aliases=("Pressupost afectat",)),
+    Column("file_link", "Fitxer", "file", 120),
+    Column("validat", "Validat", "bool", 80),
+)
+COLUMNS_BY_FIELD = {column.field: column for column in REGISTER_COLUMNS}
+
+#: Headers of the two tabs the register replaced, for the migration.
+LEGACY_HEADERS = {
     "num_factura": "Núm. de la factura",
     "data_factura": "Data factura",
     "proveidor": "Proveïdor/a",
@@ -34,18 +96,51 @@ FIELD_TO_HEADER = {
     "pressupost_afectat": "Pressupost afectat",
     "num_doc_intern": "Núm. de doc. intern",
     "file_link": "Fitxer",
+    "validat": "Validat",
 }
-VALIDAT_HEADER = "Validat"
-REQUIRED_HEADERS = [*FIELD_TO_HEADER.values(), VALIDAT_HEADER]
+
+#: Full Drive, not ``drive.file``: the latter only reaches files this app
+#: created, so a folder someone shares with the service account stays invisible.
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive",
 ]
+
+_PENDING_COLOUR = {"red": 1.0, "green": 0.95, "blue": 0.8}
+_DONE_COLOUR = {"red": 1.0, "green": 1.0, "blue": 1.0}
+_HEADER_COLOUR = {"red": 0.95, "green": 0.94, "blue": 0.92}
+_LAYOUT_TTL_SECONDS = 60
+
+
+class SheetDocumentNotFound(RuntimeError):
+    """A successful sheet read did not find this document's reference."""
 
 
 @dataclass
-class SheetWriteResult:
+class RegisterLayout:
+    spreadsheet_id: str
+    sheet_id: int
+    title: str
+    #: field → zero-based column index, for the register columns present.
+    columns: dict[str, int]
+    width: int
+    row_count: int
+    loaded_at: float = field(default_factory=time.monotonic)
+
+
+@dataclass
+class SheetRow:
     row_number: int
+    values: dict[str, Any]
+
+
+@dataclass
+class LegacyTab:
+    title: str
+    rows: list[SheetRow]
+    #: Zero-based column of "Núm. de doc. intern", where the migration writes
+    #: back the references it had to generate, so a second run skips those rows.
+    reference_column: int | None
 
 
 def parse_spreadsheet_id(spreadsheet_url: str) -> str:
@@ -55,7 +150,7 @@ def parse_spreadsheet_id(spreadsheet_url: str) -> str:
             return match.group(1)
     parsed = urlparse(spreadsheet_url)
     if parsed.scheme or parsed.netloc:
-        raise ValueError("Could not parse spreadsheet id from the provided URL.")
+        raise ValueError("No s'ha pogut llegir l'identificador del full a partir de l'URL.")
     return spreadsheet_url
 
 
@@ -68,66 +163,175 @@ def column_letter(column_number: int) -> str:
     return "".join(reversed(result))
 
 
-def parse_bool(value: str) -> bool:
-    return value.strip().lower() in {"true", "1", "yes", "si", "sí", "x"}
+def quote_title(title: str) -> str:
+    return "'" + title.replace("'", "''") + "'"
 
 
-def synthetic_internal_doc_number(row_number: int) -> str:
-    return f"sheet-row-{row_number}"
+def fold_header(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", str(text).lower())
+    bare = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", bare).strip()
+
+
+def parse_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"true", "1", "yes", "si", "sí", "x", "verdadero", "cert"}
+
+
+def drive_file_id_from_link(link: str) -> str | None:
+    """Recover a Drive id from an ``=IMAGE(...)`` formula or a Drive URL."""
+    if not link:
+        return None
+    match = re.search(r"[?&]id=([\w-]{10,})", link) or re.search(r"/d/([\w-]{10,})", link)
+    return match.group(1) if match else None
+
+
+def file_cell(drive_file_id: str, mime_type: str | None) -> str:
+    """What the "Fitxer" column shows: the photo itself, or a link to a PDF."""
+    if mime_type and mime_type.startswith("image/"):
+        return f'=IMAGE("https://drive.google.com/uc?export=view&id={drive_file_id}")'
+    return f"https://drive.google.com/file/d/{drive_file_id}/view"
+
+
+def cell_to_value(kind: ColumnKind, field_name: str, raw: Any) -> Any:
+    """A cell as read with ``FORMULA`` + ``SERIAL_NUMBER`` → the stored value."""
+    if kind == "date":
+        return parse_date(raw)
+    if kind == "amount":
+        return parse_amount(raw)
+    if kind == "bool":
+        return parse_bool(raw) if raw not in (None, "") else False
+    if raw is None:
+        return ""
+    if isinstance(raw, float) and raw.is_integer():
+        raw = int(raw)
+    text = str(raw).strip()
+    if field_name == "codi_postal" and text.isdigit() and len(text) < 5:
+        text = text.zfill(5)  # typed by hand as a number, lost its zero
+    if kind == "choice":
+        return canonical_choice(field_name, text)
+    return text
+
+
+def value_to_cell(kind: ColumnKind, value: Any) -> dict[str, Any]:
+    """A stored value → ``CellData``. An empty dict clears the cell."""
+    if kind == "date":
+        if not isinstance(value, date):
+            return {"userEnteredFormat": {"numberFormat": {"type": "DATE", "pattern": "dd/mm/yyyy"}}}
+        return {
+            "userEnteredValue": {"numberValue": to_sheets_serial(value)},
+            "userEnteredFormat": {"numberFormat": {"type": "DATE", "pattern": "dd/mm/yyyy"}},
+        }
+    if kind == "amount":
+        amount = parse_amount(value)
+        if amount is None:
+            return {}
+        return {
+            "userEnteredValue": {"numberValue": amount},
+            "userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00 €"}},
+        }
+    if kind == "bool":
+        return {"userEnteredValue": {"boolValue": bool(value)}}
+    text = "" if value is None else str(value)
+    if not text:
+        return {}
+    if kind == "file" and text.startswith("="):
+        return {"userEnteredValue": {"formulaValue": text}}
+    return {
+        "userEnteredValue": {"stringValue": text},
+        "userEnteredFormat": {"numberFormat": {"type": "TEXT"}},
+    }
+
+
+def serialized(method):
+    """Reuse Google transports safely; httplib2 clients are not thread-safe.
+
+    Lock the whole operation, including nested reads, so appends cannot select
+    the same empty row. RLock lets those nested calls reuse the same clients.
+    """
+
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return locked
 
 
 class GoogleSheetsService:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self._lock = RLock()
+        self._clients: dict[str, Any] = {}
+        self._resources: dict[str, Any] = {}
+        self._layouts: dict[tuple[str, str], RegisterLayout] = {}
 
-    def _sheet_name(self, workspace: WorkspaceSetting, document_type: DocumentType) -> str:
-        return workspace.sheet_name if document_type == "invoice" else workspace.ticket_sheet_name
+    @serialized
+    def close(self):
+        for client in self._clients.values():
+            client.close()
+        self._resources.clear()
+        self._clients.clear()
 
-    def is_ready(self, workspace: WorkspaceSetting, document_type: DocumentType = "invoice") -> bool:
+    # ── Clients ──────────────────────────────────────────────────────────────
+
+    def is_ready(self, workspace: WorkspaceSetting) -> bool:
         return bool(
             workspace.spreadsheet_url
-            and self._sheet_name(workspace, document_type)
+            and workspace.registry_sheet_name
             and self.settings.google_service_account_file
         )
+
+    @property
+    def drive_ready(self) -> bool:
+        return self.settings.google_service_account_file is not None
 
     def _credentials(self):
         if self.settings.google_service_account_file is None:
             raise RuntimeError("Google service account file is not configured.")
+        from google.oauth2 import service_account
+
         return service_account.Credentials.from_service_account_file(
             self.settings.google_service_account_file,
             scopes=SCOPES,
         )
 
     def _service(self):
-        return build("sheets", "v4", credentials=self._credentials(), cache_discovery=False)
+        if "sheets" not in self._clients:
+            self._clients["sheets"] = build(
+                "sheets", "v4", credentials=self._credentials(), cache_discovery=False
+            )
+        return self._clients["sheets"]
 
     def _drive_service(self):
-        return build("drive", "v3", credentials=self._credentials(), cache_discovery=False)
+        if "drive" not in self._clients:
+            self._clients["drive"] = build(
+                "drive", "v3", credentials=self._credentials(), cache_discovery=False
+            )
+        return self._clients["drive"]
 
-    def upload_file_to_drive(
-        self, file_path: Path, filename: str, mime_type: str, folder_id: str | None = None
-    ) -> tuple[str, str]:
-        """Upload a file to Drive and return (web_view_link, file_id)."""
-        drive = self._drive_service()
-        media = MediaFileUpload(str(file_path), mimetype=mime_type, resumable=False)
-        body: dict = {"name": filename}
-        if folder_id:
-            body["parents"] = [folder_id]
-        uploaded = (
-            drive.files()
-            .create(body=body, media_body=media, fields="id,webViewLink")
-            .execute()
-        )
-        drive.permissions().create(
-            fileId=uploaded["id"],
-            body={"role": "reader", "type": "anyone"},
-        ).execute()
-        return uploaded["webViewLink"], uploaded["id"]
+    def _spreadsheets(self):
+        if "spreadsheets" not in self._resources:
+            self._resources["spreadsheets"] = self._service().spreadsheets()
+        return self._resources["spreadsheets"]
 
-    def delete_drive_file(self, file_id: str) -> None:
-        """Delete a file from Drive by its file ID."""
-        drive = self._drive_service()
-        drive.files().delete(fileId=file_id).execute()
+    def _values(self):
+        # Nested discovery resources also build method/schema graphs. Reusing
+        # only the root client still creates megabytes of cycles per poll.
+        if "values" not in self._resources:
+            self._resources["values"] = self._spreadsheets().values()
+        return self._resources["values"]
+
+    def _files(self):
+        if "files" not in self._resources:
+            self._resources["files"] = self._drive_service().files()
+        return self._resources["files"]
+
+    def _permissions(self):
+        if "permissions" not in self._resources:
+            self._resources["permissions"] = self._drive_service().permissions()
+        return self._resources["permissions"]
 
     def _spreadsheet_id(self, workspace: WorkspaceSetting) -> str:
         if workspace.spreadsheet_id:
@@ -136,282 +340,648 @@ class GoogleSheetsService:
             raise RuntimeError("Spreadsheet URL is not configured.")
         return parse_spreadsheet_id(workspace.spreadsheet_url)
 
-    def _sheet_properties(self, workspace: WorkspaceSetting, document_type: DocumentType) -> tuple[str, int]:
-        service = self._service()
-        spreadsheet_id = self._spreadsheet_id(workspace)
+    def _batch(self, spreadsheet_id: str, requests: list[dict[str, Any]]) -> None:
+        if requests:
+            self._spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id, body={"requests": requests}
+            ).execute()
+
+    # ── Layout ───────────────────────────────────────────────────────────────
+
+    def _tabs(self, spreadsheet_id: str) -> list[dict[str, Any]]:
         metadata = (
-            service.spreadsheets()
-            .get(spreadsheetId=spreadsheet_id, fields="sheets(properties(sheetId,title))")
+            self._spreadsheets()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                fields="sheets(properties(sheetId,title,gridProperties))",
+            )
             .execute()
         )
-        target_name = self._sheet_name(workspace, document_type)
-        target = target_name.strip().lower()
-        for sheet in metadata.get("sheets", []):
-            properties = sheet.get("properties", {})
-            if properties.get("title", "").strip().lower() == target:
-                return spreadsheet_id, int(properties["sheetId"])
-        raise RuntimeError(f"Sheet tab '{target_name}' was not found in the spreadsheet.")
+        return [sheet.get("properties", {}) for sheet in metadata.get("sheets", [])]
 
-    def ensure_headers(self, workspace: WorkspaceSetting, document_type: DocumentType) -> list[str]:
-        service = self._service()
+    @serialized
+    def register_layout(self, workspace: WorkspaceSetting, *, fresh: bool = False) -> RegisterLayout:
+        """Find (or create) the register tab and map its columns.
+
+        Missing register headers are appended at the right, never inserted, so
+        nothing a person placed in the sheet moves.
+        """
         spreadsheet_id = self._spreadsheet_id(workspace)
-        sheet_name = self._sheet_name(workspace, document_type)
+        title = workspace.registry_sheet_name
+        key = (spreadsheet_id, fold_header(title))
+        cached = self._layouts.get(key)
+        if cached and not fresh and time.monotonic() - cached.loaded_at < _LAYOUT_TTL_SECONDS:
+            return cached
+
+        tab = next(
+            (t for t in self._tabs(spreadsheet_id) if fold_header(t.get("title", "")) == key[1]),
+            None,
+        )
+        if tab is None:
+            layout = self._create_register(spreadsheet_id, title)
+        else:
+            layout = self._map_register(spreadsheet_id, tab)
+        self._layouts[key] = layout
+        return layout
+
+    def _map_register(self, spreadsheet_id: str, tab: dict[str, Any]) -> RegisterLayout:
+        title = tab["title"]
+        grid = tab.get("gridProperties", {})
         response = (
-            service.spreadsheets()
-            .values()
-            .get(spreadsheetId=spreadsheet_id, range=f"{sheet_name}!A1:ZZ1")
+            self._values()
+            .get(spreadsheetId=spreadsheet_id, range=f"{quote_title(title)}!1:1")
             .execute()
         )
-        values = response.get("values", [])
-        if not values:
-            (
-                service.spreadsheets()
-                .values()
-                .update(
-                    spreadsheetId=spreadsheet_id,
-                    range=f"{sheet_name}!A1:{column_letter(len(REQUIRED_HEADERS))}1",
-                    valueInputOption="RAW",
-                    body={"values": [REQUIRED_HEADERS]},
+        headers = (response.get("values") or [[]])[0]
+        by_header = {fold_header(header): index for index, header in enumerate(headers) if header}
+        columns: dict[str, int] = {}
+        missing: list[Column] = []
+        upgrades: list[dict[str, Any]] = []
+        for column in REGISTER_COLUMNS:
+            index = by_header.get(fold_header(column.header))
+            if index is None:
+                index = next(
+                    (by_header[fold_header(a)] for a in column.aliases if fold_header(a) in by_header),
+                    None,
                 )
-                .execute()
-            )
-            return REQUIRED_HEADERS
+                if index is not None:
+                    # A renamed column: relabel it and give it its current rules.
+                    upgrades.append(self._header_request(tab["sheetId"], index, [column.header]))
+                    upgrades.extend(self._column_rules(tab["sheetId"], index, column))
+            if index is None:
+                missing.append(column)
+            else:
+                columns[column.field] = index
+        if upgrades:
+            # The same one-off upgrade hides the columns that are now hidden.
+            for column in REGISTER_COLUMNS:
+                if column.hidden and column.field in columns:
+                    upgrades.append(self._hide_request(tab["sheetId"], columns[column.field]))
+            self._batch(spreadsheet_id, upgrades)
 
-        headers = values[0]
-        missing = [header for header in REQUIRED_HEADERS if header not in headers]
+        width = max(len(headers), int(grid.get("columnCount", 26)))
         if missing:
-            next_col = column_letter(len(headers) + 1)
-            end_col = column_letter(len(headers) + len(missing))
-            (
-                service.spreadsheets()
-                .values()
-                .update(
-                    spreadsheetId=spreadsheet_id,
-                    range=f"{sheet_name}!{next_col}1:{end_col}1",
-                    valueInputOption="RAW",
-                    body={"values": [missing]},
+            start = len(headers)
+            needed = start + len(missing)
+            requests: list[dict[str, Any]] = []
+            if needed > int(grid.get("columnCount", 26)):
+                requests.append(
+                    {
+                        "appendDimension": {
+                            "sheetId": tab["sheetId"],
+                            "dimension": "COLUMNS",
+                            "length": needed - int(grid.get("columnCount", 26)),
+                        }
+                    }
                 )
-                .execute()
+            requests.append(
+                self._header_request(tab["sheetId"], start, [c.header for c in missing])
             )
-            headers = headers + missing
-        return headers
+            self._batch(spreadsheet_id, requests)
+            for offset, column in enumerate(missing):
+                columns[column.field] = start + offset
+            width = max(width, needed)
 
-    def _invoice_value_map(self, invoice: InvoiceExtraction | InvoiceRecord) -> dict:
-        payload = invoice.model_dump(by_alias=False)
-        import_raw = payload["import_value"]
-        # Write as a numeric value so Sheets treats it as a number, not text
-        import_cell: float | str = import_raw if import_raw is not None else ""
+        return RegisterLayout(
+            spreadsheet_id=spreadsheet_id,
+            sheet_id=int(tab["sheetId"]),
+            title=title,
+            columns=columns,
+            width=width,
+            row_count=int(grid.get("rowCount", 1000)),
+        )
+
+    def _header_request(self, sheet_id: int, start: int, headers: list[str]) -> dict[str, Any]:
         return {
-            FIELD_TO_HEADER["num_factura"]: payload["num_factura"],
-            FIELD_TO_HEADER["data_factura"]: payload["data_factura"],
-            FIELD_TO_HEADER["proveidor"]: payload["proveidor"],
-            FIELD_TO_HEADER["cif_proveidor"]: payload["cif_proveidor"],
-            FIELD_TO_HEADER["adreca_proveidor"]: payload["adreca_proveidor"],
-            FIELD_TO_HEADER["import_value"]: import_cell,
-            FIELD_TO_HEADER["cif_proveit"]: payload["cif_proveit"],
-            FIELD_TO_HEADER["descripcio"]: payload["descripcio"],
-            FIELD_TO_HEADER["pressupost_afectat"]: payload["pressupost_afectat"],
-            FIELD_TO_HEADER["num_doc_intern"]: payload["num_doc_intern"],
-            FIELD_TO_HEADER["file_link"]: getattr(invoice, "file_link", ""),
-            VALIDAT_HEADER: "TRUE" if getattr(invoice, "validat", False) else "FALSE",
+            "updateCells": {
+                "start": {"sheetId": sheet_id, "rowIndex": 0, "columnIndex": start},
+                "rows": [
+                    {
+                        "values": [
+                            {
+                                "userEnteredValue": {"stringValue": header},
+                                "userEnteredFormat": {
+                                    "textFormat": {"bold": True},
+                                    "backgroundColor": _HEADER_COLOUR,
+                                },
+                            }
+                            for header in headers
+                        ]
+                    }
+                ],
+                "fields": "userEnteredValue,userEnteredFormat(textFormat,backgroundColor)",
+            }
         }
 
-    def _row_from_invoice(self, invoice: InvoiceExtraction | InvoiceRecord, headers: Iterable[str]) -> list:
-        value_map = self._invoice_value_map(invoice)
-        return [value_map.get(header, "") for header in headers]
-
-    def _apply_row_color(self, spreadsheet_id: str, sheet_id: int, row_number: int, color: dict[str, float]):
-        service = self._service()
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={
-                "requests": [
-                    {
-                        "repeatCell": {
-                            "range": {
-                                "sheetId": sheet_id,
-                                "startRowIndex": row_number - 1,
-                                "endRowIndex": row_number,
-                            },
-                            "cell": {"userEnteredFormat": {"backgroundColor": color}},
-                            "fields": "userEnteredFormat.backgroundColor",
-                        }
-                    }
-                ]
-            },
-        ).execute()
-
-    def _find_row(
-        self,
-        workspace: WorkspaceSetting,
-        document_type: DocumentType,
-        internal_doc_number: str,
-    ) -> tuple[int, list[str], list[str]]:
-        headers = self.ensure_headers(workspace, document_type)
-        documents = self.list_documents(workspace, document_type)
-        for document in documents:
-            if document.num_doc_intern == internal_doc_number and document.sheet_row_ref is not None:
-                return document.sheet_row_ref, headers, self._row_from_invoice(document, headers)
-        raise RuntimeError(
-            f"{document_type.title()} '{internal_doc_number}' was not found in Google Sheets."
-        )
-
-    def _row_has_meaningful_data(self, row_map: dict[str, str]) -> bool:
-        for header in FIELD_TO_HEADER.values():
-            if row_map.get(header, "").strip():
-                return True
-        return False
-
-    def list_documents(self, workspace: WorkspaceSetting, document_type: DocumentType) -> list[InvoiceRecord]:
-        headers = self.ensure_headers(workspace, document_type)
-        service = self._service()
-        spreadsheet_id = self._spreadsheet_id(workspace)
-        sheet_name = self._sheet_name(workspace, document_type)
-        response = (
-            service.spreadsheets()
-            .values()
-            .get(spreadsheetId=spreadsheet_id, range=f"{sheet_name}!A:Z")
-            .execute()
-        )
-        values = response.get("values", [])
-        if len(values) <= 1:
-            return []
-
-        records: list[InvoiceRecord] = []
-        for row_number, row in enumerate(values[1:], start=2):
-            row_map = {
-                header: row[index] if index < len(row) else ""
-                for index, header in enumerate(headers)
+    def _column_rules(self, sheet_id: int, index: int, column: Column) -> list[dict[str, Any]]:
+        """The dropdown or checkbox under a column's header."""
+        body_range = {
+            "sheetId": sheet_id,
+            "startRowIndex": 1,
+            "startColumnIndex": index,
+            "endColumnIndex": index + 1,
+        }
+        if column.kind == "choice":
+            condition = {
+                "type": "ONE_OF_LIST",
+                "values": [{"userEnteredValue": option} for option in CHOICES[column.field]],
             }
-            if not self._row_has_meaningful_data(row_map):
-                continue
-            internal_doc_number = row_map.get(FIELD_TO_HEADER["num_doc_intern"], "").strip()
-            if not internal_doc_number:
-                internal_doc_number = synthetic_internal_doc_number(row_number)
-            validat = parse_bool(row_map.get(VALIDAT_HEADER, ""))
-            records.append(
-                InvoiceRecord(
-                    document_type=document_type,
-                    num_factura=row_map.get(FIELD_TO_HEADER["num_factura"], ""),
-                    data_factura=row_map.get(FIELD_TO_HEADER["data_factura"], ""),
-                    proveidor=row_map.get(FIELD_TO_HEADER["proveidor"], ""),
-                    cif_proveidor=row_map.get(FIELD_TO_HEADER["cif_proveidor"], ""),
-                    adreca_proveidor=row_map.get(FIELD_TO_HEADER["adreca_proveidor"], ""),
-                    import_value=row_map.get(FIELD_TO_HEADER["import_value"], ""),
-                    cif_proveit=row_map.get(FIELD_TO_HEADER["cif_proveit"], ""),
-                    descripcio=row_map.get(FIELD_TO_HEADER["descripcio"], ""),
-                    pressupost_afectat=row_map.get(FIELD_TO_HEADER["pressupost_afectat"], ""),
-                    num_doc_intern=internal_doc_number,
-                    file_link=row_map.get(FIELD_TO_HEADER["file_link"], ""),
-                    validat=validat,
-                    extraction_status="validated" if validat else "needs_validation",
-                    sheet_row_ref=row_number,
-                )
-            )
-        return records
+            # A warning, not a rejection: the sheet stays usable for the odd
+            # case nobody foresaw.
+            rule = {"condition": condition, "strict": False, "showCustomUi": True}
+        elif column.kind == "bool":
+            rule = {"condition": {"type": "BOOLEAN"}}
+        else:
+            return []
+        return [{"setDataValidation": {"range": body_range, "rule": rule}}]
 
-    def append_document(
-        self,
-        workspace: WorkspaceSetting,
-        document_type: DocumentType,
-        invoice: InvoiceExtraction,
-    ) -> SheetWriteResult:
-        headers = self.ensure_headers(workspace, document_type)
-        spreadsheet_id = self._spreadsheet_id(workspace)
-        service = self._service()
-        sheet_name = self._sheet_name(workspace, document_type)
-        # Place the new row immediately after the last row that has real document
-        # data, instead of using the Sheets append API which may skip over
-        # pre-populated checkbox-only rows and land far below the visible data.
-        existing = self.list_documents(workspace, document_type)
-        row_refs = [inv.sheet_row_ref for inv in existing if inv.sheet_row_ref is not None]
-        row_number = (max(row_refs) + 1) if row_refs else 2
-        end_column = column_letter(len(headers))
-        (
-            service.spreadsheets()
-            .values()
-            .update(
+    def _hide_request(self, sheet_id: int, index: int) -> dict[str, Any]:
+        return {
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "COLUMNS",
+                    "startIndex": index,
+                    "endIndex": index + 1,
+                },
+                "properties": {"hiddenByUser": True},
+                "fields": "hiddenByUser",
+            }
+        }
+
+    def _create_register(self, spreadsheet_id: str, title: str) -> RegisterLayout:
+        """A new tab with headers, column formats and dropdowns already in place."""
+        width = len(REGISTER_COLUMNS)
+        reply = (
+            self._spreadsheets()
+            .batchUpdate(
                 spreadsheetId=spreadsheet_id,
-                range=f"{sheet_name}!A{row_number}:{end_column}{row_number}",
-                valueInputOption="USER_ENTERED",
-                body={"values": [self._row_from_invoice(invoice, headers)]},
-            )
-            .execute()
-        )
-        try:
-            _, sheet_id = self._sheet_properties(workspace, document_type)
-            self._apply_row_color(
-                spreadsheet_id,
-                sheet_id,
-                row_number,
-                {"red": 1.0, "green": 0.95, "blue": 0.8},
-            )
-        except Exception:  # noqa: BLE001
-            pass  # row colour is cosmetic — don't fail the write if it can't be applied
-        return SheetWriteResult(row_number=row_number)
-
-    def delete_document(
-        self,
-        workspace: WorkspaceSetting,
-        document_type: DocumentType,
-        internal_doc_number: str,
-    ) -> None:
-        try:
-            row_number, _, _ = self._find_row(workspace, document_type, internal_doc_number)
-        except RuntimeError:
-            return  # not in sheet, nothing to do
-        spreadsheet_id, sheet_id = self._sheet_properties(workspace, document_type)
-        service = self._service()
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={
-                "requests": [
-                    {
-                        "deleteDimension": {
-                            "range": {
-                                "sheetId": sheet_id,
-                                "dimension": "ROWS",
-                                "startIndex": row_number - 1,
-                                "endIndex": row_number,
+                body={
+                    "requests": [
+                        {
+                            "addSheet": {
+                                "properties": {
+                                    "title": title,
+                                    "index": 0,
+                                    "gridProperties": {
+                                        "rowCount": 1000,
+                                        "columnCount": width,
+                                        "frozenRowCount": 1,
+                                    },
+                                }
                             }
                         }
-                    }
-                ]
-            },
-        ).execute()
-
-    def update_document(
-        self,
-        workspace: WorkspaceSetting,
-        document_type: DocumentType,
-        invoice: InvoiceRecord,
-    ) -> SheetWriteResult:
-        row_number, headers, _ = self._find_row(workspace, document_type, invoice.num_doc_intern)
-        spreadsheet_id = self._spreadsheet_id(workspace)
-        service = self._service()
-        sheet_name = self._sheet_name(workspace, document_type)
-        end_column = column_letter(len(headers))
-        (
-            service.spreadsheets()
-            .values()
-            .update(
-                spreadsheetId=spreadsheet_id,
-                range=f"{sheet_name}!A{row_number}:{end_column}{row_number}",
-                valueInputOption="USER_ENTERED",
-                body={"values": [self._row_from_invoice(invoice, headers)]},
+                    ]
+                },
             )
             .execute()
         )
-        try:
-            _, sheet_id = self._sheet_properties(workspace, document_type)
-            self._apply_row_color(
-                spreadsheet_id,
-                sheet_id,
-                row_number,
-                {"red": 1.0, "green": 1.0, "blue": 1.0}
-                if invoice.validat
-                else {"red": 1.0, "green": 0.95, "blue": 0.8},
+        sheet_id = int(reply["replies"][0]["addSheet"]["properties"]["sheetId"])
+        requests: list[dict[str, Any]] = [
+            self._header_request(sheet_id, 0, [c.header for c in REGISTER_COLUMNS])
+        ]
+        for index, column in enumerate(REGISTER_COLUMNS):
+            body_range = {
+                "sheetId": sheet_id,
+                "startRowIndex": 1,
+                "startColumnIndex": index,
+                "endColumnIndex": index + 1,
+            }
+            requests.append(
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": index,
+                            "endIndex": index + 1,
+                        },
+                        "properties": {"pixelSize": column.width},
+                        "fields": "pixelSize",
+                    }
+                }
             )
-        except Exception:  # noqa: BLE001
-            pass  # row colour is cosmetic — don't fail the update if it can't be applied
-        return SheetWriteResult(row_number=row_number)
+            fmt = value_to_cell(column.kind, None).get("userEnteredFormat")
+            if column.kind in {"text", "choice"}:
+                fmt = {"numberFormat": {"type": "TEXT"}}
+            elif column.kind == "amount":
+                fmt = {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00 €"}}
+            if fmt:
+                requests.append(
+                    {
+                        "repeatCell": {
+                            "range": body_range,
+                            "cell": {"userEnteredFormat": fmt},
+                            "fields": "userEnteredFormat.numberFormat",
+                        }
+                    }
+                )
+            requests.extend(self._column_rules(sheet_id, index, column))
+            if column.hidden:
+                requests.append(self._hide_request(sheet_id, index))
+        self._batch(spreadsheet_id, requests)
+        return RegisterLayout(
+            spreadsheet_id=spreadsheet_id,
+            sheet_id=sheet_id,
+            title=title,
+            columns={column.field: index for index, column in enumerate(REGISTER_COLUMNS)},
+            width=width,
+            row_count=1000,
+        )
+
+    # ── Register rows ────────────────────────────────────────────────────────
+
+    def _read_grid(self, spreadsheet_id: str, title: str, width: int) -> list[list[Any]]:
+        response = (
+            self._values()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                range=f"{quote_title(title)}!A1:{column_letter(width)}",
+                # FORMULA keeps the `=IMAGE(...)` in "Fitxer"; SERIAL_NUMBER
+                # makes dates locale-proof.
+                valueRenderOption="FORMULA",
+                dateTimeRenderOption="SERIAL_NUMBER",
+            )
+            .execute()
+        )
+        return response.get("values", [])
+
+    @serialized
+    def read_register(self, workspace: WorkspaceSetting) -> list[SheetRow]:
+        layout = self.register_layout(workspace)
+        grid = self._read_grid(layout.spreadsheet_id, layout.title, layout.width)
+        rows: list[SheetRow] = []
+        for row_number, cells in enumerate(grid[1:], start=2):
+            values: dict[str, Any] = {}
+            meaningful = False
+            for field_name, index in layout.columns.items():
+                raw = cells[index] if index < len(cells) else None
+                column = COLUMNS_BY_FIELD[field_name]
+                value = cell_to_value(column.kind, field_name, raw)
+                values[field_name] = value
+                # A pre-ticked checkbox column alone is not a document.
+                if column.kind != "bool" and value not in ("", None):
+                    meaningful = True
+            if meaningful:
+                rows.append(SheetRow(row_number=row_number, values=values))
+        return rows
+
+    def _row_requests(
+        self, layout: RegisterLayout, row_number: int, values: dict[str, Any], *, colour: bool
+    ) -> list[dict[str, Any]]:
+        cells = {
+            layout.columns[name]: value_to_cell(COLUMNS_BY_FIELD[name].kind, value)
+            for name, value in values.items()
+            if name in layout.columns
+        }
+        requests: list[dict[str, Any]] = []
+        # One updateCells per run of adjacent register columns, so a column of
+        # someone else's in between is never written.
+        indexes = sorted(cells)
+        run: list[int] = []
+        for index in indexes + [None]:  # type: ignore[list-item]
+            if index is not None and (not run or index == run[-1] + 1):
+                run.append(index)
+                continue
+            if run:
+                requests.append(
+                    {
+                        "updateCells": {
+                            "start": {
+                                "sheetId": layout.sheet_id,
+                                "rowIndex": row_number - 1,
+                                "columnIndex": run[0],
+                            },
+                            "rows": [{"values": [cells[i] for i in run]}],
+                            "fields": "userEnteredValue,userEnteredFormat.numberFormat",
+                        }
+                    }
+                )
+            run = [index] if index is not None else []
+        if colour:
+            requests.append(
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": layout.sheet_id,
+                            "startRowIndex": row_number - 1,
+                            "endRowIndex": row_number,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": layout.width,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "backgroundColor": _DONE_COLOUR
+                                if values.get("validat")
+                                else _PENDING_COLOUR
+                            }
+                        },
+                        "fields": "userEnteredFormat.backgroundColor",
+                    }
+                }
+            )
+        return requests
+
+    @serialized
+    def write_row(self, workspace: WorkspaceSetting, row_number: int, values: dict[str, Any]) -> int:
+        layout = self.register_layout(workspace)
+        self._ensure_rows(layout, row_number)
+        self._batch(layout.spreadsheet_id, self._row_requests(layout, row_number, values, colour=True))
+        return row_number
+
+    @serialized
+    def append_row(self, workspace: WorkspaceSetting, values: dict[str, Any]) -> int:
+        """Write below the last row with real data.
+
+        Not the Sheets append API: it skips over pre-ticked checkbox rows and
+        lands far below the visible data.
+        """
+        rows = self.read_register(workspace)
+        row_number = max((row.row_number for row in rows), default=1) + 1
+        return self.write_row(workspace, row_number, values)
+
+    @serialized
+    def append_rows(self, workspace: WorkspaceSetting, rows: list[dict[str, Any]]) -> list[int]:
+        """Many rows below the data, in one request. Used by the migration."""
+        if not rows:
+            return []
+        layout = self.register_layout(workspace)
+        first = max((row.row_number for row in self.read_register(workspace)), default=1) + 1
+        numbers = list(range(first, first + len(rows)))
+        self._ensure_rows(layout, numbers[-1])
+        requests: list[dict[str, Any]] = []
+        for row_number, values in zip(numbers, rows):
+            requests.extend(self._row_requests(layout, row_number, values, colour=True))
+        # Large migrations stay under the request size limit.
+        for start in range(0, len(requests), 400):
+            self._batch(layout.spreadsheet_id, requests[start : start + 400])
+        return numbers
+
+    @serialized
+    def write_cells(self, workspace: WorkspaceSetting, updates: list[tuple[int, dict[str, Any]]]) -> None:
+        """Several partial rows in one request, without touching row colours."""
+        layout = self.register_layout(workspace)
+        requests: list[dict[str, Any]] = []
+        for row_number, values in updates:
+            requests.extend(self._row_requests(layout, row_number, values, colour=False))
+        self._batch(layout.spreadsheet_id, requests)
+
+    @serialized
+    def find_row(self, workspace: WorkspaceSetting, internal_doc_number: str) -> int:
+        for row in self.read_register(workspace):
+            if row.values.get("num_doc_intern") == internal_doc_number:
+                return row.row_number
+        raise SheetDocumentNotFound(internal_doc_number)
+
+    @serialized
+    def delete_row(self, workspace: WorkspaceSetting, row_number: int) -> None:
+        layout = self.register_layout(workspace)
+        self._batch(
+            layout.spreadsheet_id,
+            [
+                {
+                    "deleteDimension": {
+                        "range": {
+                            "sheetId": layout.sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": row_number - 1,
+                            "endIndex": row_number,
+                        }
+                    }
+                }
+            ],
+        )
+
+    def _ensure_rows(self, layout: RegisterLayout, row_number: int) -> None:
+        if row_number <= layout.row_count:
+            return
+        extra = max(row_number - layout.row_count, 200)
+        self._batch(
+            layout.spreadsheet_id,
+            [
+                {
+                    "appendDimension": {
+                        "sheetId": layout.sheet_id,
+                        "dimension": "ROWS",
+                        "length": extra,
+                    }
+                }
+            ],
+        )
+        layout.row_count += extra
+
+    # ── Legacy tabs ──────────────────────────────────────────────────────────
+
+    @serialized
+    def read_legacy_tab(self, workspace: WorkspaceSetting, title: str) -> LegacyTab | None:
+        """Rows of an invoice-era tab, keyed by register field. ``None`` if absent."""
+        spreadsheet_id = self._spreadsheet_id(workspace)
+        tab = next(
+            (t for t in self._tabs(spreadsheet_id) if fold_header(t.get("title", "")) == fold_header(title)),
+            None,
+        )
+        if tab is None:
+            return None
+        width = max(int(tab.get("gridProperties", {}).get("columnCount", 26)), 1)
+        grid = self._read_grid(spreadsheet_id, tab["title"], width)
+        if not grid:
+            return LegacyTab(title=tab["title"], rows=[], reference_column=None)
+        headers = {fold_header(header): index for index, header in enumerate(grid[0]) if header}
+        positions = {
+            name: headers[fold_header(header)]
+            for name, header in LEGACY_HEADERS.items()
+            if fold_header(header) in headers
+        }
+        rows: list[SheetRow] = []
+        for row_number, cells in enumerate(grid[1:], start=2):
+            raw = {name: (cells[i] if i < len(cells) else None) for name, i in positions.items()}
+            if not any(
+                value not in (None, "") for name, value in raw.items() if name != "validat"
+            ):
+                continue
+            rows.append(SheetRow(row_number=row_number, values=raw))
+        return LegacyTab(
+            title=tab["title"], rows=rows, reference_column=positions.get("num_doc_intern")
+        )
+
+    @serialized
+    def write_legacy_references(
+        self, workspace: WorkspaceSetting, tab: LegacyTab, references: list[tuple[int, str]]
+    ) -> None:
+        if not references or tab.reference_column is None:
+            return
+        letter = column_letter(tab.reference_column + 1)
+        self._values().batchUpdate(
+            spreadsheetId=self._spreadsheet_id(workspace),
+            body={
+                "valueInputOption": "RAW",
+                "data": [
+                    {"range": f"{quote_title(tab.title)}!{letter}{row}", "values": [[reference]]}
+                    for row, reference in references
+                ],
+            },
+        ).execute()
+
+    # ── Drive ────────────────────────────────────────────────────────────────
+
+    @serialized
+    def upload_file_to_drive(
+        self, file_path: Path, filename: str, mime_type: str, folder_id: str | None = None
+    ) -> tuple[str, str]:
+        """Upload a file to Drive and return ``(web_view_link, file_id)``."""
+        from googleapiclient.http import MediaFileUpload
+
+        media = MediaFileUpload(
+            str(file_path), mimetype=mime_type, resumable=True, chunksize=1024 * 1024
+        )
+        body: dict = {"name": filename}
+        if folder_id:
+            body["parents"] = [folder_id]
+        try:
+            uploaded = (
+                self._files()
+                .create(
+                    body=body, media_body=media, fields="id,webViewLink", supportsAllDrives=True
+                )
+                .execute()
+            )
+        finally:
+            media.stream().close()
+        self._permissions().create(
+            fileId=uploaded["id"],
+            body={"role": "reader", "type": "anyone"},
+            supportsAllDrives=True,
+        ).execute()
+        return uploaded["webViewLink"], uploaded["id"]
+
+    @serialized
+    def drive_name_taken(self, folder_id: str | None, name: str, *, except_id: str | None = None) -> bool:
+        escaped = name.replace("\\", "\\\\").replace("'", "\\'")
+        query = f"name = '{escaped}' and trashed = false"
+        if folder_id:
+            query += f" and '{folder_id}' in parents"
+        found = (
+            self._files()
+            .list(
+                q=query,
+                fields="files(id)",
+                pageSize=5,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            )
+            .execute()
+            .get("files", [])
+        )
+        return any(item["id"] != except_id for item in found)
+
+    @serialized
+    def update_drive_file(
+        self, file_id: str, *, name: str | None = None, folder_id: str | None = None
+    ) -> None:
+        """Rename a file and/or move it into ``folder_id``."""
+        kwargs: dict[str, Any] = {"fileId": file_id, "supportsAllDrives": True, "body": {}}
+        if name:
+            kwargs["body"]["name"] = name
+        if folder_id:
+            current = (
+                self._files()
+                .get(fileId=file_id, fields="parents", supportsAllDrives=True)
+                .execute()
+                .get("parents", [])
+            )
+            if folder_id not in current:
+                kwargs["addParents"] = folder_id
+                if current:
+                    kwargs["removeParents"] = ",".join(current)
+        if kwargs["body"] or "addParents" in kwargs:
+            self._files().update(**kwargs).execute()
+
+    @serialized
+    def download_drive_file(self, file_id: str, destination: Path) -> str:
+        """Fetch a file's bytes; returns its MIME type."""
+        from googleapiclient.http import MediaIoBaseDownload
+
+        meta = (
+            self._files()
+            .get(fileId=file_id, fields="mimeType", supportsAllDrives=True)
+            .execute()
+        )
+        request = self._files().get_media(fileId=file_id, supportsAllDrives=True)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request, chunksize=4 * 1024 * 1024)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        destination.write_bytes(buffer.getvalue())
+        return meta.get("mimeType", "application/octet-stream")
+
+    @serialized
+    def delete_drive_file(self, file_id: str) -> None:
+        self._files().delete(fileId=file_id, supportsAllDrives=True).execute()
+
+    @serialized
+    def list_drive_files(self, folder_id: str, prefix: str) -> list[dict[str, str]]:
+        """Files in a folder whose name starts with ``prefix``, newest first."""
+        escaped = prefix.replace("'", "\\'")
+        return (
+            self._files()
+            .list(
+                q=f"'{folder_id}' in parents and name contains '{escaped}' and trashed = false",
+                fields="files(id,name,createdTime)",
+                orderBy="createdTime desc",
+                pageSize=200,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            )
+            .execute()
+            .get("files", [])
+        )
+
+    @serialized
+    def upload_private_file(self, file_path: Path, filename: str, mime_type: str, folder_id: str) -> str:
+        """Like :meth:`upload_file_to_drive`, without the public link — for backups."""
+        from googleapiclient.http import MediaFileUpload
+
+        media = MediaFileUpload(str(file_path), mimetype=mime_type, resumable=True)
+        try:
+            uploaded = (
+                self._files()
+                .create(
+                    body={"name": filename, "parents": [folder_id]},
+                    media_body=media,
+                    fields="id",
+                    supportsAllDrives=True,
+                )
+                .execute()
+            )
+        finally:
+            media.stream().close()
+        return uploaded["id"]
+
+
+# ── Comparing versions ───────────────────────────────────────────────────────
+
+#: Fields compared between the sheet, the database and a stored version.
+COMPARED_FIELDS = tuple(c.field for c in REGISTER_COLUMNS if c.field != "num_doc_intern")
+
+
+def normalize_value(field_name: str, value: Any) -> Any:
+    """One comparable, JSON-safe form per field, whatever side it came from."""
+    kind = COLUMNS_BY_FIELD[field_name].kind
+    if kind == "date":
+        parsed = parse_date(value) if not isinstance(value, date) else value
+        return parsed.isoformat() if parsed else ""
+    if kind == "amount":
+        amount = parse_amount(value)
+        return None if amount is None else round(amount, 2)
+    if kind == "bool":
+        return parse_bool(value) if isinstance(value, str) else bool(value)
+    return str(value if value is not None else "").strip()
+
+
+def snapshot_values(values: dict[str, Any]) -> dict[str, Any]:
+    return {name: normalize_value(name, values.get(name)) for name in COMPARED_FIELDS}
+
+
+def changed_fields(left: dict[str, Any], right: dict[str, Any]) -> list[str]:
+    return [name for name in COMPARED_FIELDS if left.get(name) != right.get(name)]

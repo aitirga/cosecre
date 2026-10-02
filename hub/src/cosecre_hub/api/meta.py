@@ -41,6 +41,7 @@ def read_meta(
             llm=registry.any_configured(),
             documents=True,
             google_sheets=settings.google_service_account_file is not None,
+            classifier=settings.typesafe_api_key is not None,
         ),
         apps=sorted(registered_apps),
         accepts_registration=settings.allow_open_registration or user_count == 0,

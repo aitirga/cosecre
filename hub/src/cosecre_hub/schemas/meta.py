@@ -16,6 +16,8 @@ class HubCapabilities(BaseModel):
     llm: bool = False
     documents: bool = False
     google_sheets: bool = False
+    #: Jev is configured as the second opinion on closed-list fields.
+    classifier: bool = False
 
 
 class HubMeta(BaseModel):

@@ -15,7 +15,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from .config import Settings
-from .models import User, WorkspaceSetting
+from .models import Document, ExtractionJob, User, WorkspaceSetting
 from .security import hash_password
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,20 @@ ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("workspace_settings", "ticket_sheet_name", "VARCHAR(255) DEFAULT 'Tiquets' NOT NULL"),
     ("uploads", "document_type", "VARCHAR(40) DEFAULT 'invoice' NOT NULL"),
     ("uploads", "drive_file_id", "VARCHAR(255)"),
+    ("uploads", "capture_source", "VARCHAR(16)"),
+    (
+        "workspace_settings",
+        "registry_sheet_name",
+        "VARCHAR(255) DEFAULT 'Registre documents comptables' NOT NULL",
+    ),
+    ("workspace_settings", "migration_completed_at", "DATETIME"),
+    ("documents", "ai_trace", "JSON"),
+    ("documents", "sheet_snapshot", "JSON"),
 ]
+
+#: Models that were once the default and should follow the configured one,
+#: rather than staying pinned because a row happened to store them.
+SUPERSEDED_DEFAULT_MODELS = {"", "gpt-4.1-mini", "gpt-5.4"}
 
 
 class SeedUser(BaseModel):
@@ -76,10 +89,12 @@ def ensure_workspace_settings(session: Session, settings: Settings) -> None:
 
     # Carry an old scaffold default forward to the configured one, while leaving
     # an explicitly chosen model alone.
-    if workspace.openai_model in {"", "gpt-4.1-mini"}:
+    if workspace.openai_model in SUPERSEDED_DEFAULT_MODELS:
         workspace.openai_model = settings.openai_model
     if not workspace.ticket_sheet_name:
         workspace.ticket_sheet_name = "Tiquets"
+    if not workspace.registry_sheet_name:
+        workspace.registry_sheet_name = "Registre documents comptables"
     session.commit()
 
 
@@ -156,6 +171,33 @@ def seed_users(session: Session, settings: Settings) -> None:
         existing.is_admin = seed_user.is_admin
 
     session.commit()
+
+
+def recover_interrupted_jobs(session: Session) -> int:
+    """Make jobs lost with the previous single-worker process terminal.
+
+    Do not retry automatically: a remote write may have succeeded immediately
+    before the crash. Keep the upload and extracted payload for reconciliation.
+    """
+    jobs = session.query(ExtractionJob).filter(
+        ExtractionJob.status.in_(["pending", "processing", "written_to_sheet"])
+    ).all()
+    message = (
+        "El processament s'ha interromput per un reinici del servidor. "
+        "Comprova el full abans de tornar-ho a provar."
+    )
+    for job in jobs:
+        job.status = "error"
+        job.error_message = message
+        job.upload.status = "error"
+        document = session.query(Document).filter(Document.upload_id == job.upload_id).first()
+        if document is not None and document.status in {"pending", "processing"}:
+            document.status = "error"
+            document.error_message = message
+    session.commit()
+    if jobs:
+        logger.warning("Marked %d interrupted document jobs as failed", len(jobs))
+    return len(jobs)
 
 
 def run_startup_tasks(session: Session, settings: Settings) -> None:

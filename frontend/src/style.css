@@ -217,9 +217,10 @@ button {
 
 .card-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 10px 16px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--line);
 }
@@ -514,7 +515,10 @@ button {
 }
 
 /* ── Tables ────────────────────────────────────────────────────────────── */
+/* Positioned so the absolutely placed `.sr-only` labels inside a table are
+   clipped by this scroller instead of widening the whole page. */
 .table-scroll {
+  position: relative;
   overflow-x: auto;
 }
 

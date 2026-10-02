@@ -29,26 +29,26 @@ const summary = computed(() => {
   const value = state.value
   switch (value.phase) {
     case 'checking':
-      return 'Checking for updates…'
+      return 'Buscant actualitzacions…'
     case 'up-to-date':
-      return 'Cosecre is up to date.'
+      return 'Cosecre està al dia.'
     case 'available':
-      return `Version ${value.newVersion} is available to download.`
+      return `La versió ${value.newVersion} es pot descarregar.`
     case 'downloading':
-      return `Downloading version ${value.newVersion}… ${value.percent ?? 0}%`
+      return `Descarregant la versió ${value.newVersion}… ${value.percent ?? 0}%`
     case 'ready':
-      return `Version ${value.newVersion} is ready to install.`
+      return `La versió ${value.newVersion} està a punt per instal·lar.`
     case 'error':
-      return value.message ?? 'The update check failed.'
+      return value.message ?? "No s'han pogut comprovar les actualitzacions."
     case 'unsupported':
-      return 'Updates are disabled in a development build.'
+      return 'Les actualitzacions estan desactivades en una versió de desenvolupament.'
     default:
-      return 'Updates are checked automatically a few times a day.'
+      return 'Les actualitzacions es comproven soles unes quantes vegades al dia.'
   }
 })
 
 const actionLabel = computed(() =>
-  state.value.canSelfInstall ? 'Restart and install' : 'Download the installer',
+  state.value.canSelfInstall ? 'Reinicia i instal·la' : "Descarrega l'instal·lador",
 )
 
 const canApply = computed(
@@ -60,7 +60,7 @@ const canApply = computed(
   <section class="card">
     <div class="card-head">
       <div>
-        <h2 class="card-title">Updates</h2>
+        <h2 class="card-title">Actualitzacions</h2>
         <p class="hint">Cosecre {{ state.currentVersion }} · {{ bridge.bootstrap.platform }}</p>
       </div>
       <span class="mono muted">{{ state.phase }}</span>
@@ -74,8 +74,8 @@ const canApply = computed(
       </div>
 
       <p v-if="!state.canSelfInstall && state.phase !== 'unsupported'" class="hint">
-        This build is not code-signed, so macOS will not let it replace itself. Cosecre tells you
-        when a version is out and opens the download instead.
+        Aquesta versió no està signada i macOS no deixa que s'actualitzi sola. Cosecre t'avisa quan
+        n'hi ha una de nova i n'obre la descàrrega.
       </p>
 
       <div class="actions">
@@ -85,7 +85,7 @@ const canApply = computed(
           :disabled="state.phase === 'checking' || state.phase === 'unsupported'"
           @click="bridge.checkForUpdates()"
         >
-          Check now
+          Comprova-ho ara
         </button>
         <button v-if="canApply" class="btn btn-primary" type="button" @click="bridge.applyUpdate()">
           {{ actionLabel }}

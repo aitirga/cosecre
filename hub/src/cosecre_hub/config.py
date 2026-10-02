@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     host: str = "0.0.0.0"
     port: int = 8000
+    static_dir: Path | None = None
+    # Disabled locally; production exits cleanly after this many idle seconds.
+    idle_timeout_seconds: int = Field(default=0, ge=0)
 
     # ---------------------------------------------------------------- identity
     secret_key: str = "change-me-in-production"
@@ -60,15 +63,40 @@ class Settings(BaseSettings):
 
     # -------------------------------------------------------------------- llm
     openai_api_key: str | None = None
-    openai_model: str = "gpt-5.4"
+    openai_model: str = "gpt-6-luna"
     #: Sent as the Responses API ``reasoning.effort``. Empty disables the field,
     #: which is what non-reasoning models need.
     openai_reasoning_effort: str = "medium"
 
+    #: TypeSafe's Jev, the second opinion on every closed-list field. Optional:
+    #: without it the vision model decides alone.
+    typesafe_api_key: str | None = None
+    jev_model: str = "jev-latest"
+
     # ----------------------------------------------------------------- google
     google_service_account_file: Path | None = None
+    #: One folder for every document, named ``<date>_<number>``.
+    google_drive_documents_folder_id: str | None = None
+    #: Where the two folders of the invoice/ticket era pointed. The register
+    #: falls back to the invoices one when no documents folder is set.
     google_drive_invoices_folder_id: str | None = None
     google_drive_tickets_folder_id: str | None = None
+    #: Off-site copy of every backup. Optional; local backups run regardless.
+    google_drive_backup_folder_id: str | None = None
+
+    #: How many documents the models read at once. Reading is almost all
+    #: waiting on the model API, so this is about API rate limits and memory
+    #: (each in-flight photo is held base64-encoded), not CPU.
+    extraction_concurrency: int = Field(default=4, ge=1, le=16)
+
+    # ---------------------------------------------------------------- backups
+    #: Defaults to a ``backups`` folder next to a SQLite database, so it lands
+    #: on the same persistent volume without extra configuration.
+    #: Off only in tests; the scheduler is how backups happen at all.
+    backup_enabled: bool = True
+    backup_dir: Path | None = None
+    backup_keep: int = Field(default=30, ge=1)
+    backup_interval_hours: float = Field(default=24, gt=0)
 
     # ------------------------------------------------------------------- cors
     #: ``file://`` and ``null`` are what a packaged Electron renderer sends as
@@ -107,13 +135,34 @@ class Settings(BaseSettings):
             raw_path = self.database_url.removeprefix("sqlite:///")
             if raw_path and not Path(raw_path).is_absolute():
                 self.database_url = f"sqlite:///{self._resolve_path(Path(raw_path)).as_posix()}"
+        if self.backup_dir is not None:
+            self.backup_dir = self._resolve_path(self.backup_dir)
+        elif self.sqlite_path is not None:
+            self.backup_dir = self.sqlite_path.parent / "backups"
+        else:
+            self.backup_dir = BASE_DIR / "data" / "backups"
         return self
+
+    @property
+    def sqlite_path(self) -> Path | None:
+        if not self.database_url.startswith("sqlite:///"):
+            return None
+        raw_path = self.database_url.removeprefix("sqlite:///")
+        if raw_path in {"", ":memory:"}:
+            return None
+        return Path(raw_path)
+
+    @property
+    def documents_folder_id(self) -> str | None:
+        return self.google_drive_documents_folder_id or self.google_drive_invoices_folder_id
 
     def _resolve_path(self, path: Path) -> Path:
         return path if path.is_absolute() else (BASE_DIR / path).resolve()
 
     def ensure_directories(self) -> None:
         self.upload_dir.mkdir(parents=True, exist_ok=True)
+        if self.backup_dir is not None:
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
         if self.database_url.startswith("sqlite:///"):
             database_path = Path(self.database_url.removeprefix("sqlite:///"))
             if str(database_path) not in {"", "."}:

@@ -9,13 +9,15 @@ adds them to older databases on startup.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -110,9 +112,16 @@ class WorkspaceSetting(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     spreadsheet_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     spreadsheet_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: The two tabs of the invoice/ticket era. Only the migration reads them now.
     sheet_name: Mapped[str] = mapped_column(String(255), default="Factures")
     ticket_sheet_name: Mapped[str] = mapped_column(String(255), default="Tiquets")
-    openai_model: Mapped[str] = mapped_column(String(120), default="gpt-5.4")
+    registry_sheet_name: Mapped[str] = mapped_column(
+        String(255), default="Registre documents comptables"
+    )
+    migration_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    openai_model: Mapped[str] = mapped_column(String(120), default="gpt-6-luna")
     extraction_prompt: Mapped[str] = mapped_column(Text, default="")
     polling_interval_seconds: Mapped[int] = mapped_column(Integer, default=30)
     updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -133,6 +142,9 @@ class Upload(Base):
     source_file_type: Mapped[str] = mapped_column(String(120))
     stored_path: Mapped[str] = mapped_column(Text)
     drive_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: ``camera`` or ``file``: whether the person photographed the document in
+    #: the app or picked an existing file. Decides the register's "Foto o original".
+    capture_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -172,3 +184,75 @@ class SheetSyncIndex(Base):
     validat: Mapped[bool] = mapped_column(Boolean, default=False)
     row_payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Document(Base):
+    """One entry of the accounting register — the hub's own copy of it.
+
+    The spreadsheet is where people work, but it is a mirror: every field lives
+    here first, edits made in the sheet are pulled back on each sync, and a row
+    deleted there is kept here (``sheet_state = "removed"``) rather than lost.
+    """
+
+    __tablename__ = "documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    internal_doc_number: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    upload_id: Mapped[int | None] = mapped_column(
+        ForeignKey("uploads.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    tipus_document: Mapped[str] = mapped_column(String(60), default="")
+    origen: Mapped[str] = mapped_column(String(20), default="")
+    num_factura: Mapped[str] = mapped_column(String(255), default="")
+    data_factura: Mapped[date | None] = mapped_column(Date, nullable=True)
+    proveidor: Mapped[str] = mapped_column(Text, default="")
+    cif_proveidor: Mapped[str] = mapped_column(String(64), default="")
+    carrer: Mapped[str] = mapped_column(Text, default="")
+    codi_postal: Mapped[str] = mapped_column(String(20), default="")
+    ciutat: Mapped[str] = mapped_column(String(255), default="")
+    compte_corrent: Mapped[str] = mapped_column(String(64), default="")
+    cif_proveit: Mapped[str] = mapped_column(String(64), default="")
+    import_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    descripcio: Mapped[str] = mapped_column(Text, default="")
+    descripcio_compra: Mapped[str] = mapped_column(Text, default="")
+    pagament: Mapped[str] = mapped_column(String(60), default="")
+    pagament_observacions: Mapped[str] = mapped_column(Text, default="")
+    metode_pagament: Mapped[str] = mapped_column(String(60), default="")
+    data_pagament: Mapped[date | None] = mapped_column(Date, nullable=True)
+    subministrat: Mapped[str] = mapped_column(String(60), default="")
+    pressupost_afectat: Mapped[str] = mapped_column(Text, default="")
+    validat: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    #: The "Fitxer" cell: an ``=IMAGE(...)`` formula or a Drive link.
+    file_link: Mapped[str] = mapped_column(Text, default="")
+    drive_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    drive_file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    transcripcio: Mapped[str] = mapped_column(Text, default="")
+    #: Field → :class:`~cosecre_hub.schemas.AiHint` as a dict.
+    ai_hints: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    #: The latest model run, step by step — see ``ExtractedDocument.trace``.
+    ai_trace: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    status: Mapped[str] = mapped_column(String(40), default="pending")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sheet_state: Mapped[str] = mapped_column(String(16), default="pending")
+    sheet_row_ref: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: The register values as of the last time this entry and its sheet row were
+    #: known to agree — the common ancestor of a three-way comparison. It is
+    #: what tells "edited in the sheet" from "edited here" from "both".
+    sheet_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: ``invoice`` or ``ticket`` for entries migrated from the two old tabs.
+    legacy_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: Set once a migrated entry has been re-read by the models for the new fields.
+    enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    upload: Mapped["Upload | None"] = relationship()

@@ -24,7 +24,7 @@ from .base import (
 
 #: Models the UI offers by default. Any other id can still be passed through —
 #: this list exists so a settings screen has something to populate a select with.
-KNOWN_MODELS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.1", "gpt-4.1", "gpt-4.1-mini"]
+KNOWN_MODELS = ["gpt-6-luna", "gpt-6-sol", "gpt-5.4", "gpt-5.4-mini", "gpt-5.1", "gpt-4.1", "gpt-4.1-mini"]
 
 _INLINE_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"}
 

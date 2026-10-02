@@ -185,10 +185,10 @@ function describe(error: unknown): string {
  */
 function friendly(message: string): string {
   if (message.includes('Unable to find latest version')) {
-    return 'No releases have been published yet.'
+    return 'Encara no s\'ha publicat cap versió.'
   }
   if (message.includes('app-update.yml')) {
-    return 'This build was not packaged for updates.'
+    return 'Aquesta versió no està preparada per actualitzar-se.'
   }
   return message
 }

@@ -54,6 +54,8 @@ class FakeProvider(LLMProvider):
     stream_chunks: int = 3
     #: Set to make the stream die partway, which is the case worth testing.
     stream_error: str | None = None
+    #: Overrides what `extract_file` returns, for one test's document.
+    extraction_payload: dict[str, Any] | None = None
 
     def is_configured(self) -> bool:
         return self.configured
@@ -121,23 +123,28 @@ class FakeProvider(LLMProvider):
     def extract_file(self, request: FileExtractionRequest) -> StructuredResult:
         self._guard()
         self.extractions.append(request)
-        # The documents module asks for `<type>_extraction`, and the values are
-        # tagged with the type so a test can prove invoices and tickets do not
-        # cross over.
-        document_type = request.schema_name.removesuffix("_extraction") or "invoice"
-        prefix = "F" if document_type == "invoice" else "T"
+        kind = request.schema_name.removesuffix("_extraction") or "document"
+        data = dict(self.extraction_payload) if self.extraction_payload else {
+            "transcripcio": "FERRETERIA MARTÍ SL\nFactura simplificada F-2026/001\nPAGAT",
+            "tipus_document": "Factura simplificada",
+            "num_factura": "F-2026/001",
+            "data_factura": "31/01/2026",
+            "proveidor": f"Initial {kind}",
+            "cif_proveidor": "B 12345678",
+            "carrer": "C/ MAJOR 5",
+            "codi_postal": "08033",
+            "ciutat": "BARCELONA",
+            "compte_corrent": "",
+            "cif_proveit": "S0800636C",
+            "import": "100,00 €",
+            "descripcio": "MATERIAL DE FERRETERIA",
+            "pressupost_afectat": "",
+            "pagament": "Pagat",
+            "metode_pagament": "Efectiu",
+            "data_pagament": "31/01/2026",
+        }
         return StructuredResult(
-            data={
-                "num_factura": f"{prefix}-2026-001",
-                "data_factura": "2026-01-31",
-                "proveidor": f"Initial {document_type}",
-                "cif_proveidor": "",
-                "adreca_proveidor": "",
-                "import": 100.0,
-                "cif_proveit": "",
-                "descripcio": "",
-                "pressupost_afectat": "",
-            },
+            data=data,
             model=request.model or self.default_model(),
             provider=self.id,
             usage=Usage(total_tokens=9),
@@ -158,6 +165,8 @@ def build_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "bootstrap_admin_email": None,
         "bootstrap_admin_password": None,
         "openai_api_key": None,
+        "typesafe_api_key": None,
+        "backup_enabled": False,
     }
     defaults.update(overrides)
     # `_env_file=None` keeps a developer's real hub/.env out of the test run.
@@ -165,11 +174,22 @@ def build_settings(tmp_path: Path, **overrides: Any) -> Settings:
 
 
 def build_client(
-    tmp_path: Path, *, provider: FakeProvider | None = None, **overrides: Any
+    tmp_path: Path,
+    *,
+    provider: FakeProvider | None = None,
+    sheet_service: Any = None,
+    classifier: Any = None,
+    **overrides: Any,
 ) -> tuple[TestClient, FakeProvider]:
     fake = provider or FakeProvider()
     settings = build_settings(tmp_path, **overrides)
-    return TestClient(create_app(settings, llm_registry=LLMRegistry([fake]))), fake
+    app = create_app(
+        settings,
+        llm_registry=LLMRegistry([fake]),
+        sheet_service=sheet_service,
+        classifier=classifier,
+    )
+    return TestClient(app), fake
 
 
 @pytest.fixture

@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from .app_settings import router as app_settings_router
 from .auth import router as auth_router
+from .backups import router as backups_router
 from .documents import router as documents_router
 from .llm import router as llm_router
 from .meta import router as meta_router
@@ -16,5 +17,6 @@ api_router.include_router(users_router, prefix="/users", tags=["users"])
 api_router.include_router(app_settings_router, prefix="/apps", tags=["apps"])
 api_router.include_router(llm_router, prefix="/llm", tags=["llm"])
 api_router.include_router(documents_router, prefix="/documents", tags=["documents"])
+api_router.include_router(backups_router, prefix="/backups", tags=["backups"])
 
 __all__ = ["api_router"]
