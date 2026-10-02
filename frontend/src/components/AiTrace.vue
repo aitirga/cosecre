@@ -16,6 +16,7 @@ const LABELS: Record<string, string> = {
   tipus_document: 'Tipus document',
   pagament: 'Pagament',
   metode_pagament: 'Mètode de pagament',
+  pressupost_afectat: 'Compte',
 }
 
 const show = (value: unknown) => (value === '' || value == null ? 'No consta' : String(value))

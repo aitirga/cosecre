@@ -209,3 +209,34 @@ def test_an_old_budget_column_becomes_the_account_dropdown_and_the_reference_hid
 
 def test_the_account_is_a_closed_list():
     assert canonical_choice("pressupost_afectat", "targeta prepagament") == "Targeta Prepagament"
+
+
+def test_the_account_is_proposed_by_vision_and_decided_by_jev():
+    from cosecre_hub.schemas import DocumentExtraction
+    from cosecre_hub.services.classification import DocumentClassifier
+    from cosecre_hub.services.extraction import DocumentExtractionService
+
+    class FakeJev:
+        model = "jev-test"
+
+        def decide(self, state, questions):
+            assert "pressupost_afectat" in questions
+            assert "metode_pagament: Efectiu" in state
+            return {"pressupost_afectat": JevAnswer("Caixeta", 0.93)}
+
+    raw = DocumentExtraction.model_validate(
+        {
+            "transcripcio": "FACTURA SIMPLIFICADA\nTOTAL 12,40\nEFECTIVO 20,00 CAMBIO 7,60",
+            "tipus_document": "Factura simplificada",
+            "metode_pagament": "Efectiu",
+            "pressupost_afectat": "General",
+        }
+    )
+    service = DocumentExtractionService(registry=None, classifier=DocumentClassifier(FakeJev()))
+    result = service.finish(raw)
+
+    assert result.fields["pressupost_afectat"] == "Caixeta"
+    hint = result.hints["pressupost_afectat"]
+    assert hint.source == "jev" and hint.alternative == "General" and hint.review
+    assert result.trace["final"]["pressupost_afectat"]["value"] == "Caixeta"
+    assert result.trace["vision"]["proposal"]["pressupost_afectat"] == "General"

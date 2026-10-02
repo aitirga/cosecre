@@ -38,6 +38,8 @@ Regles:
 - Els textos que redactis tu (descripcio) han d'estar en català, en minúscules amb majúscula
   inicial, encara que el document sigui en una altra llengua.
 - Deixa buit qualsevol camp que el document no mostri; no l'endevinis.
+- Excepció: pressupost_afectat (el compte) no surt mai al document. Dedueix-lo del tipus de
+  document, del proveïdor i de com s'ha pagat, seguint la descripció del camp.
 """.strip()
 
 
@@ -102,6 +104,9 @@ class DocumentExtractionService:
                 "proveidor": fields.get("proveidor"),
                 "num_factura": fields.get("num_factura"),
                 "import": fields.get("import_value"),
+                # The account follows from these; Jev reads the vision model's take.
+                "tipus_document": fields.get("tipus_document"),
+                "metode_pagament": fields.get("metode_pagament"),
             },
         )
         fields.update(decided)
