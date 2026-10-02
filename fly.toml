@@ -15,7 +15,8 @@ primary_region = "fra"
   COSECRE_EXTRACTION_CONCURRENCY = "10"
   # Folders in the owner's Drive, shared with the service account as Editor.
   COSECRE_GOOGLE_DRIVE_DOCUMENTS_FOLDER_ID = "1Sbx6n0u-0oMqMprlsFymdUXsz8or8yDB"
-  COSECRE_GOOGLE_DRIVE_BACKUP_FOLDER_ID = "1RO2dlqxfdPz5__S_asNwRryJqV2rcLFb"
+  # Off for now: the Drive API is not enabled on the service account's project.
+  # COSECRE_GOOGLE_DRIVE_BACKUP_FOLDER_ID = "1RO2dlqxfdPz5__S_asNwRryJqV2rcLFb"
 
 [mounts]
   source = "cosecre_data"
