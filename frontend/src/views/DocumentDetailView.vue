@@ -28,6 +28,12 @@ const queryClient = useQueryClient()
 const internalDocNumber = route.params.internalDocNumber as string
 const { getTrackedJob } = useExtractionTracker()
 
+const paymentsQuery = useQuery({
+  queryKey: ['document-payments', internalDocNumber],
+  queryFn: () => api.documentPayments(internalDocNumber),
+})
+const payments = computed(() => paymentsQuery.data.value ?? [])
+
 const documentQuery = useQuery({
   queryKey: ['document', internalDocNumber],
   queryFn: () => api.getDocument(internalDocNumber),
@@ -504,6 +510,24 @@ const SHEET_STATE = {
             </dl>
           </section>
 
+          <section v-if="payments.length" class="card payments">
+            <div class="card-head">
+              <h2 class="card-title">Pagaments</h2>
+            </div>
+            <ul class="card-body payment-list">
+              <li v-for="payment in payments" :key="payment.movement_id">
+                <RouterLink :to="{ name: 'reconcile', query: { extracte: payment.import_id } }">
+                  <strong>{{ formatDate(payment.data) }} · {{ formatAmount(payment.import_value) }}</strong>
+                </RouterLink>
+                <span class="muted">{{ payment.compte }} · {{ payment.tipus || 'mètode desconegut' }}</span>
+                <span class="muted truncate">{{ payment.concepte }} {{ payment.mes_dades }}</span>
+                <span class="badge" :class="payment.status === 'confirmed' ? 'badge-olive' : 'badge-gold'">
+                  {{ payment.status === 'confirmed' ? 'Justificat' : `Proposat · ${payment.confidence}` }}
+                </span>
+              </li>
+            </ul>
+          </section>
+
           <details v-if="record.transcripcio" class="card transcript">
             <summary class="card-head">
               <h2 class="card-title">Text del document</h2>
@@ -853,5 +877,22 @@ const SHEET_STATE = {
   .kbd-hint {
     display: none;
   }
+}
+
+.payment-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  list-style: none;
+}
+
+.payment-list li {
+  display: grid;
+  gap: 2px;
+  font-size: var(--text-sm);
+}
+
+.payment-list .badge {
+  justify-self: start;
 }
 </style>

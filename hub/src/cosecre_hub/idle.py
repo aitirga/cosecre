@@ -7,7 +7,7 @@ import logging
 import time
 from collections.abc import Callable
 
-from .models import ExtractionJob
+from .models import ExtractionJob, MatchRun
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,11 @@ class IdleShutdown:
 
     def jobs_pending(self):
         with self.session_factory() as session:
-            return session.query(ExtractionJob.id).filter(
+            if session.query(ExtractionJob.id).filter(
                 ExtractionJob.status.in_(["pending", "processing", "written_to_sheet"])
-            ).first() is not None
+            ).first() is not None:
+                return True
+            return session.query(MatchRun.id).filter(MatchRun.status == "running").first() is not None
 
     async def check(self):
         if not self.due():

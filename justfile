@@ -127,6 +127,11 @@ backup:
     uv run --no-project python scripts/backup.py
 
 [group('operations')]
+[doc('Match a statement against a backup with the real models (read-only copy): just eval-matching <backup> <xls>...')]
+eval-matching backup +statements:
+    cd hub && uv run python ../scripts/eval_matching.py "$(realpath ../{{backup}})" {{statements}}
+
+[group('operations')]
 [doc('Show Fly worker RAM usage and its peak since startup')]
 memory:
     uv run --no-project python scripts/fly_memory.py

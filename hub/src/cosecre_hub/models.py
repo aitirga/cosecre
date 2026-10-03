@@ -124,6 +124,19 @@ class WorkspaceSetting(Base):
     openai_model: Mapped[str] = mapped_column(String(120), default="gpt-6-luna")
     extraction_prompt: Mapped[str] = mapped_column(Text, default="")
     polling_interval_seconds: Mapped[int] = mapped_column(Integer, default=30)
+    #: The three CaixaBank accounts, by IBAN: a dropped statement names its own
+    #: IBAN in its title, and this is what turns that into a ``compte``.
+    iban_general: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    iban_material: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    iban_menjador: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    prepaid_card_number: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    caixeta_spreadsheet_url: Mapped[str] = mapped_column(Text, default="", server_default="")
+    caixeta_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: The spreadsheet's Drive ``modifiedTime`` at the last read: unchanged means
+    #: there is nothing to read again.
+    caixeta_fingerprint: Mapped[str] = mapped_column(String(64), default="", server_default="")
     updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -280,3 +293,158 @@ class Responsable(Base):
     uses: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# ── Bank statements ──────────────────────────────────────────────────────────
+
+
+class StatementImport(Base):
+    """One statement brought in: a dropped file, or the caixeta sheet.
+
+    The caixeta has a single, living import that every sync updates, so it shows
+    up in lists the same way a file does.
+    """
+
+    __tablename__ = "statement_imports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: ``caixa_xls``, ``prepaid_pdf`` or ``caixeta_sheet``.
+    source: Mapped[str] = mapped_column(String(20), index=True)
+    #: One of ``COMPTES``: which of the five places the money moved in.
+    compte: Mapped[str] = mapped_column(String(40), index=True)
+    account_iban: Mapped[str] = mapped_column(String(64), default="")
+    file_name: Mapped[str] = mapped_column(String(255), default="")
+    stored_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="done")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    period_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    rows_total: Mapped[int] = mapped_column(Integer, default=0)
+    rows_new: Mapped[int] = mapped_column(Integer, default=0)
+    rows_duplicate: Mapped[int] = mapped_column(Integer, default=0)
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    created_by: Mapped["User | None"] = relationship()
+    movements: Mapped[list["BankMovement"]] = relationship(back_populates="statement")
+
+
+class BankMovement(Base):
+    """One line of a statement: money that left (or entered) an account.
+
+    ``fingerprint`` is what makes bringing the same statement in twice — or two
+    overlapping periods — harmless: a line already known is counted, not added.
+    """
+
+    __tablename__ = "bank_movements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    import_id: Mapped[int] = mapped_column(
+        ForeignKey("statement_imports.id", ondelete="CASCADE"), index=True
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    source: Mapped[str] = mapped_column(String(20))
+    compte: Mapped[str] = mapped_column(String(40), index=True)
+    #: A ``METODES_PAGAMENT`` label: how the money moved.
+    tipus: Mapped[str] = mapped_column(String(40), default="")
+    #: ``pagament`` for a payment that should have an invoice behind it; anything
+    #: else (``comissio``, ``traspas_intern``, ``ingres``, ``devolucio``,
+    #: ``saldo_inicial``) is never matched.
+    categoria: Mapped[str] = mapped_column(String(20), default="pagament")
+    data: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    data_valor: Mapped[date | None] = mapped_column(Date, nullable=True)
+    concepte: Mapped[str] = mapped_column(Text, default="")
+    mes_dades: Mapped[str] = mapped_column(Text, default="")
+    import_value: Mapped[float] = mapped_column(Float, default=0.0)
+    saldo: Mapped[float | None] = mapped_column(Float, nullable=True)
+    num_factura_hint: Mapped[str] = mapped_column(String(255), default="")
+    cif_hint: Mapped[str] = mapped_column(String(64), default="")
+    iban_hint: Mapped[str] = mapped_column(String(64), default="")
+    #: The source's own key for the line, when it has one (``Cix_012``).
+    external_ref: Mapped[str] = mapped_column(String(64), default="")
+    raw: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    #: ``unmatched``, ``proposed``, ``confirmed``, ``rejected`` or ``not_applicable``.
+    match_status: Mapped[str] = mapped_column(String(20), default="unmatched", index=True)
+    #: The other half of an internal transfer (a prepaid top-up and its charge).
+    linked_movement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_movements.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    statement: Mapped["StatementImport"] = relationship(back_populates="movements")
+    matches: Mapped[list["PaymentMatch"]] = relationship(
+        back_populates="movement", cascade="all, delete-orphan"
+    )
+
+
+class PaymentMatch(Base):
+    """A proposed or confirmed link between a movement and a register entry.
+
+    Several rows for one movement mean it paid several invoices at once.
+    """
+
+    __tablename__ = "payment_matches"
+    __table_args__ = (
+        UniqueConstraint("movement_id", "document_id", name="uq_payment_matches_pair"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    movement_id: Mapped[int] = mapped_column(
+        ForeignKey("bank_movements.id", ondelete="CASCADE"), index=True
+    )
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    #: 0–100, the one number people see. See ``services.matching.confidence``.
+    confidence: Mapped[int] = mapped_column(Integer, default=0)
+    #: Rank among the proposals for this movement; 0 is the one put forward.
+    rank: Mapped[int] = mapped_column(Integer, default=0)
+    signals: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    #: ``rules``, ``openai``, ``jev``, ``jev+openai`` or ``person``.
+    decided_by: Mapped[str] = mapped_column(String(20), default="rules")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    ai_trace: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: ``proposed``, ``alternative``, ``confirmed`` or ``rejected``.
+    status: Mapped[str] = mapped_column(String(20), default="proposed", index=True)
+    confirmed_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    movement: Mapped["BankMovement"] = relationship(back_populates="matches")
+    document: Mapped["Document"] = relationship()
+
+
+class MatchRun(Base):
+    """One press of "Començar justificació": progress for the button to show."""
+
+    __tablename__ = "match_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: The statement it ran over; ``None`` means every statement.
+    import_id: Mapped[int | None] = mapped_column(
+        ForeignKey("statement_imports.id", ondelete="CASCADE"), nullable=True
+    )
+    #: ``running``, ``done`` or ``error``.
+    status: Mapped[str] = mapped_column(String(20), default="running", index=True)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    processed: Mapped[int] = mapped_column(Integer, default=0)
+    proposed: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

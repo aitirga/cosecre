@@ -694,6 +694,31 @@ class GoogleSheetsService:
         return response.get("values", [])
 
     @serialized
+    def read_tabs(self, spreadsheet_id: str, pattern: str) -> dict[str, list[list[Any]]]:
+        """Every tab whose title matches ``pattern``, as raw values, in one read.
+
+        Unformatted, with dates as serials: "-6,00 €" arrives as ``-6.0`` and a
+        date as a number, whatever the spreadsheet's locale.
+        """
+        titles = [
+            t["title"] for t in self._tabs(spreadsheet_id) if re.fullmatch(pattern, t.get("title", ""))
+        ]
+        if not titles:
+            return {}
+        response = (
+            self._values()
+            .batchGet(
+                spreadsheetId=spreadsheet_id,
+                ranges=[f"{quote_title(title)}!A1:Z" for title in titles],
+                valueRenderOption="UNFORMATTED_VALUE",
+                dateTimeRenderOption="SERIAL_NUMBER",
+            )
+            .execute()
+        )
+        ranges = response.get("valueRanges", [])
+        return {title: (ranges[i].get("values", []) if i < len(ranges) else []) for i, title in enumerate(titles)}
+
+    @serialized
     def read_register(self, workspace: WorkspaceSetting) -> list[SheetRow]:
         layout = self.register_layout(workspace)
         grid = self._read_grid(layout.spreadsheet_id, layout.title, layout.width)

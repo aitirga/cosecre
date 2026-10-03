@@ -15,7 +15,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from .config import Settings
-from .models import Document, ExtractionJob, User, WorkspaceSetting
+from .models import Document, ExtractionJob, MatchRun, User, WorkspaceSetting
 from .security import hash_password
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,13 @@ ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("documents", "sheet_snapshot", "JSON"),
     ("documents", "responsable_nom", "VARCHAR(255) DEFAULT '' NOT NULL"),
     ("documents", "responsable_email", "VARCHAR(255) DEFAULT '' NOT NULL"),
+    ("workspace_settings", "iban_general", "VARCHAR(64) DEFAULT '' NOT NULL"),
+    ("workspace_settings", "iban_material", "VARCHAR(64) DEFAULT '' NOT NULL"),
+    ("workspace_settings", "iban_menjador", "VARCHAR(64) DEFAULT '' NOT NULL"),
+    ("workspace_settings", "prepaid_card_number", "VARCHAR(64) DEFAULT '' NOT NULL"),
+    ("workspace_settings", "caixeta_spreadsheet_url", "TEXT DEFAULT '' NOT NULL"),
+    ("workspace_settings", "caixeta_synced_at", "DATETIME"),
+    ("workspace_settings", "caixeta_fingerprint", "VARCHAR(64) DEFAULT '' NOT NULL"),
 ]
 
 #: Models that were once the default and should follow the configured one,
@@ -84,6 +91,7 @@ def ensure_workspace_settings(session: Session, settings: Settings) -> None:
                 id=1,
                 openai_model=settings.openai_model,
                 ticket_sheet_name="Tiquets",
+                caixeta_spreadsheet_url=settings.caixeta_spreadsheet_url or "",
             )
         )
         session.commit()
@@ -97,6 +105,8 @@ def ensure_workspace_settings(session: Session, settings: Settings) -> None:
         workspace.ticket_sheet_name = "Tiquets"
     if not workspace.registry_sheet_name:
         workspace.registry_sheet_name = "Registre documents comptables"
+    if not workspace.caixeta_spreadsheet_url and settings.caixeta_spreadsheet_url:
+        workspace.caixeta_spreadsheet_url = settings.caixeta_spreadsheet_url
     session.commit()
 
 
@@ -199,6 +209,13 @@ def recover_interrupted_jobs(session: Session) -> int:
     session.commit()
     if jobs:
         logger.warning("Marked %d interrupted document jobs as failed", len(jobs))
+    # A matching run only ever writes proposals, so one cut short is simply
+    # finished: pressing the button again picks up the movements it missed.
+    runs = session.query(MatchRun).filter(MatchRun.status == "running").all()
+    for run in runs:
+        run.status = "error"
+        run.error_message = "S'ha interromput per un reinici del servidor."
+    session.commit()
     return len(jobs)
 
 

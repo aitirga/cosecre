@@ -49,6 +49,11 @@ const form = reactive({
   openai_model: 'gpt-6-luna',
   extraction_prompt: '',
   polling_interval_seconds: 30,
+  iban_general: '',
+  iban_material: '',
+  iban_menjador: '',
+  prepaid_card_number: '',
+  caixeta_spreadsheet_url: '',
 })
 
 watch(
@@ -62,6 +67,11 @@ watch(
     form.openai_model = settings.openai_model
     form.extraction_prompt = settings.extraction_prompt
     form.polling_interval_seconds = settings.polling_interval_seconds
+    form.iban_general = settings.iban_general ?? ''
+    form.iban_material = settings.iban_material ?? ''
+    form.iban_menjador = settings.iban_menjador ?? ''
+    form.prepaid_card_number = settings.prepaid_card_number ?? ''
+    form.caixeta_spreadsheet_url = settings.caixeta_spreadsheet_url ?? ''
   },
   { immediate: true },
 )
@@ -246,6 +256,38 @@ const isSelf = (user: User) => user.id === auth.user.value?.id
             rows="5"
             placeholder="S'afegeixen a les instruccions de sèrie. Deixa-ho buit per no canviar res."
           />
+        </label>
+
+        <h3 class="subhead span-2">Extractes bancaris</h3>
+        <p class="hint span-2">
+          L'IBAN del títol de cada Excel de La Caixa diu de quin compte és. Si en arriba un de desconegut,
+          es pregunta un cop i es desa aquí.
+        </p>
+        <label class="field">
+          <span class="label">IBAN compte General</span>
+          <input v-model="form.iban_general" class="input mono" type="text" placeholder="ES00 0000 0000 0000 0000 0000" />
+        </label>
+        <label class="field">
+          <span class="label">IBAN compte de Material i Sortides</span>
+          <input v-model="form.iban_material" class="input mono" type="text" />
+        </label>
+        <label class="field">
+          <span class="label">IBAN compte de Menjador</span>
+          <input v-model="form.iban_menjador" class="input mono" type="text" />
+        </label>
+        <label class="field">
+          <span class="label">Targeta de prepagament</span>
+          <input v-model="form.prepaid_card_number" class="input mono" type="text" placeholder="4047 0001 …" />
+        </label>
+        <label class="field span-2">
+          <span class="label">Full de la caixeta d'efectiu</span>
+          <input
+            v-model="form.caixeta_spreadsheet_url"
+            class="input"
+            type="url"
+            placeholder="https://docs.google.com/spreadsheets/d/…"
+          />
+          <span class="hint">Es llegeixen les pestanyes CAIXETA'AA cada cop que algú entra a l'aplicació.</span>
         </label>
 
         <div class="row span-2">
@@ -571,5 +613,13 @@ code {
   .grid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.subhead {
+  margin: 8px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: var(--text-md);
+  font-weight: 600;
 }
 </style>

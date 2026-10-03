@@ -240,6 +240,11 @@ export interface WorkspaceSettings {
   polling_interval_seconds: number
   classifier_configured?: boolean
   drive_folder_configured?: boolean
+  iban_general?: string
+  iban_material?: string
+  iban_menjador?: string
+  prepaid_card_number?: string
+  caixeta_spreadsheet_url?: string
 }
 
 export interface MigrationIssue {
@@ -305,4 +310,160 @@ export interface BackupOverview {
   offsite_configured: boolean
   last_offsite_at: string | null
   last_error: string | null
+}
+
+// ── Bank statements ─────────────────────────────────────────────────────────
+
+export type StatementSource = 'caixa_xls' | 'prepaid_pdf' | 'caixeta_sheet'
+export type MatchStatus =
+  | 'unmatched'
+  | 'proposed'
+  | 'no_match'
+  | 'confirmed'
+  | 'rejected'
+  | 'not_applicable'
+export type Categoria =
+  | 'pagament'
+  | 'comissio'
+  | 'traspas_intern'
+  | 'ingres'
+  | 'devolucio'
+  | 'saldo_inicial'
+export type Band = 'high' | 'medium' | 'low' | 'none'
+
+export interface Statement {
+  id: number
+  source: StatementSource
+  compte: string
+  account_iban: string
+  file_name: string
+  status: string
+  error_message: string | null
+  period_from: string | null
+  period_to: string | null
+  rows_total: number
+  rows_new: number
+  rows_duplicate: number
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  has_file: boolean
+  warnings: string[]
+}
+
+export interface ReconcileStatement extends Statement {
+  payments: number
+  unmatched: number
+  proposed: number
+  confirmed: number
+  rejected: number
+  not_applicable: number
+  bands: Partial<Record<Band, number>>
+}
+
+export interface Movement {
+  id: number
+  import_id: number
+  source: StatementSource
+  compte: string
+  tipus: string
+  categoria: Categoria
+  data: string | null
+  data_valor: string | null
+  concepte: string
+  mes_dades: string
+  import_value: number
+  saldo: number | null
+  num_factura_hint: string
+  cif_hint: string
+  external_ref: string
+  match_status: MatchStatus
+  linked_movement_id: number | null
+  confidence: number | null
+  documents: string[]
+}
+
+export interface DocumentBrief {
+  num_doc_intern: string
+  num_factura: string
+  proveidor: string
+  cif_proveidor: string
+  data_factura: string | null
+  data_pagament: string | null
+  import_value: number | null
+  compte: string
+  metode_pagament: string
+  pagament: string
+  compte_corrent: string
+  descripcio: string
+  file_url: string | null
+}
+
+export interface MatchAnswer {
+  choice?: string
+  confidence?: number
+  reason?: string
+  probabilities?: Record<string, number>
+}
+
+export interface MatchTrace {
+  at?: string
+  candidates?: { key: string; documents: string[]; evidence: number }[]
+  rules?: { chosen: string | null }
+  openai?: { status: string; model?: string; answer?: MatchAnswer; error?: string }
+  jev?: { status: string; model?: string; answer?: MatchAnswer; error?: string }
+  final?: { chosen: string | null; decided_by?: string }
+}
+
+export interface PaymentMatch {
+  id: number
+  status: 'proposed' | 'alternative' | 'confirmed' | 'rejected'
+  rank: number
+  confidence: number
+  band: Band
+  decided_by: string
+  reason: string
+  signals: Record<string, number>
+  ai_trace: MatchTrace | null
+  group: number
+  document: DocumentBrief
+}
+
+export interface MovementDetail extends Movement {
+  matches: PaymentMatch[]
+  linked_movement: Movement | null
+}
+
+export interface MatchRun {
+  id: number
+  import_id: number | null
+  status: 'running' | 'done' | 'error'
+  total: number
+  processed: number
+  proposed: number
+  error_message: string | null
+  started_at: string
+  finished_at: string | null
+}
+
+export interface CaixetaStatus {
+  configured: boolean
+  synced_at: string | null
+  running: boolean
+  error: string | null
+  statement_id: number | null
+  changed: boolean | null
+}
+
+export interface DocumentPayment {
+  movement_id: number
+  import_id: number
+  status: string
+  confidence: number
+  compte: string
+  tipus: string
+  data: string | null
+  concepte: string
+  mes_dades: string
+  import_value: number
 }

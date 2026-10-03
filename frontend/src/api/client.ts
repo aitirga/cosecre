@@ -9,6 +9,14 @@ import { trackedFetch } from './loading'
  */
 import type {
   AuthTokens,
+  CaixetaStatus,
+  DocumentBrief,
+  DocumentPayment,
+  MatchRun,
+  Movement,
+  MovementDetail,
+  ReconcileStatement,
+  Statement,
   BackupComparison,
   BackupOverview,
   CaptureSource,
@@ -38,10 +46,13 @@ const NO_RETRY_PATHS = ['/auth/refresh', '/auth/login', '/auth/register', '/auth
 
 export class ApiError extends Error {
   status: number
+  /** The parsed error body, for callers that act on more than the message. */
+  data: unknown
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, data: unknown = null) {
     super(message)
     this.status = status
+    this.data = data
   }
 }
 
@@ -165,7 +176,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
   }
 
   if (!response.ok) {
-    throw new ApiError(response.status, describeError(data, response.statusText))
+    throw new ApiError(response.status, describeError(data, response.statusText), data)
   }
 
   return data as T
@@ -552,6 +563,91 @@ export const api = {
     const formData = new FormData()
     formData.append('file', file)
     return request<BackupOverview>('/backups/upload', { method: 'POST', body: formData })
+  },
+
+  // ── Bank statements (ingestion) ─────────────────────────────────────────
+  /** Excel or prepaid PDF. A 409 with `code: 'needs_account'` asks for `compte`. */
+  uploadStatement(file: File, compte?: string) {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (compte) formData.append('compte', compte)
+    return request<Statement>('/statements/upload', { method: 'POST', body: formData })
+  },
+  listStatements() {
+    return request<Statement[]>('/statements/imports')
+  },
+  statementMovements(statementId: number) {
+    return request<Movement[]>(`/statements/imports/${statementId}/movements`)
+  },
+  deleteStatement(statementId: number) {
+    return request<void>(`/statements/imports/${statementId}`, { method: 'DELETE' })
+  },
+  downloadStatement(statement: Statement): Promise<void> {
+    return saveFile(`/statements/imports/${statement.id}/file`, statement.file_name || 'extracte')
+  },
+  updateMovement(movementId: number, payload: { tipus?: string; categoria?: string }) {
+    return request<Movement>(`/statements/movements/${movementId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+  caixetaStatus() {
+    return request<CaixetaStatus>('/statements/caixeta')
+  },
+  /** `ifDue`: the cheap, throttled check made whenever someone opens the app. */
+  syncCaixeta(ifDue = false) {
+    return request<CaixetaStatus>(`/statements/caixeta/sync${ifDue ? '?if_due=true' : ''}`, {
+      method: 'POST',
+    })
+  },
+
+  // ── Justifying statements (matching) ────────────────────────────────────
+  reconcileStatements() {
+    return request<ReconcileStatement[]>('/reconciliation/statements')
+  },
+  reconcileMovements(statementId: number) {
+    return request<Movement[]>(`/reconciliation/movements?statement=${statementId}`)
+  },
+  reconcileMovement(movementId: number) {
+    return request<MovementDetail>(`/reconciliation/movements/${movementId}`)
+  },
+  startMatchRun(importId: number | null) {
+    return request<MatchRun>('/reconciliation/runs', {
+      method: 'POST',
+      body: JSON.stringify({ import_id: importId }),
+    })
+  },
+  matchRun(runId: number) {
+    return request<MatchRun>(`/reconciliation/runs/${runId}`)
+  },
+  activeMatchRun(statementId: number) {
+    return request<MatchRun | null>(`/reconciliation/runs?statement=${statementId}`)
+  },
+  confirmMatch(movementId: number, documentRefs: string[]) {
+    return request<MovementDetail>(`/reconciliation/movements/${movementId}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({ document_refs: documentRefs }),
+    })
+  },
+  rejectMovement(movementId: number) {
+    return request<MovementDetail>(`/reconciliation/movements/${movementId}/reject`, { method: 'POST' })
+  },
+  rejectMatch(matchId: number) {
+    return request<MovementDetail>(`/reconciliation/matches/${matchId}/reject`, { method: 'POST' })
+  },
+  undoMovement(movementId: number) {
+    return request<MovementDetail>(`/reconciliation/movements/${movementId}/undo`, { method: 'POST' })
+  },
+  reproposeMovement(movementId: number) {
+    return request<MovementDetail>(`/reconciliation/movements/${movementId}/repropose`, {
+      method: 'POST',
+    })
+  },
+  searchInvoices(q: string) {
+    return request<DocumentBrief[]>(`/reconciliation/documents/search?q=${encodeURIComponent(q)}`)
+  },
+  documentPayments(reference: string) {
+    return request<DocumentPayment[]>(`/reconciliation/documents/${reference}/payments`)
   },
 
   // ── Documents app settings ──────────────────────────────────────────────

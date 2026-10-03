@@ -31,6 +31,9 @@ class FakeSheets(GoogleSheetsService):
         self.legacy_references: list[tuple[str, int, str]] = []
         self.drive: dict[str, dict[str, Any]] = {}
         self.uploads = 0
+        #: Tab title → rows, for ``read_tabs`` (the caixeta).
+        self.tabs: dict[str, list[list[Any]]] = {}
+        self.tab_reads = 0
 
     # ── Register ─────────────────────────────────────────────────────────────
 
@@ -120,3 +123,11 @@ class FakeSheets(GoogleSheetsService):
 
     def upload_private_file(self, file_path, filename, mime_type, folder_id):
         return "backup-id"
+
+    # ── Other spreadsheets ───────────────────────────────────────────────────
+
+    def read_tabs(self, spreadsheet_id, pattern):
+        import re
+
+        self.tab_reads += 1
+        return {t: [list(r) for r in rows] for t, rows in self.tabs.items() if re.fullmatch(pattern, t)}

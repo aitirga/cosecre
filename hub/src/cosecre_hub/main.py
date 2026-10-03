@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException
 
 from . import API_VERSION, __version__
 from .api import api_router
+from .api.statements import caixeta_sync
 from .bootstrap import recover_interrupted_jobs, run_startup_tasks
 from .config import Settings, get_settings
 from .db import create_session_factory, create_sqlalchemy_engine, init_db
@@ -120,7 +121,11 @@ def create_app(
             recover_interrupted_jobs(session)
         finally:
             session.close()
+        app.state.caixeta_checked_at = 0.0
+        app.state.caixeta_error = None
         tasks = []
+        # The machine wakes because someone is about to use it: read the caixeta now.
+        tasks.append(asyncio.create_task(asyncio.to_thread(caixeta_sync.sync_if_due, app)))
         if settings.backup_enabled:
             tasks.append(asyncio.create_task(backup_schedule(backup_service)))
         if idle is not None:

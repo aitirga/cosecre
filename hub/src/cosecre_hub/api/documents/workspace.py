@@ -9,6 +9,7 @@ from ...deps import get_current_user, get_db, get_workspace_setting, require_adm
 from ...models import User, WorkspaceSetting
 from ...schemas import WorkspaceSettingsRead, WorkspaceSettingsUpdate
 from ...services.sheets import parse_spreadsheet_id
+from ...services.text_format import iban_is_valid, normalize_iban
 
 router = APIRouter()
 
@@ -24,6 +25,11 @@ def _read(request: Request, workspace: WorkspaceSetting) -> WorkspaceSettingsRea
         polling_interval_seconds=workspace.polling_interval_seconds,
         classifier_configured=request.app.state.classifier.configured,
         drive_folder_configured=request.app.state.settings.documents_folder_id is not None,
+        iban_general=workspace.iban_general or "",
+        iban_material=workspace.iban_material or "",
+        iban_menjador=workspace.iban_menjador or "",
+        prepaid_card_number=workspace.prepaid_card_number or "",
+        caixeta_spreadsheet_url=workspace.caixeta_spreadsheet_url or "",
     )
 
 
@@ -62,6 +68,25 @@ def update_settings(
     workspace.openai_model = payload.openai_model
     workspace.extraction_prompt = payload.extraction_prompt
     workspace.polling_interval_seconds = payload.polling_interval_seconds
+    for name in ("iban_general", "iban_material", "iban_menjador"):
+        value = getattr(payload, name)
+        if value is not None:
+            iban = normalize_iban(value)
+            if iban and not iban_is_valid(iban):
+                raise HTTPException(status_code=400, detail=f"L'IBAN {value} no és vàlid.")
+            setattr(workspace, name, iban)
+    if payload.prepaid_card_number is not None:
+        workspace.prepaid_card_number = payload.prepaid_card_number.strip()
+    if payload.caixeta_spreadsheet_url is not None:
+        url = payload.caixeta_spreadsheet_url.strip()
+        if url:
+            try:
+                parse_spreadsheet_id(url)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if url != workspace.caixeta_spreadsheet_url:
+            workspace.caixeta_fingerprint = ""
+        workspace.caixeta_spreadsheet_url = url
     workspace.updated_by_id = admin.id
     session.add(workspace)
     session.commit()

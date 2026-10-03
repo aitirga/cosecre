@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     google_drive_tickets_folder_id: str | None = None
     #: Off-site copy of every backup. Optional; local backups run regardless.
     google_drive_backup_folder_id: str | None = None
+    #: The petty-cash ledger read by the statements module, used until someone
+    #: sets one in Configuració. Kept out of the code: the repository is public.
+    caixeta_spreadsheet_url: str | None = None
 
     #: How many documents the models read at once. Reading is almost all
     #: waiting on the model API, so this is about API rate limits and memory
