@@ -252,8 +252,14 @@ function groups(status: PaymentMatch['status'][]): Group[] {
 }
 const confirmed = computed(() => groups(['confirmed'])[0] ?? null)
 const lead = computed(() => groups(['proposed'])[0] ?? null)
-const alternatives = computed(() => groups(['alternative']).slice(0, 3))
-const leadMatch = computed(() => lead.value?.matches[0] ?? null)
+const candidates = computed(() => [...groups(['proposed']).slice(0, 1), ...groups(['alternative']).slice(0, 3)])
+
+// The candidate open in the comparison panel: the proposal, unless one of the
+// others has been clicked to look at it side by side with the movement.
+const focusKey = ref<number | null>(null)
+const viewed = computed(() => candidates.value.find((g) => g.key === focusKey.value) ?? lead.value)
+const viewedMatch = computed(() => viewed.value?.matches[0] ?? null)
+const alternatives = computed(() => candidates.value.filter((g) => g !== viewed.value))
 
 function step(offset: number) {
   const list = visible.value
@@ -324,6 +330,7 @@ watch(search, (text) => {
 watch(selectedId, () => {
   search.value = ''
   actionError.value = ''
+  focusKey.value = null
 })
 
 // ── Keyboard ─────────────────────────────────────────────────────────────────
@@ -337,8 +344,8 @@ function onKey(event: KeyboardEvent) {
   } else if (event.key === 'ArrowUp' || event.key === 'k') {
     step(-1)
     event.preventDefault()
-  } else if (event.key === 'Enter' && lead.value && !decide.isPending.value) {
-    confirmGroup(lead.value)
+  } else if (event.key === 'Enter' && viewed.value && !confirmed.value && !decide.isPending.value) {
+    confirmGroup(viewed.value)
     event.preventDefault()
   } else if ((event.key === 'r' || event.key === 'R') && detail.value && detail.value.match_status !== 'confirmed') {
     decide.mutate({ kind: 'reject' })
@@ -614,16 +621,20 @@ async function openOriginal(doc: DocumentBrief) {
             </section>
 
             <!-- Proposal -->
-            <section v-else-if="lead" class="proposal" :class="band(lead.confidence)">
+            <section v-else-if="viewed" class="proposal" :class="band(viewed.confidence)">
               <header class="proposal-head">
-                <span class="big">{{ lead.confidence }}</span>
-                <span class="band-label">{{ BAND_LABEL[band(lead.confidence)] }}</span>
-                <span class="decided muted">{{ DECIDED_LABEL[leadMatch?.decided_by ?? ''] ?? leadMatch?.decided_by }}</span>
+                <span class="big">{{ viewed.confidence }}</span>
+                <span class="band-label">{{ BAND_LABEL[band(viewed.confidence)] }}</span>
+                <span v-if="viewed === lead" class="decided muted">{{ DECIDED_LABEL[viewedMatch?.decided_by ?? ''] ?? viewedMatch?.decided_by }}</span>
+                <template v-else>
+                  <span class="decided muted">{{ lead ? 'Alternativa' : 'Candidata' }}</span>
+                  <button class="btn btn-ghost btn-sm back" type="button" @click="focusKey = null">{{ lead ? 'Torna a la proposta' : 'Tanca' }}</button>
+                </template>
               </header>
-              <p v-if="lead.matches.length > 1" class="set-note">
-                Un sol pagament de {{ lead.matches.length }} factures que sumen l'import.
+              <p v-if="viewed.matches.length > 1" class="set-note">
+                Un sol pagament de {{ viewed.matches.length }} factures que sumen l'import.
               </p>
-              <article v-for="match in lead.matches" :key="match.id" class="invoice">
+              <article v-for="match in viewed.matches" :key="match.id" class="invoice">
                 <RouterLink class="inv-main" :to="{ name: 'document', params: { internalDocNumber: match.document.num_doc_intern } }">
                   <strong>{{ match.document.num_factura || 'Sense número' }}</strong>
                   <span>{{ match.document.proveidor || 'Proveïdor desconegut' }}</span>
@@ -645,42 +656,42 @@ async function openOriginal(doc: DocumentBrief) {
                   v-for="key in SIGNALS"
                   :key="key"
                   class="signal"
-                  :class="signalTone(leadMatch?.signals[key])"
+                  :class="signalTone(viewedMatch?.signals[key])"
                 >
-                  {{ signalText(key, leadMatch as PaymentMatch) }}
-                  {{ signalTone(leadMatch?.signals[key]) === 'on' ? '✓' : signalTone(leadMatch?.signals[key]) === 'part' ? '~' : '—' }}
+                  {{ signalText(key, viewedMatch as PaymentMatch) }}
+                  {{ signalTone(viewedMatch?.signals[key]) === 'on' ? '✓' : signalTone(viewedMatch?.signals[key]) === 'part' ? '~' : '—' }}
                 </span>
               </div>
-              <p v-if="leadMatch?.reason" class="reason">{{ leadMatch.reason }}</p>
-              <details v-if="leadMatch?.ai_trace?.openai" class="trace">
+              <p v-if="viewedMatch?.reason" class="reason">{{ viewedMatch.reason }}</p>
+              <details v-if="viewedMatch?.ai_trace?.openai" class="trace">
                 <summary>Com s'hi ha arribat</summary>
                 <dl>
                   <dt>gpt-6-luna</dt>
                   <dd>
-                    {{ leadMatch.ai_trace.openai.answer?.choice ?? leadMatch.ai_trace.openai.status }}
-                    · {{ pct(leadMatch.ai_trace.openai.answer?.confidence) }}
-                    <span class="muted">{{ leadMatch.ai_trace.openai.answer?.reason }}</span>
+                    {{ viewedMatch.ai_trace.openai.answer?.choice ?? viewedMatch.ai_trace.openai.status }}
+                    · {{ pct(viewedMatch.ai_trace.openai.answer?.confidence) }}
+                    <span class="muted">{{ viewedMatch.ai_trace.openai.answer?.reason }}</span>
                   </dd>
                   <dt>Jev</dt>
                   <dd>
-                    <template v-if="leadMatch.ai_trace.jev?.answer">
-                      {{ leadMatch.ai_trace.jev.answer.choice }} · {{ pct(leadMatch.ai_trace.jev.answer.confidence) }}
+                    <template v-if="viewedMatch.ai_trace.jev?.answer">
+                      {{ viewedMatch.ai_trace.jev.answer.choice }} · {{ pct(viewedMatch.ai_trace.jev.answer.confidence) }}
                     </template>
-                    <span v-else class="muted">{{ leadMatch.ai_trace.jev?.status === 'off' ? 'No configurat' : leadMatch.ai_trace.jev?.status }}</span>
+                    <span v-else class="muted">{{ viewedMatch.ai_trace.jev?.status === 'off' ? 'No configurat' : viewedMatch.ai_trace.jev?.status }}</span>
                   </dd>
                   <dt>Candidates</dt>
-                  <dd>{{ leadMatch.ai_trace.candidates?.length ?? 0 }} factures possibles</dd>
+                  <dd>{{ viewedMatch.ai_trace.candidates?.length ?? 0 }} factures possibles</dd>
                 </dl>
               </details>
               <div class="decide">
-                <button class="btn btn-primary" type="button" :disabled="decide.isPending.value" @click="confirmGroup(lead)">
+                <button class="btn btn-primary" type="button" :disabled="decide.isPending.value" @click="confirmGroup(viewed)">
                   <AppIcon name="check" /> Confirmar
                 </button>
                 <button
                   class="btn btn-outline"
                   type="button"
                   :disabled="decide.isPending.value"
-                  @click="decide.mutate({ kind: 'not-this', matchId: lead.matches[0].id })"
+                  @click="decide.mutate({ kind: 'not-this', matchId: viewed.matches[0].id })"
                 >
                   No és aquesta
                 </button>
@@ -691,7 +702,7 @@ async function openOriginal(doc: DocumentBrief) {
             </section>
 
             <!-- No proposal -->
-            <section v-else-if="detail.categoria === 'pagament'" class="proposal none">
+            <section v-if="!viewed && detail.categoria === 'pagament' && !confirmed" class="proposal none">
               <header class="proposal-head">
                 <strong>{{ STATUS_LABEL[detail.match_status] }}</strong>
               </header>
@@ -727,8 +738,17 @@ async function openOriginal(doc: DocumentBrief) {
 
             <!-- Alternatives -->
             <section v-if="alternatives.length && !confirmed" class="alternatives">
-              <h3 class="section-title">Altres candidates</h3>
-              <article v-for="group in alternatives" :key="group.key" class="alt">
+              <h3 class="section-title">{{ viewed === lead ? 'Altres candidates' : 'Candidates' }}</h3>
+              <article
+                v-for="group in alternatives"
+                :key="group.key"
+                class="alt"
+                role="button"
+                tabindex="0"
+                title="Compara-la amb el moviment"
+                @click="focusKey = group.key"
+                @keydown.enter.self.stop.prevent="focusKey = group.key"
+              >
                 <span class="pill" :class="band(group.confidence)"><i class="dot" :class="band(group.confidence)" />{{ group.confidence }}</span>
                 <span class="alt-text">
                   <template v-for="(match, i) in group.matches" :key="match.id">
@@ -736,9 +756,10 @@ async function openOriginal(doc: DocumentBrief) {
                     <strong>{{ match.document.num_factura || 'Sense número' }}</strong>
                     <span class="muted"> {{ match.document.proveidor }} · {{ formatDate(match.document.data_factura) }} · {{ formatAmount(match.document.import_value) }}</span>
                   </template>
+                  <span v-if="group === lead" class="tag">Proposta</span>
                   <span v-if="group.matches[0].reason" class="alt-reason muted">{{ group.matches[0].reason }}</span>
                 </span>
-                <button class="btn btn-outline btn-sm" type="button" :disabled="decide.isPending.value" @click="confirmGroup(group)">
+                <button class="btn btn-outline btn-sm" type="button" :disabled="decide.isPending.value" @click.stop="confirmGroup(group)">
                   Confirmar
                 </button>
               </article>
@@ -1449,6 +1470,35 @@ async function openOriginal(doc: DocumentBrief) {
 
 .alt-text {
   min-width: 0;
+}
+
+.alt-text strong {
+  margin-right: 4px;
+}
+
+.alt {
+  margin: 0 -6px;
+  padding: 3px 6px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+
+.alt:hover,
+.alt:focus-visible {
+  background: var(--surface-1);
+}
+
+.tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs);
+  color: var(--ink-500);
+}
+
+.back {
+  color: inherit;
 }
 
 .alt-reason {
