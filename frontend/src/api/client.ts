@@ -270,6 +270,41 @@ export async function fetchBlobUrl(path: string): Promise<string> {
   return URL.createObjectURL(await response.blob())
 }
 
+/** The file name a `Content-Disposition` header carries, RFC 5987 form first. */
+function dispositionName(header: string | null): string | null {
+  if (!header) return null
+  const encoded = /filename\*=(?:UTF-8|utf-8)''([^;]+)/.exec(header)
+  if (encoded) return decodeURIComponent(encoded[1].trim())
+  const plain = /filename="?([^";]+)"?/.exec(header)
+  return plain ? plain[1].trim() : null
+}
+
+/**
+ * Download a protected file to the person's disk, under the name the hub gives
+ * it. A plain link cannot do it: it would not carry the bearer token.
+ */
+export async function saveFile(path: string, fallbackName: string): Promise<void> {
+  const response = await authorizedFetch(path)
+  if (!response.ok) {
+    let detail = response.statusText || "No s'ha pogut descarregar el fitxer."
+    try {
+      const body = await response.json()
+      if (typeof body?.detail === 'string') detail = body.detail
+    } catch {
+      // Not JSON; the status text will do.
+    }
+    throw new ApiError(response.status, detail)
+  }
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = dispositionName(response.headers.get('Content-Disposition')) ?? fallbackName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 export async function request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
   loadTokens()
   const headers = new Headers(init.headers ?? {})
@@ -464,6 +499,12 @@ export const api = {
    */
   getDocumentFileBlob(reference: string): Promise<string> {
     return fetchBlobUrl(`${RECORDS}/${reference}/file`)
+  },
+  downloadDocumentFile(reference: string, fallbackName: string): Promise<void> {
+    return saveFile(`${RECORDS}/${reference}/file`, fallbackName)
+  },
+  downloadAllFiles(): Promise<void> {
+    return saveFile(`${RECORDS}/files.zip`, 'cosecre-originals.zip')
   },
 
   // ── Migration from the two old tabs ─────────────────────────────────────

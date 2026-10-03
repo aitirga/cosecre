@@ -82,14 +82,19 @@ def status_after_review(document: Document) -> str:
 
 def to_record(document: Document) -> DocumentRecord:
     upload = document.upload
-    file_url = None
-    if upload is not None and Path(upload.stored_path).exists():
+    file_url = file_name = file_size = None
+    stored = Path(upload.stored_path) if upload is not None else None
+    if stored is not None and stored.exists():
         file_url = f"/documents/records/{document.internal_doc_number}/file"
+        file_name = drive_name(document, extension_for(document))
+        file_size = stored.stat().st_size
     return DocumentRecord(
         num_doc_intern=document.internal_doc_number,
         **{name: getattr(document, name) for name in REGISTER_FIELDS if name != "num_doc_intern"},
         transcripcio=document.transcripcio or "",
         file_url=file_url,
+        file_name=file_name,
+        file_size=file_size,
         drive_url=(
             f"https://drive.google.com/file/d/{document.drive_file_id}/view"
             if document.drive_file_id

@@ -191,6 +191,40 @@ onUnmounted(() => {
   if (photoSrc.value) URL.revokeObjectURL(photoSrc.value)
 })
 
+// ── Download the original ────────────────────────────────────────────────────
+const downloading = ref(false)
+const downloadError = ref('')
+const fileExtension = computed(() => {
+  const name = record.value?.file_name ?? record.value?.source_file_name ?? ''
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(dot + 1).toUpperCase().slice(0, 4) : 'FIT'
+})
+const fileDetails = computed(() => {
+  const size = record.value?.file_size
+  const parts: string[] = []
+  if (size != null) {
+    parts.push(
+      size < 1024 * 1024
+        ? `${Math.max(1, Math.round(size / 1024))} kB`
+        : `${(size / (1024 * 1024)).toLocaleString('ca-ES', { maximumFractionDigits: 1 })} MB`,
+    )
+  }
+  if (record.value?.origen) parts.push(record.value.origen)
+  return parts.join(' · ')
+})
+
+async function downloadOriginal() {
+  downloading.value = true
+  downloadError.value = ''
+  try {
+    await api.downloadDocumentFile(internalDocNumber, record.value?.file_name ?? internalDocNumber)
+  } catch (e) {
+    downloadError.value = e instanceof ApiError ? e.message : "No s'ha pogut descarregar."
+  } finally {
+    downloading.value = false
+  }
+}
+
 const SHEET_STATE = {
   synced: { label: 'Al full', tone: 'badge-olive' },
   pending: { label: "Pendent d'escriure", tone: 'badge-gold' },
@@ -396,6 +430,29 @@ const SHEET_STATE = {
                 Obre el fitxer
               </button>
               <p v-else class="hint">Aquest document no té còpia al servidor.</p>
+              <div v-if="record.file_url" class="file-strip">
+                <span class="file-glyph mono" aria-hidden="true">{{ fileExtension }}</span>
+                <span class="file-meta">
+                  <span class="file-name mono" :title="record.file_name ?? undefined">
+                    {{ record.file_name ?? record.source_file_name }}
+                  </span>
+                  <span v-if="fileDetails" class="file-details">{{ fileDetails }}</span>
+                </span>
+                <button
+                  class="btn btn-outline btn-sm"
+                  type="button"
+                  :disabled="downloading"
+                  title="Descarrega el fitxer original"
+                  @click="downloadOriginal"
+                >
+                  <AppIcon name="download" />
+                  {{ downloading ? 'Baixant…' : 'Descarrega' }}
+                </button>
+              </div>
+              <p v-if="downloadError" class="notice notice-error file-error">
+                <AppIcon name="alert" :size="15" />
+                <span>{{ downloadError }}</span>
+              </p>
               <a
                 v-if="record.drive_url"
                 class="btn btn-outline btn-sm btn-block"
@@ -443,6 +500,8 @@ const SHEET_STATE = {
         v-if="viewerOpen && photoSrc"
         :src="photoSrc"
         alt="Document original"
+        downloadable
+        @download="downloadOriginal"
         @close="viewerOpen = false"
       />
     </template>
@@ -646,6 +705,55 @@ const SHEET_STATE = {
   .photo-button .zoom-hint {
     opacity: 1;
   }
+}
+
+.file-strip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 8px 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.file-glyph {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface-0);
+  color: var(--ink-500);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.file-meta {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.file-name {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  color: var(--ink-700);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-details {
+  font-size: var(--text-xs);
+  color: var(--ink-400);
+}
+
+.file-error {
+  width: 100%;
 }
 
 .preview img {

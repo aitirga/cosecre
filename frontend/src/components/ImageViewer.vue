@@ -8,8 +8,8 @@ import AppIcon from './AppIcon.vue'
  * pointer, drag to pan, double-click to toggle, Esc to close. Built for reading
  * the small print of a crumpled receipt, so zoom goes well past 100 %.
  */
-const props = defineProps<{ src: string; alt?: string }>()
-const emit = defineEmits<{ close: [] }>()
+const props = defineProps<{ src: string; alt?: string; downloadable?: boolean }>()
+const emit = defineEmits<{ close: []; download: [] }>()
 
 const MIN = 1
 const MAX = 8
@@ -139,6 +139,16 @@ onBeforeUnmount(() => {
           <span class="sr-only">Apropa</span>
         </button>
         <span class="divider" />
+        <button
+          v-if="props.downloadable"
+          class="tool"
+          type="button"
+          title="Descarrega l'original"
+          @click="emit('download')"
+        >
+          <AppIcon name="download" :size="15" />
+          <span class="sr-only">Descarrega</span>
+        </button>
         <a class="tool" :href="props.src" target="_blank" rel="noopener" title="Obre en una pestanya nova">
           <AppIcon name="external" :size="15" />
         </a>

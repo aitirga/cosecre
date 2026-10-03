@@ -153,6 +153,8 @@ def create_app(
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Downloads read the file's name from it.
+        expose_headers=["Content-Disposition"],
     )
     if idle is not None:
         app.add_middleware(ActivityMiddleware, idle=idle)

@@ -8,7 +8,11 @@ and one Drive folder.
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 import uuid
+import zipfile
+from datetime import date
 from pathlib import Path
 
 from fastapi import (
@@ -23,6 +27,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from ...deps import get_current_user, get_db, get_settings, get_workspace_setting
@@ -34,6 +39,8 @@ from ...services.sheets import GoogleSheetsService, SheetDocumentNotFound
 from ...services.storage import save_upload_file
 from .register import (
     confirm_hints,
+    drive_name,
+    extension_for,
     generate_reference,
     process_job,
     push_document,
@@ -198,6 +205,48 @@ def list_documents(
     return [to_record(d) for d in sorted(documents, key=_sort_key, reverse=True)]
 
 
+@router.get("/files.zip")
+def download_all_files(
+    session: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Every original kept on the server, in one zip named like the Drive folder.
+
+    Built in a temporary file rather than in memory: the machine has 1 GB and
+    the photos together can be several times that. Photos are already
+    compressed, so they are stored as they are.
+    """
+    documents = [d for d in session.query(Document).all() if d.upload is not None]
+    handle, temp_path = tempfile.mkstemp(prefix="cosecre-originals-", suffix=".zip")
+    os.close(handle)
+    taken: set[str] = set()
+    try:
+        with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+            for document in sorted(documents, key=_sort_key):
+                source = Path(document.upload.stored_path)
+                if not source.exists():
+                    continue
+                name = drive_name(document, extension_for(document))
+                if name in taken:
+                    stem, dot, ext = name.rpartition(".")
+                    suffix = document.internal_doc_number[-8:]
+                    name = f"{stem}_{suffix}.{ext}" if dot else f"{name}_{suffix}"
+                taken.add(name)
+                archive.write(source, arcname=name)
+    except Exception:
+        os.unlink(temp_path)
+        raise
+    if not taken:
+        os.unlink(temp_path)
+        raise HTTPException(status_code=404, detail="No hi ha cap original al servidor.")
+    return FileResponse(
+        path=temp_path,
+        media_type="application/zip",
+        filename=f"cosecre-originals-{date.today():%Y-%m-%d}.zip",
+        background=BackgroundTask(os.unlink, temp_path),
+    )
+
+
 @router.get("/jobs/{job_id}", response_model=JobRead)
 def get_job(job_id: str, session: Session = Depends(get_db), _: User = Depends(get_current_user)):
     job = session.get(ExtractionJob, job_id)
@@ -284,14 +333,17 @@ def get_document_file(
     session: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    upload = _document(session, reference).upload
+    document = _document(session, reference)
+    upload = document.upload
     if upload is None:
         raise HTTPException(status_code=404, detail="Aquest document no té cap fitxer local.")
     file_path = Path(upload.stored_path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="El fitxer ja no és al servidor.")
     return FileResponse(
-        path=file_path, media_type=upload.source_file_type, filename=upload.source_file_name
+        path=file_path,
+        media_type=upload.source_file_type,
+        filename=drive_name(document, extension_for(document)),
     )
 
 

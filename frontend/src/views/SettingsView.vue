@@ -7,6 +7,7 @@ import type { User } from '../api/types'
 import AppIcon from '../components/AppIcon.vue'
 import BackupsPanel from '../components/BackupsPanel.vue'
 import MigrationPanel from '../components/MigrationPanel.vue'
+import OriginalsPanel from '../components/OriginalsPanel.vue'
 import { useAuth } from '../composables/useAuth'
 import { usePlatform } from '../platform'
 
@@ -125,7 +126,7 @@ const isSelf = (user: User) => user.id === auth.user.value?.id
     <header class="page-head">
       <div>
         <h1 class="page-title">Configuració</h1>
-        <p class="page-lead">Full de càlcul, models, migració, còpies de seguretat i comptes.</p>
+        <p class="page-lead">Full de càlcul, models, migració, còpies de seguretat, originals i comptes.</p>
       </div>
     </header>
 
@@ -285,6 +286,8 @@ const isSelf = (user: User) => user.id === auth.user.value?.id
     />
 
     <BackupsPanel />
+
+    <OriginalsPanel />
 
     <!-- ── Team ───────────────────────────────────────────────────────── -->
     <section class="card">

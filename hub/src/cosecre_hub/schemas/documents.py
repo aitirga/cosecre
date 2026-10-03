@@ -235,6 +235,9 @@ class DocumentRecord(DocumentFields):
     num_doc_intern: str
     file_link: str = ""
     file_url: str | None = None
+    #: What the original is called when downloaded — the same as on Drive.
+    file_name: str | None = None
+    file_size: int | None = None
     drive_url: str | None = None
     source_file_name: str | None = None
     source_file_type: str | None = None

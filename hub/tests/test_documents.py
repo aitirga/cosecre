@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import zipfile
 from datetime import date
 
@@ -93,6 +94,26 @@ def test_uploaded_files_are_originals(register):
     client, headers, _, _ = register
     reference = upload(client, headers, source="file", name="invoice.pdf", content=b"%PDF-1.7", mime="application/pdf")
     assert client.get(f"{RECORDS}/{reference}", headers=headers).json()["origen"] == "Original"
+
+
+def test_originals_download_one_by_one_or_all_together(register):
+    client, headers, _, _ = register
+    first = upload(client, headers)
+    upload(client, headers)
+
+    single = client.get(f"{RECORDS}/{first}/file", headers=headers)
+    assert single.content == JPEG
+    assert "2026-01-31_F-2026-001.jpg" in single.headers["content-disposition"]
+
+    response = client.get(f"{RECORDS}/files.zip", headers=headers)
+    assert response.status_code == 200
+    assert "cosecre-originals-" in response.headers["content-disposition"]
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = archive.namelist()
+        # Same date and number twice: the second one gets its reference.
+        assert len(names) == 2 and len(set(names)) == 2
+        assert "2026-01-31_F-2026-001.jpg" in names
+        assert archive.read(names[0]) == JPEG
 
 
 def test_several_photos_queue_as_separate_documents(register):

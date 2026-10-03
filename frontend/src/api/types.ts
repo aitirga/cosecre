@@ -139,6 +139,9 @@ export interface DocumentRecord extends DocumentFields {
   num_doc_intern: string
   file_link: string
   file_url: string | null
+  /** The name the original is downloaded under — the same as on Drive. */
+  file_name: string | null
+  file_size: number | null
   drive_url: string | null
   source_file_name: string | null
   source_file_type: string | null
