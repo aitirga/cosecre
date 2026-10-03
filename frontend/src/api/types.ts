@@ -137,8 +137,21 @@ export interface AiTrace {
   filled?: string[]
 }
 
+/** A bank movement a person confirmed paid a register entry, in brief. */
+export interface PaidBy {
+  movement_id: number
+  compte: string
+  data: string | null
+  concepte: string
+  import_value: number
+  external_ref: string
+}
+
 export interface DocumentRecord extends DocumentFields {
   num_doc_intern: string
+  /** Bank movements a person confirmed this entry was paid by. */
+  matched_movements: number
+  paid_by: PaidBy[]
   file_link: string
   file_url: string | null
   /** The name the original is downloaded under — the same as on Drive. */
@@ -384,6 +397,8 @@ export interface Movement {
   linked_movement_id: number | null
   confidence: number | null
   documents: string[]
+  /** The invoice(s) a person confirmed this line paid. */
+  matched: DocumentBrief[]
 }
 
 export interface DocumentBrief {

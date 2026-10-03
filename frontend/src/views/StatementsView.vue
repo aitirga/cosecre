@@ -8,6 +8,8 @@ import type { Categoria, Movement, Statement } from '../api/types'
 import { METODES_PAGAMENT, formatAmount, formatDate } from '../document-fields'
 import { CATEGORIA_LABEL, SOURCE_LABEL } from '../matching'
 import AppIcon from '../components/AppIcon.vue'
+import DocumentCard from '../components/DocumentCard.vue'
+import { useDocumentCards } from '../composables/useDocumentCards'
 
 /**
  * Bringing statements in — and only that. Matching them to invoices is a task
@@ -26,6 +28,8 @@ const SOURCES = [
 ]
 
 const statementsQuery = useQuery({ queryKey: ['statements'], queryFn: api.listStatements })
+// The register entry a line paid, floating beside it on request.
+const documentCards = useDocumentCards()
 const statements = computed<Statement[]>(() => statementsQuery.data.value ?? [])
 
 const caixetaQuery = useQuery({
@@ -376,6 +380,7 @@ function amountClass(m: Movement) {
                         <th>Més dades</th>
                         <th class="num">Import</th>
                         <th class="num">Saldo</th>
+                        <th>Registre</th>
                         <th>Tipus</th>
                         <th>Categoria</th>
                       </tr>
@@ -390,6 +395,21 @@ function amountClass(m: Movement) {
                         <td class="truncate extra">{{ m.mes_dades || '—' }}</td>
                         <td class="num" :class="amountClass(m)">{{ formatAmount(m.import_value) }}</td>
                         <td class="num muted">{{ m.saldo == null ? '' : formatAmount(m.saldo) }}</td>
+                        <td class="registre">
+                          <button
+                            v-for="doc in m.matched"
+                            :key="doc.num_doc_intern"
+                            class="reg-chip"
+                            :class="{ on: documentCards.isOpen(doc.num_doc_intern) }"
+                            type="button"
+                            :title="`Mostra ${doc.num_factura || doc.num_doc_intern} del registre`"
+                            @click="documentCards.toggle(doc.num_doc_intern, $event)"
+                          >
+                            <AppIcon name="invoice" :size="12" />
+                            <span class="truncate">{{ doc.num_factura || 'Sense número' }}<span class="reg-who"> · {{ doc.proveidor }}</span></span>
+                          </button>
+                          <span v-if="!m.matched.length" class="muted">{{ m.categoria === 'pagament' ? (m.match_status === 'rejected' ? 'Sense factura' : '—') : '' }}</span>
+                        </td>
                         <td>
                           <select
                             class="select select-sm"
@@ -422,6 +442,16 @@ function amountClass(m: Movement) {
         </table>
       </div>
     </section>
+
+    <DocumentCard
+      v-for="card in documentCards.cards.value"
+      :key="card.reference"
+      :reference="card.reference"
+      :x="card.x"
+      :y="card.y"
+      @close="documentCards.close(card)"
+      @move="(x, y) => Object.assign(card, { x, y })"
+    />
 
     <Teleport to="body">
       <div v-if="pendingDelete" class="overlay" @click.self="pendingDelete = null">
@@ -661,6 +691,35 @@ function amountClass(m: Movement) {
 .delete:hover:not(:disabled) {
   background: var(--danger-100);
   color: var(--danger-700);
+}
+
+.registre {
+  max-width: 220px;
+}
+
+.reg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border: 1px solid var(--accent-200);
+  border-left: 3px solid var(--accent-700);
+  border-radius: var(--r-sm);
+  background: #fbf1ec;
+  color: var(--ink-900);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.reg-chip:hover,
+.reg-chip.on {
+  border-color: var(--accent-500);
+  border-left-color: var(--accent-700);
+}
+
+.reg-chip .reg-who {
+  color: var(--ink-500);
 }
 
 .movements-row > td {

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { RouterLink, useRouter } from 'vue-router'
 
 import { api } from '../api/client'
-import type { DocumentRecord, ExtractionStatus } from '../api/types'
+import type { DocumentRecord, ExtractionStatus, Movement, PaidBy } from '../api/types'
 import { useExtractionTracker } from '../composables/useExtractionTracker'
 import {
   ESTATS_PAGAMENT,
@@ -15,6 +15,7 @@ import {
 import AppIcon from '../components/AppIcon.vue'
 import DocumentIntake from '../components/DocumentIntake.vue'
 import ImageViewer from '../components/ImageViewer.vue'
+import MovementCard from '../components/MovementCard.vue'
 import SyncPanel from '../components/SyncPanel.vue'
 import StatusPill from '../components/StatusPill.vue'
 
@@ -46,8 +47,37 @@ watch(documents, (updated) => {
   })
 })
 
+// ── The bank movement that paid an entry, floating beside it ─────────────────
+type MovementCardState = { movement: Movement; x: number; y: number }
+const movementCards = ref<MovementCardState[]>([])
+const MOVEMENT_CARD_W = 300
+
+function movementOpen(id: number) {
+  return movementCards.value.some((c) => c.movement.id === id)
+}
+
+async function toggleMovement(payment: PaidBy, event: MouseEvent) {
+  if (movementOpen(payment.movement_id)) {
+    movementCards.value = movementCards.value.filter((c) => c.movement.id !== payment.movement_id)
+    return
+  }
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const x = rect.right + 8 + MOVEMENT_CARD_W <= window.innerWidth - 8 ? rect.right + 8 : Math.max(8, rect.left - MOVEMENT_CARD_W - 8)
+  const y = Math.min(Math.max(8, rect.top - 4), window.innerHeight - 320)
+  const movement = await api.reconcileMovement(payment.movement_id)
+  if (!movementOpen(movement.id)) movementCards.value.push({ movement, x, y })
+}
+
+function closeMovement(card: MovementCardState) {
+  movementCards.value = movementCards.value.filter((c) => c !== card)
+}
+
+function paymentLabel(payment: PaidBy) {
+  return [payment.compte, formatDate(payment.data)].filter(Boolean).join(' · ')
+}
+
 // ── Filtering ────────────────────────────────────────────────────────────────
-type Filter = 'all' | 'active' | 'needs_validation' | 'validated' | 'error' | 'outside'
+type Filter = 'all' | 'active' | 'needs_validation' | 'validated' | 'error' | 'outside' | 'unmatched'
 
 const filter = ref<Filter>('all')
 const tipus = ref('')
@@ -66,7 +96,13 @@ const stats = computed(() => ({
   review: documents.value.filter((item) => item.extraction_status === 'needs_validation').length,
   validated: documents.value.filter((item) => item.extraction_status === 'validated').length,
   outside: documents.value.filter((item) => item.sheet_state !== 'synced' && !IN_FLIGHT.includes(item.extraction_status)).length,
+  unmatched: documents.value.filter(isUnmatched).length,
 }))
+
+/** Read and not yet tied to any bank movement: what justifying still has to find. */
+function isUnmatched(item: DocumentRecord) {
+  return !item.matched_movements && !IN_FLIGHT.includes(item.extraction_status) && item.extraction_status !== 'error'
+}
 
 const visible = computed(() => {
   const term = search.value.trim().toLowerCase()
@@ -77,6 +113,7 @@ const visible = computed(() => {
       (filter.value === 'outside' &&
         item.sheet_state !== 'synced' &&
         !IN_FLIGHT.includes(item.extraction_status)) ||
+      (filter.value === 'unmatched' && isUnmatched(item)) ||
       item.extraction_status === filter.value
     if (!matchesFilter) return false
     if (tipus.value && item.tipus_document !== tipus.value) return false
@@ -260,6 +297,16 @@ const showUpload = ref(true)
         <span class="stat-label">Fora del full</span>
         <span class="stat-value" :class="{ attention: stats.outside > 0 }">{{ stats.outside }}</span>
       </button>
+      <button
+        class="stat"
+        :class="{ on: filter === 'unmatched' }"
+        type="button"
+        title="Documents que encara no s'han lligat a cap moviment d'un extracte"
+        @click="filter = 'unmatched'"
+      >
+        <span class="stat-label">Sense extracte</span>
+        <span class="stat-value">{{ stats.unmatched }}</span>
+      </button>
     </section>
 
     <DocumentIntake v-if="showUpload" @uploaded="invalidate" />
@@ -312,6 +359,7 @@ const showUpload = ref(true)
               <th>Data</th>
               <th class="num">Import</th>
               <th>Pagament</th>
+              <th>Extracte</th>
               <th class="actions"><span class="sr-only">Accions</span></th>
             </tr>
           </thead>
@@ -369,6 +417,21 @@ const showUpload = ref(true)
                 </span>
                 <span v-else class="muted">—</span>
               </td>
+              <td class="paid-by" @click.stop>
+                <button
+                  v-for="payment in record.paid_by"
+                  :key="payment.movement_id"
+                  class="bank-chip"
+                  :class="{ on: movementOpen(payment.movement_id) }"
+                  type="button"
+                  :title="`${payment.concepte} · ${formatAmount(payment.import_value)} — mostra el moviment`"
+                  @click="toggleMovement(payment, $event)"
+                >
+                  <AppIcon name="bank" :size="12" />
+                  <span class="truncate">{{ paymentLabel(payment) }}</span>
+                </button>
+                <span v-if="!record.paid_by.length" class="muted">—</span>
+              </td>
               <td class="actions" @click.stop>
                 <div class="row-actions">
                   <button
@@ -417,6 +480,17 @@ const showUpload = ref(true)
     <SyncPanel v-if="showSync" @close="closeSync" />
 
     <ImageViewer v-if="previewSrc" :src="previewSrc" alt="Document original" @close="closePhoto" />
+
+    <MovementCard
+      v-for="card in movementCards"
+      :key="card.movement.id"
+      :movement="card.movement"
+      :x="card.x"
+      :y="card.y"
+      pinned
+      @close="closeMovement(card)"
+      @move="(x, y) => Object.assign(card, { x, y })"
+    />
 
     <Teleport to="body">
       <div v-if="pendingDelete" class="overlay" @click.self="pendingDelete = null">
@@ -503,7 +577,7 @@ const showUpload = ref(true)
 /* ── Stats double as status filters ──────────────────────────────────────── */
 .stats {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -614,6 +688,31 @@ const showUpload = ref(true)
 
 .sheet-flag {
   color: var(--accent-700);
+}
+
+.paid-by {
+  max-width: 180px;
+}
+
+.bank-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border: 1px solid #c7d7e3;
+  border-left: 3px solid #33607f;
+  border-radius: var(--r-sm);
+  background: #edf3f7;
+  color: #33607f;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.bank-chip:hover,
+.bank-chip.on {
+  border-color: #33607f;
 }
 
 .supplier {

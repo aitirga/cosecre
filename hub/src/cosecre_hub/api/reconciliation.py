@@ -34,6 +34,7 @@ from ..services.matching import engine
 from ..services.matching.confidence import band
 from ..services.statements import PAYMENT
 from .documents.register import push_document
+from .statements.routes import to_document_brief as _brief
 from .statements.routes import to_movement_read, to_statement_read
 
 logger = logging.getLogger(__name__)
@@ -42,24 +43,6 @@ router = APIRouter()
 
 
 # ── Reading ──────────────────────────────────────────────────────────────────
-
-
-def _brief(document: Document) -> DocumentBrief:
-    return DocumentBrief(
-        num_doc_intern=document.internal_doc_number,
-        num_factura=document.num_factura,
-        proveidor=document.proveidor,
-        cif_proveidor=document.cif_proveidor,
-        data_factura=document.data_factura,
-        data_pagament=document.data_pagament,
-        import_value=document.import_value,
-        compte=document.pressupost_afectat,
-        metode_pagament=document.metode_pagament,
-        pagament=document.pagament,
-        compte_corrent=document.compte_corrent,
-        descripcio=document.descripcio,
-        file_url=f"/documents/records/{document.internal_doc_number}/file" if document.upload_id else None,
-    )
 
 
 def _match_read(match: PaymentMatch) -> MatchRead:

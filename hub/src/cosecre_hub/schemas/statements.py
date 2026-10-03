@@ -56,6 +56,8 @@ class MovementRead(BaseModel):
     confidence: int | None = None
     #: Register references of the proposed or confirmed invoice(s).
     documents: list[str] = Field(default_factory=list)
+    #: The invoice(s) a person confirmed this line paid, to show beside it.
+    matched: list["DocumentBrief"] = Field(default_factory=list)
 
 
 class MovementUpdate(BaseModel):
@@ -163,3 +165,7 @@ class PaymentRead(BaseModel):
     concepte: str = ""
     mes_dades: str = ""
     import_value: float
+
+
+# ``MovementRead.matched`` names DocumentBrief, defined further down.
+MovementRead.model_rebuild()

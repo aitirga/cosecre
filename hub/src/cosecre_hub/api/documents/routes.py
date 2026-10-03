@@ -43,6 +43,7 @@ from .register import (
     drive_name,
     extension_for,
     generate_reference,
+    paid_by,
     process_job,
     push_document,
     rename_on_drive,
@@ -203,7 +204,8 @@ def list_documents(
 ):
     sync_register(request.app, session)
     documents = session.query(Document).all()
-    return [to_record(d) for d in sorted(documents, key=_sort_key, reverse=True)]
+    payments = paid_by(session, [d.id for d in documents])
+    return [to_record(d, payments.get(d.id, [])) for d in sorted(documents, key=_sort_key, reverse=True)]
 
 
 @router.get("/files.zip")

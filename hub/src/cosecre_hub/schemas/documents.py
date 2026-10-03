@@ -243,8 +243,22 @@ class AiHint(BaseModel):
     review: bool = False
 
 
+class PaidBy(BaseModel):
+    """A bank movement a person confirmed paid a register entry, in brief."""
+
+    movement_id: int
+    compte: str = ""
+    data: date | None = None
+    concepte: str = ""
+    import_value: float = 0.0
+    external_ref: str = ""
+
+
 class DocumentRecord(DocumentFields):
     num_doc_intern: str
+    #: Bank movements a person confirmed this entry was paid by.
+    matched_movements: int = 0
+    paid_by: list[PaidBy] = Field(default_factory=list)
     file_link: str = ""
     file_url: str | None = None
     #: What the original is called when downloaded — the same as on Drive.

@@ -18,8 +18,9 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ...deps import get_workspace_setting
-from ...models import Document, ExtractionJob, Upload
+from ...models import BankMovement, Document, ExtractionJob, PaymentMatch, Upload
 from ...schemas import AiHint, DocumentRecord, SyncResult
+from ...schemas.documents import PaidBy
 from ...services.extraction import DocumentExtractionService, ExtractedDocument
 from ...services.sheets import (
     REGISTER_COLUMNS,
@@ -80,7 +81,36 @@ def status_after_review(document: Document) -> str:
     return "validated" if document.validat else "needs_validation"
 
 
-def to_record(document: Document) -> DocumentRecord:
+def paid_by(session: Session, document_ids: list[int]) -> dict[int, list[PaidBy]]:
+    """The confirmed bank movements behind each entry, in one query."""
+    if not document_ids:
+        return {}
+    rows = (
+        session.query(PaymentMatch.document_id, BankMovement)
+        .join(BankMovement, BankMovement.id == PaymentMatch.movement_id)
+        .filter(PaymentMatch.status == "confirmed", PaymentMatch.document_id.in_(document_ids))
+        .order_by(BankMovement.data)
+        .all()
+    )
+    found: dict[int, list[PaidBy]] = {}
+    for document_id, movement in rows:
+        found.setdefault(document_id, []).append(PaidBy(
+            movement_id=movement.id, compte=movement.compte, data=movement.data,
+            concepte=movement.concepte, import_value=movement.import_value,
+            external_ref=movement.external_ref,
+        ))
+    return found
+
+
+def to_record(document: Document, payments: list[PaidBy] | None = None) -> DocumentRecord:
+    """``payments`` saves a query per entry when a whole list is being read."""
+    if payments is None:
+        session = Session.object_session(document)
+        payments = (
+            paid_by(session, [document.id]).get(document.id, [])
+            if session is not None and document.id is not None
+            else []
+        )
     upload = document.upload
     file_url = file_name = file_size = None
     stored = Path(upload.stored_path) if upload is not None else None
@@ -106,6 +136,8 @@ def to_record(document: Document) -> DocumentRecord:
         sheet_state=document.sheet_state,  # type: ignore[arg-type]
         sheet_row_ref=document.sheet_row_ref,
         legacy_type=document.legacy_type,
+        matched_movements=len(payments),
+        paid_by=payments,
         ai_hints={name: AiHint.model_validate(hint) for name, hint in (document.ai_hints or {}).items()},
         ai_trace=document.ai_trace,
         iban_valid=iban_is_valid(document.compte_corrent) if document.compte_corrent else None,

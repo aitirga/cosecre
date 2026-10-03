@@ -17,11 +17,12 @@ from sqlalchemy.orm import Session, selectinload
 from starlette.concurrency import run_in_threadpool
 
 from ...deps import get_current_user, get_db, get_settings, get_workspace_setting
-from ...models import BankMovement, PaymentMatch, StatementImport, User
+from ...models import BankMovement, Document, PaymentMatch, StatementImport, User
 from ...schemas.documents import COMPTES, METODES_PAGAMENT
 from ...schemas.statements import (
     AccountNeeded,
     CaixetaStatus,
+    DocumentBrief,
     MovementRead,
     MovementUpdate,
     StatementRead,
@@ -86,6 +87,24 @@ def to_statement_read(statement: StatementImport, warnings: list[str] | None = N
     )
 
 
+def to_document_brief(document: Document) -> DocumentBrief:
+    return DocumentBrief(
+        num_doc_intern=document.internal_doc_number,
+        num_factura=document.num_factura,
+        proveidor=document.proveidor,
+        cif_proveidor=document.cif_proveidor,
+        data_factura=document.data_factura,
+        data_pagament=document.data_pagament,
+        import_value=document.import_value,
+        compte=document.pressupost_afectat,
+        metode_pagament=document.metode_pagament,
+        pagament=document.pagament,
+        compte_corrent=document.compte_corrent,
+        descripcio=document.descripcio,
+        file_url=f"/documents/records/{document.internal_doc_number}/file" if document.upload_id else None,
+    )
+
+
 def to_movement_read(movement: BankMovement) -> MovementRead:
     live = [m for m in movement.matches if m.status in {"proposed", "confirmed"}]
     lead = [m for m in live if m.rank == 0] or live
@@ -111,6 +130,11 @@ def to_movement_read(movement: BankMovement) -> MovementRead:
         linked_movement_id=movement.linked_movement_id,
         confidence=min((m.confidence for m in lead), default=None),
         documents=[m.document.internal_doc_number for m in lead if m.document is not None],
+        matched=[
+            to_document_brief(m.document)
+            for m in movement.matches
+            if m.status == "confirmed" and m.document is not None
+        ],
     )
 
 
