@@ -8,6 +8,7 @@
 import { api } from '../api/client'
 import { useAuth } from '../composables/useAuth'
 import AccountView from '../views/AccountView.vue'
+import DossierView from '../views/DossierView.vue'
 import DocumentDetailView from '../views/DocumentDetailView.vue'
 import ReconcileView from '../views/ReconcileView.vue'
 import RegisterView from '../views/RegisterView.vue'
@@ -39,6 +40,7 @@ export const documentsModule: CosecreModule = {
     { path: 'registre/:internalDocNumber', name: 'document', component: DocumentDetailView },
     { path: 'extractes', name: 'statements', component: StatementsView },
     { path: 'tasques/justificar-extractes', name: 'reconcile', component: ReconcileView },
+    { path: 'eines/dossier-extracte', name: 'statement-dossier', component: DossierView },
     { path: 'invoices/:internalDocNumber?', redirect: (to) => legacyRedirect(to.params) },
     { path: 'tickets/:internalDocNumber?', redirect: (to) => legacyRedirect(to.params) },
     // Account and Settings are the hub's own screens rather than this module's,
@@ -50,6 +52,7 @@ export const documentsModule: CosecreModule = {
   navGroups: [
     { id: 'comptabilitat', label: 'Bases de dades' },
     { id: 'tasques', label: 'Tasques' },
+    { id: 'eines', label: 'Eines' },
   ],
   nav: [
     // Top level, first: the overview everything else is the detail of.
@@ -63,6 +66,7 @@ export const documentsModule: CosecreModule = {
     },
     { name: 'statements', label: 'Extractes', icon: 'bank', group: 'comptabilitat' },
     { name: 'reconcile', label: 'Justificar extractes', icon: 'tasks', group: 'tasques' },
+    { name: 'statement-dossier', label: "Dossier d'extracte", icon: 'invoice', group: 'eines' },
     { name: 'settings', label: 'Configuració', icon: 'sliders', adminOnly: true, placement: 'foot' },
   ],
   // Registered last, so its unconditional claim on home is the default rather

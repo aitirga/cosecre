@@ -694,6 +694,15 @@ export const api = {
     return request<StatusOverview>('/status')
   },
 
+  // ── Eines ───────────────────────────────────────────────────────────────
+  /** The statement as one PDF: an index, then each invoice with its original. */
+  downloadStatementDossier(statement: Statement, proposals: boolean): Promise<void> {
+    return saveFile(
+      `/tools/statement-dossier/${statement.id}${proposals ? '?proposals=true' : ''}`,
+      `dossier-${statement.compte}.pdf`,
+    )
+  },
+
   // ── Documents app settings ──────────────────────────────────────────────
   getSettings() {
     return request<WorkspaceSettings>('/documents/settings')
