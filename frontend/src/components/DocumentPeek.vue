@@ -30,7 +30,6 @@ const STORE = 'cosecre.reconcile.peek'
 const MIN_W = 300
 const MIN_H = 260
 const box = ref<Box>({ x: 0, y: 0, w: 440, h: 560 })
-const win = ref<HTMLElement | null>(null)
 
 function fit(b: Box): Box {
   const w = Math.min(Math.max(b.w, MIN_W), window.innerWidth - 16)
@@ -191,7 +190,6 @@ function onPanEnd() {
 <template>
   <Teleport to="body">
     <aside
-      ref="win"
       class="peek"
       role="dialog"
       aria-label="Original de la factura"
