@@ -240,3 +240,53 @@ def test_the_account_is_proposed_by_vision_and_decided_by_jev():
     assert hint.source == "jev" and hint.alternative == "General" and hint.review
     assert result.trace["final"]["pressupost_afectat"]["value"] == "Caixeta"
     assert result.trace["vision"]["proposal"]["pressupost_afectat"] == "General"
+
+
+def test_a_register_inside_a_table_gets_a_dropdown_typed_column_instead():
+    headers = [c.header for c in REGISTER_COLUMNS]
+    account = headers.index("Compte")
+    headers[account] = "Pressupost afectat"
+    sent: list[list[dict]] = []
+    service = GoogleSheetsService.__new__(GoogleSheetsService)
+
+    class Call:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def get(self, **_):
+            return self
+
+        def execute(self):
+            return self.payload
+
+    table = {
+        "tableId": "t1",
+        "range": {"sheetId": 7, "startColumnIndex": 0, "endColumnIndex": len(headers)},
+        "columnProperties": [
+            {"columnIndex": 0, "columnName": "Núm. doc. intern", "columnType": "TEXT"},
+            {"columnIndex": account, "columnName": "Pressupost afectat", "columnType": "TEXT"},
+        ],
+    }
+
+    class Spreadsheets:
+        def get(self, **_):
+            return Call({"sheets": [{"properties": {"sheetId": 7}, "tables": [table]}]})
+
+    def batch(_id, requests):
+        if any("setDataValidation" in r for r in requests):
+            raise RuntimeError("This operation is not allowed on cells in typed columns.")
+        sent.append(requests)
+
+    service._values = lambda: Call({"values": [headers]})
+    service._spreadsheets = lambda: Spreadsheets()
+    service._batch = batch
+
+    layout = service._map_register("sheet", {"title": "Registre", "sheetId": 7})
+
+    assert layout.columns["pressupost_afectat"] == account
+    update = sent[-1][0]["updateTable"]
+    assert update["fields"] == "columnProperties"
+    props = {p["columnIndex"]: p for p in update["table"]["columnProperties"]}
+    assert props[0]["columnName"] == "Núm. doc. intern"  # the rest is kept
+    assert props[account]["columnType"] == "DROPDOWN"
+    assert props[account]["columnName"] == "Compte"

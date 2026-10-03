@@ -16,6 +16,7 @@ it. Two rules keep the two honest:
 from __future__ import annotations
 
 import io
+import logging
 import re
 import time
 import unicodedata
@@ -31,6 +32,8 @@ from ..config import Settings
 from ..models import WorkspaceSetting
 from ..schemas.documents import CHOICES, canonical_choice
 from .text_format import parse_amount, parse_date, to_sheets_serial
+
+logger = logging.getLogger(__name__)
 
 
 def build(*args, **kwargs):
@@ -397,6 +400,7 @@ class GoogleSheetsService:
         columns: dict[str, int] = {}
         missing: list[Column] = []
         upgrades: list[dict[str, Any]] = []
+        dropdowns: list[tuple[int, Column]] = []
         for column in REGISTER_COLUMNS:
             index = by_header.get(fold_header(column.header))
             if index is None:
@@ -406,8 +410,8 @@ class GoogleSheetsService:
                 )
                 if index is not None:
                     # A renamed column: relabel it and give it its current rules.
-                    upgrades.append(self._header_request(tab["sheetId"], index, [column.header]))
-                    upgrades.extend(self._column_rules(tab["sheetId"], index, column))
+                    upgrades.append(self._rename_request(tab["sheetId"], index, column.header))
+                    dropdowns.append((index, column))
             if index is None:
                 missing.append(column)
             else:
@@ -417,7 +421,12 @@ class GoogleSheetsService:
             for column in REGISTER_COLUMNS:
                 if column.hidden and column.field in columns:
                     upgrades.append(self._hide_request(tab["sheetId"], columns[column.field]))
-            self._batch(spreadsheet_id, upgrades)
+            try:
+                self._batch(spreadsheet_id, upgrades)
+            except Exception:  # noqa: BLE001 — a cosmetic upgrade never blocks reading
+                logger.warning("Could not relabel the register's renamed columns", exc_info=True)
+            for index, column in dropdowns:
+                self._add_dropdown(spreadsheet_id, int(tab["sheetId"]), index, column)
 
         width = max(len(headers), int(grid.get("columnCount", 26)))
         if missing:
@@ -494,6 +503,82 @@ class GoogleSheetsService:
         else:
             return []
         return [{"setDataValidation": {"range": body_range, "rule": rule}}]
+
+    def _rename_request(self, sheet_id: int, index: int, header: str) -> dict[str, Any]:
+        """Only the value: a header inside a table keeps the table's own styling."""
+        return {
+            "updateCells": {
+                "start": {"sheetId": sheet_id, "rowIndex": 0, "columnIndex": index},
+                "rows": [{"values": [{"userEnteredValue": {"stringValue": header}}]}],
+                "fields": "userEnteredValue",
+            }
+        }
+
+    def _add_dropdown(self, spreadsheet_id: str, sheet_id: int, index: int, column: Column) -> None:
+        """Best effort: a missing dropdown must never stop the sheet being read.
+
+        Plain cells take a validation rule; a column inside a table refuses one
+        ("typed columns") and has to become a dropdown-typed table column instead.
+        """
+        try:
+            self._batch(spreadsheet_id, self._column_rules(sheet_id, index, column))
+            return
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            request = self._table_dropdown_request(spreadsheet_id, sheet_id, index, column)
+            if request is None:
+                raise RuntimeError("the column is in no table")
+            self._batch(spreadsheet_id, [request])
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not add the %s dropdown to the sheet", column.header, exc_info=True)
+
+    def _table_dropdown_request(
+        self, spreadsheet_id: str, sheet_id: int, index: int, column: Column
+    ) -> dict[str, Any] | None:
+        metadata = (
+            self._spreadsheets()
+            .get(spreadsheetId=spreadsheet_id, fields="sheets(properties(sheetId),tables)")
+            .execute()
+        )
+        for sheet in metadata.get("sheets", []):
+            if int(sheet.get("properties", {}).get("sheetId", -1)) != sheet_id:
+                continue
+            for table in sheet.get("tables", []):
+                span = table.get("range", {})
+                start = int(span.get("startColumnIndex", 0))
+                if not start <= index < int(span.get("endColumnIndex", 0)):
+                    continue
+                offset = index - start
+                # ``fields: columnProperties`` replaces the whole list, so every
+                # other column is sent back exactly as it was.
+                properties = [
+                    p for p in table.get("columnProperties", [])
+                    if int(p.get("columnIndex", 0)) != offset
+                ]
+                properties.append(
+                    {
+                        "columnIndex": offset,
+                        "columnName": column.header,
+                        "columnType": "DROPDOWN",
+                        "dataValidationRule": {
+                            "condition": {
+                                "type": "ONE_OF_LIST",
+                                "values": [
+                                    {"userEnteredValue": o} for o in CHOICES[column.field]
+                                ],
+                            }
+                        },
+                    }
+                )
+                properties.sort(key=lambda p: int(p.get("columnIndex", 0)))
+                return {
+                    "updateTable": {
+                        "table": {"tableId": table["tableId"], "columnProperties": properties},
+                        "fields": "columnProperties",
+                    }
+                }
+        return None
 
     def _hide_request(self, sheet_id: int, index: int) -> dict[str, Any]:
         return {
