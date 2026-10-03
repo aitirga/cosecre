@@ -36,6 +36,7 @@ from ...schemas import DocumentRecord, DocumentUpdate, JobRead, SyncResult, Uplo
 from ...schemas.documents import DiffEntryRead, FieldChangeRead, SyncApplied, SyncApply, SyncDiff
 from ...schemas.documents import CaptureSource
 from ...services.sheets import GoogleSheetsService, SheetDocumentNotFound
+from ...services import people
 from ...services.storage import save_upload_file
 from .register import (
     confirm_hints,
@@ -283,6 +284,8 @@ def _save(app, session: Session, document: Document, changes: dict) -> DocumentR
     changed = [name for name, value in changes.items() if getattr(document, name) != value]
     for name, value in changes.items():
         setattr(document, name, "" if value is None and isinstance(getattr(document, name), str) else value)
+    if {"responsable_nom", "responsable_email"} & set(changed):
+        people.remember(session, document.responsable_nom, document.responsable_email)
     if document.validat:
         confirm_hints(document)
     else:

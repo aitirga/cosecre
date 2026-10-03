@@ -18,6 +18,7 @@ import type {
   JobRead,
   LlmProvider,
   MigrationReport,
+  ResponsableSearch,
   SessionInfo,
   SyncApplied,
   SyncDiff,
@@ -448,6 +449,10 @@ export const api = {
   },
   getDocument(reference: string) {
     return request<DocumentRecord>(`${RECORDS}/${reference}`)
+  },
+  searchResponsables(field: 'nom' | 'email', q: string) {
+    const params = new URLSearchParams({ field, q })
+    return request<ResponsableSearch>(`/documents/responsables?${params}`)
   },
   getJob(jobId: string) {
     return request<JobRead>(`${RECORDS}/jobs/${jobId}`)

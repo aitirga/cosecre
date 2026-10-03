@@ -534,3 +534,62 @@ def test_backups_are_pruned_and_only_taken_when_due(register):
     assert service.due() is False
     upload(client, headers)
     assert service.changed_since_last() is True
+
+
+# ── Responsible person ───────────────────────────────────────────────────────
+
+PEOPLE = "/api/v1/documents/responsables"
+
+
+def test_responsible_person_is_saved_remembered_and_reaches_the_sheet(register):
+    client, headers, sheet, _ = register
+    reference = upload(client, headers)
+    response = client.patch(
+        f"{RECORDS}/{reference}",
+        headers=headers,
+        json={"responsable_nom": "  Susana   Pérez ", "responsable_email": "SPerez@XTEC.cat"},
+    )
+    assert response.status_code == 200, response.text
+    record = response.json()
+    assert (record["responsable_nom"], record["responsable_email"]) == ("Susana Pérez", "sperez@xtec.cat")
+    assert sheet.row_for(reference)["responsable_nom"] == "Susana Pérez"
+    assert sheet.row_for(reference)["responsable_email"] == "sperez@xtec.cat"
+
+    everyone = client.get(PEOPLE, headers=headers).json()
+    assert everyone["matches"] == [{"nom": "Susana Pérez", "email": "sperez@xtec.cat"}]
+    assert client.get(PEOPLE, headers=headers, params={"q": "per"}).json()["matches"][0]["nom"] == "Susana Pérez"
+    by_email = client.get(PEOPLE, headers=headers, params={"field": "email", "q": "sper"}).json()
+    assert by_email["matches"][0]["email"] == "sperez@xtec.cat"
+
+
+def test_only_xtec_addresses_are_accepted(register):
+    client, headers, _, _ = register
+    reference = upload(client, headers)
+    for bad in ("susana@gmail.com", "susana@xtec.cat.com", "no és un email"):
+        response = client.patch(f"{RECORDS}/{reference}", headers=headers, json={"responsable_email": bad})
+        assert response.status_code == 422, bad
+    ok = client.patch(f"{RECORDS}/{reference}", headers=headers, json={"responsable_email": ""})
+    assert ok.status_code == 200
+
+
+def test_an_obvious_typo_of_a_known_name_gets_a_suggestion(register):
+    client, headers, _, _ = register
+    reference = upload(client, headers)
+    client.patch(f"{RECORDS}/{reference}", headers=headers, json={"responsable_nom": "Susana Pérez"})
+
+    def suggestion(q, field="nom"):
+        return client.get(PEOPLE, headers=headers, params={"q": q, "field": field}).json()["suggestion"]
+
+    assert suggestion("Susna")["nom"] == "Susana Pérez"
+    assert suggestion("Susana Peerz")["nom"] == "Susana Pérez"
+    assert suggestion("susana perez") is None  # the same person, not a typo
+    assert suggestion("Ana") is None  # too short to second-guess
+    assert suggestion("Marta") is None
+
+
+def test_edit_distance_counts_a_swap_as_one():
+    from cosecre_hub.services.people import edit_distance
+
+    assert edit_distance("susana", "susna") == 1
+    assert edit_distance("perez", "peerz") == 1
+    assert edit_distance("marta", "susana") > 2

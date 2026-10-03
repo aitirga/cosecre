@@ -117,6 +117,8 @@ export interface DocumentFields {
   data_pagament: string | null
   subministrat: string
   pressupost_afectat: string
+  responsable_nom: string
+  responsable_email: string
   validat: boolean
 }
 
@@ -156,6 +158,18 @@ export interface DocumentRecord extends DocumentFields {
   created_at: string | null
   updated_at: string | null
   error_message: string | null
+}
+
+/** Someone already named as an entry's responsible person. */
+export interface Responsable {
+  nom: string
+  email: string
+}
+
+export interface ResponsableSearch {
+  matches: Responsable[]
+  /** Set when what was typed looks like a slip of a known person ("Susna"). */
+  suggestion: Responsable | null
 }
 
 export type DocumentUpdate = Partial<Omit<DocumentFields, 'origen'>>

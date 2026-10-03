@@ -225,6 +225,8 @@ class Document(Base):
     data_pagament: Mapped[date | None] = mapped_column(Date, nullable=True)
     subministrat: Mapped[str] = mapped_column(String(60), default="")
     pressupost_afectat: Mapped[str] = mapped_column(Text, default="")
+    responsable_nom: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    responsable_email: Mapped[str] = mapped_column(String(255), default="", server_default="")
     validat: Mapped[bool] = mapped_column(Boolean, default=False)
 
     #: The "Fitxer" cell: an ``=IMAGE(...)`` formula or a Drive link.
@@ -256,3 +258,25 @@ class Document(Base):
     )
 
     upload: Mapped["Upload | None"] = relationship()
+
+
+class Responsable(Base):
+    """A name/email pair someone has entered as an entry's responsible person.
+
+    Kept so the form can offer names already used instead of retyping them, and
+    spot a near-miss ("Susna") of one that exists. One row per distinct pair;
+    either half may be empty.
+    """
+
+    __tablename__ = "responsables"
+    __table_args__ = (UniqueConstraint("nom_key", "email", name="uq_responsables_nom_email"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    nom: Mapped[str] = mapped_column(String(255), default="")
+    #: ``nom`` folded (lower case, no accents, single spaces): what makes
+    #: "Susana  Pérez" and "susana perez" the same person.
+    nom_key: Mapped[str] = mapped_column(String(255), default="", index=True)
+    email: Mapped[str] = mapped_column(String(255), default="", index=True)
+    uses: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

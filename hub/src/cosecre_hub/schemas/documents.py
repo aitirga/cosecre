@@ -7,12 +7,22 @@ An empty string always means "not known yet".
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..services.text_format import parse_amount, parse_date
+
+#: The only addresses accepted for an entry's responsible person.
+RESPONSABLE_DOMAIN = "@xtec.cat"
+RESPONSABLE_EMAIL = re.compile(r"[a-z0-9._%+-]+@xtec\.cat")
+
+
+def clean_name(text: str) -> str:
+    """Trim and collapse inner whitespace: "  Susana   Pérez " → "Susana Pérez"."""
+    return " ".join(text.split())
 
 TIPUS_DOCUMENT = (
     "Factura",
@@ -212,6 +222,8 @@ class DocumentFields(BaseModel):
     data_pagament: date | None = None
     subministrat: str = ""
     pressupost_afectat: str = ""
+    responsable_nom: str = ""
+    responsable_email: str = ""
     validat: bool = False
 
     model_config = ConfigDict(populate_by_name=True)
@@ -277,6 +289,8 @@ class DocumentUpdate(BaseModel):
     data_pagament: date | None = None
     subministrat: str | None = None
     pressupost_afectat: str | None = None
+    responsable_nom: str | None = None
+    responsable_email: str | None = None
     validat: bool | None = None
 
     model_config = ConfigDict(populate_by_name=True)
@@ -285,6 +299,21 @@ class DocumentUpdate(BaseModel):
     @classmethod
     def parse_import(cls, v: object) -> float | None:
         return parse_amount(v)
+
+    @field_validator("responsable_nom")
+    @classmethod
+    def check_nom(cls, v: str | None) -> str | None:
+        return None if v is None else clean_name(v)
+
+    @field_validator("responsable_email")
+    @classmethod
+    def check_email(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        email = v.strip().lower()
+        if email and not RESPONSABLE_EMAIL.fullmatch(email):
+            raise ValueError(f"L'email ha de ser una adreça {RESPONSABLE_DOMAIN}.")
+        return email
 
     @field_validator("data_factura", "data_pagament", mode="before")
     @classmethod
@@ -307,6 +336,19 @@ class DocumentUpdate(BaseModel):
         if value and value not in CHOICES[info.field_name]:
             raise ValueError(f"Valor no permès: {v}")
         return value
+
+
+class ResponsableRead(BaseModel):
+    nom: str
+    email: str
+
+
+class ResponsableSearch(BaseModel):
+    """Known people matching what is being typed, and — when what was typed is
+    not one of them but is one letter or two away — the one probably meant."""
+
+    matches: list[ResponsableRead] = Field(default_factory=list)
+    suggestion: ResponsableRead | None = None
 
 
 class JobRead(BaseModel):

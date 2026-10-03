@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from ...deps import get_workspace_setting
 from ...models import Document
 from ...schemas import SyncResult
+from ...services import people
 from ...services.sheets import (
     COLUMNS_BY_FIELD,
     GoogleSheetsService,
@@ -273,6 +274,8 @@ def pull(app, session: Session, *, references: list[str] | None, author: str) ->
             else:
                 document = entry._document
             changed = apply_values(document, row.values)
+            if {"responsable_nom", "responsable_email"} & set(changed):
+                people.remember(session, document.responsable_nom, document.responsable_email)
             confirm_hints(document, changed)
             if document.status not in IN_FLIGHT:
                 document.status = status_after_review(document)

@@ -81,6 +81,8 @@ REGISTER_COLUMNS: tuple[Column, ...] = (
     Column("data_pagament", "Data de pagament", "date", 110),
     Column("subministrat", "Subministrat", "choice", 130),
     Column("pressupost_afectat", "Compte", "choice", 170, aliases=("Pressupost afectat",)),
+    Column("responsable_nom", "Responsable", width=180),
+    Column("responsable_email", "Email responsable", width=200),
     Column("file_link", "Fitxer", "file", 120),
     Column("validat", "Validat", "bool", 80),
 )

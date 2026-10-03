@@ -38,7 +38,7 @@ export type FieldKey = Exclude<keyof DocumentFields, 'validat' | 'origen'>
 export interface FieldDef {
   key: FieldKey
   label: string
-  kind: 'text' | 'area' | 'date' | 'amount' | 'choice' | 'code'
+  kind: 'text' | 'area' | 'date' | 'amount' | 'choice' | 'code' | 'person' | 'email'
   options?: readonly string[]
   /** Read by the models, so a value may carry a review flag. */
   ai?: boolean
@@ -94,6 +94,14 @@ export const SECTIONS: FieldSection[] = [
     ],
   },
   {
+    id: 'responsable',
+    title: 'Responsable',
+    fields: [
+      { key: 'responsable_nom', label: 'Nom responsable', kind: 'person', placeholder: 'Nom i cognoms' },
+      { key: 'responsable_email', label: 'Email responsable', kind: 'email', wide: true, placeholder: 'nom@xtec.cat' },
+    ],
+  },
+  {
     id: 'pagament',
     title: 'Pagament',
     fields: [
@@ -110,6 +118,14 @@ export const SECTIONS: FieldSection[] = [
     ],
   },
 ]
+
+/** The only addresses accepted for a responsible person. */
+export const RESPONSABLE_DOMAIN = '@xtec.cat'
+const RESPONSABLE_EMAIL = /^[a-z0-9._%+-]+@xtec\.cat$/i
+
+export function isResponsableEmail(text: string): boolean {
+  return RESPONSABLE_EMAIL.test(text.trim())
+}
 
 // ── Formatting ──────────────────────────────────────────────────────────────
 

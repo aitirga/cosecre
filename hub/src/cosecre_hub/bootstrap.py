@@ -40,6 +40,8 @@ ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("workspace_settings", "migration_completed_at", "DATETIME"),
     ("documents", "ai_trace", "JSON"),
     ("documents", "sheet_snapshot", "JSON"),
+    ("documents", "responsable_nom", "VARCHAR(255) DEFAULT '' NOT NULL"),
+    ("documents", "responsable_email", "VARCHAR(255) DEFAULT '' NOT NULL"),
 ]
 
 #: Models that were once the default and should follow the configured one,

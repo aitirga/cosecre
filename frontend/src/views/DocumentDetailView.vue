@@ -4,13 +4,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { api, ApiError } from '../api/client'
-import type { DocumentRecord, DocumentUpdate } from '../api/types'
+import type { DocumentRecord, DocumentUpdate, Responsable } from '../api/types'
 import { useExtractionTracker } from '../composables/useExtractionTracker'
 import {
   SECTIONS,
   describeHint,
   formatAmount,
   formatDate,
+  isResponsableEmail,
   parseAmount,
   parseDate,
   type FieldDef,
@@ -19,6 +20,7 @@ import {
 import AiTrace from '../components/AiTrace.vue'
 import AppIcon from '../components/AppIcon.vue'
 import ImageViewer from '../components/ImageViewer.vue'
+import PersonInput from '../components/PersonInput.vue'
 import StatusPill from '../components/StatusPill.vue'
 
 const route = useRoute()
@@ -68,6 +70,8 @@ const errors = computed(() => {
       found[field.key] = 'Data no vàlida (dd/mm/aaaa)'
     } else if (field.kind === 'amount' && parseAmount(text) === undefined) {
       found[field.key] = 'No és un import'
+    } else if (field.kind === 'email' && text.trim() && !isResponsableEmail(text)) {
+      found[field.key] = 'Només s\'accepten adreces @xtec.cat'
     }
   }
   return found
@@ -82,7 +86,8 @@ function changes(): DocumentUpdate {
   const patch: Record<string, unknown> = {}
   for (const field of ALL_FIELDS) {
     const text = form[field.key]
-    let value: unknown = text.trim()
+    let value: unknown = field.kind === 'person' ? text.trim().replace(/\s+/g, ' ') : text.trim()
+    if (field.kind === 'email') value = (value as string).toLowerCase()
     if (field.kind === 'date') value = parseDate(text)
     else if (field.kind === 'amount') value = parseAmount(text)
     const before = current[field.key] ?? (field.kind === 'date' || field.kind === 'amount' ? null : '')
@@ -95,6 +100,13 @@ const isPaymentOther = computed(() => form.pagament === 'Altres' || Boolean(form
 
 function visibleFields(fields: FieldDef[]) {
   return fields.filter((field) => field.key !== 'pagament_observacions' || isPaymentOther.value)
+}
+
+/** Choosing a known person fills the other half of the pair when it is empty. */
+function pickResponsable(person: Responsable) {
+  if (person.nom && !form.responsable_nom.trim()) form.responsable_nom = person.nom
+  if (person.email && !form.responsable_email.trim()) form.responsable_email = person.email
+  dirty.value = true
 }
 
 // ── Hints ────────────────────────────────────────────────────────────────────
@@ -338,6 +350,14 @@ const SHEET_STATE = {
                       {{ form[field.key] }}
                     </option>
                   </select>
+                  <PersonInput
+                    v-else-if="field.kind === 'person' || field.kind === 'email'"
+                    v-model="form[field.key]"
+                    :field="field.kind === 'person' ? 'nom' : 'email'"
+                    :placeholder="field.placeholder"
+                    @update:model-value="dirty = true"
+                    @pick="pickResponsable"
+                  />
                   <textarea
                     v-else-if="field.kind === 'area'"
                     v-model="form[field.key]"
@@ -639,7 +659,8 @@ const SHEET_STATE = {
   background: #fffbf0;
 }
 
-.field.invalid .input {
+.field.invalid .input,
+.field.invalid :deep(.input) {
   border-color: var(--danger-600);
 }
 

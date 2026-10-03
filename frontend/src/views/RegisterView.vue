@@ -90,6 +90,7 @@ const visible = computed(() => {
       item.descripcio,
       item.descripcio_compra,
       item.cif_proveidor,
+      item.responsable_nom,
     ]
       .filter(Boolean)
       .some((field) => field.toLowerCase().includes(term))
