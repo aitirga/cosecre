@@ -7,6 +7,7 @@ import type { User } from '../api/types'
 import AppIcon from '../components/AppIcon.vue'
 import BackupsPanel from '../components/BackupsPanel.vue'
 import MigrationPanel from '../components/MigrationPanel.vue'
+import DuplicatesPanel from '../components/DuplicatesPanel.vue'
 import OriginalsPanel from '../components/OriginalsPanel.vue'
 import { useAuth } from '../composables/useAuth'
 import { usePlatform } from '../platform'
@@ -330,6 +331,8 @@ const isSelf = (user: User) => user.id === auth.user.value?.id
     <BackupsPanel />
 
     <OriginalsPanel />
+
+    <DuplicatesPanel />
 
     <!-- ── Team ───────────────────────────────────────────────────────── -->
     <section class="card">

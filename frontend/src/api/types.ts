@@ -470,3 +470,16 @@ export interface DocumentPayment {
   mes_dades: string
   import_value: number
 }
+
+/** A register entry taken out because another one said exactly the same. */
+export interface RemovedDuplicate {
+  reference: string
+  kept_reference: string
+  kept_exists: boolean
+  num_factura: string
+  proveidor: string
+  data_factura: string
+  import_value: number | null
+  source_file_name: string | null
+  removed_at: string
+}

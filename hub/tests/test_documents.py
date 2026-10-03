@@ -230,6 +230,9 @@ def test_a_row_deleted_in_the_sheet_is_kept_and_comes_back_when_saved(register):
 def test_a_cleared_tab_is_refilled_from_the_database(register):
     client, headers, sheet, _ = register
     references = [upload(client, headers) for _ in range(7)]
+    for index, reference in enumerate(references):
+        # Seven different invoices: identical ones would be folded into one.
+        client.patch(f"{RECORDS}/{reference}", headers=headers, json={"num_factura": f"F-{index}"})
     sheet.rows.clear()
     status = client.post(f"{RECORDS}/sync", headers=headers).json()
     assert status["waiting"] == 7  # shown, never acted on automatically

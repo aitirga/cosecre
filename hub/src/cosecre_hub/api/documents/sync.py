@@ -41,6 +41,7 @@ from ...services.sheets import (
     changed_fields,
     snapshot_values,
 )
+from .duplicates import remove_duplicates
 from .register import (
     IN_FLIGHT,
     apply_values,
@@ -186,9 +187,11 @@ def auto_sync(app, session: Session, *, force: bool = False) -> SyncResult:
     """Send app edits on, and count what is waiting for a person. Throttled."""
     service: GoogleSheetsService = app.state.sheet_service
     workspace = get_workspace_setting(session)
-    total = session.query(Document).count()
     if not service.is_ready(workspace):
-        return SyncResult(refreshed=total, sheet_configured=False)
+        with app.state.register_lock:
+            remove_duplicates(app, session, sheet_ready=False)
+        return SyncResult(refreshed=session.query(Document).count(), sheet_configured=False)
+    total = session.query(Document).count()
     now = time.monotonic()
     if not force and now - app.state.register_synced_at < SYNC_INTERVAL_SECONDS:
         return app.state.sheet_status or SyncResult(refreshed=total)
@@ -196,6 +199,7 @@ def auto_sync(app, session: Session, *, force: bool = False) -> SyncResult:
         return app.state.sheet_status or SyncResult(refreshed=total)
     try:
         app.state.register_synced_at = now
+        remove_duplicates(app, session, sheet_ready=True)
         _, _, rows, documents = _read(app, session)
         _baseline_agreeing(rows, documents)
         entries = compute_diff(rows, documents)

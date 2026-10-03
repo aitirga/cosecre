@@ -273,6 +273,27 @@ class Document(Base):
     upload: Mapped["Upload | None"] = relationship()
 
 
+class DuplicateRemoval(Base):
+    """A register entry taken out because another one said exactly the same.
+
+    The entry itself is gone from the database and the sheet; this keeps what it
+    said, which entry it repeated, and where its original file still is.
+    """
+
+    __tablename__ = "duplicate_removals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    reference: Mapped[str] = mapped_column(String(64), index=True)
+    kept_reference: Mapped[str] = mapped_column(String(64), index=True)
+    #: The entry's register values, as ``snapshot_values`` writes them.
+    values: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    source_file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    stored_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    drive_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    entry_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    removed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Responsable(Base):
     """A name/email pair someone has entered as an entry's responsible person.
 

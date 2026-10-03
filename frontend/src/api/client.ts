@@ -8,6 +8,7 @@ import { trackedFetch } from './loading'
  * are right and nobody calls it; in Electron the main process supplies both.
  */
 import type {
+  RemovedDuplicate,
   AuthTokens,
   CaixetaStatus,
   DocumentBrief,
@@ -530,6 +531,9 @@ export const api = {
   },
   downloadAllFiles(): Promise<void> {
     return saveFile(`${RECORDS}/files.zip`, 'cosecre-originals.zip')
+  },
+  getRemovedDuplicates() {
+    return request<RemovedDuplicate[]>('/documents/duplicates')
   },
 
   // ── Migration from the two old tabs ─────────────────────────────────────
