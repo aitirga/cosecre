@@ -30,6 +30,8 @@ class FakeSheets(GoogleSheetsService):
         self.legacy: dict[str, LegacyTab] = {}
         self.legacy_references: list[tuple[str, int, str]] = []
         self.drive: dict[str, dict[str, Any]] = {}
+        #: Files in Drive's bin, which an undo can bring back.
+        self.trash: dict[str, dict[str, Any]] = {}
         self.uploads = 0
         #: Tab title → rows, for ``read_tabs`` (the caixeta).
         self.tabs: dict[str, list[list[Any]]] = {}
@@ -117,6 +119,11 @@ class FakeSheets(GoogleSheetsService):
 
     def delete_drive_file(self, file_id):
         self.drive.pop(file_id, None)
+
+    def trash_drive_file(self, file_id, *, trashed=True):
+        source, target = (self.drive, self.trash) if trashed else (self.trash, self.drive)
+        if file_id in source:
+            target[file_id] = source.pop(file_id)
 
     def list_drive_files(self, folder_id, prefix):
         return []

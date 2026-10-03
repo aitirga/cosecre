@@ -482,4 +482,34 @@ export interface RemovedDuplicate {
   import_value: number | null
   source_file_name: string | null
   removed_at: string
+  /** The history action that removed it: undoing it restores the entry. */
+  action_id: number | null
+  restored_at: string | null
+}
+
+/** One thing someone did (or the hub did on its own), which can be undone. */
+export interface HistoryAction {
+  id: number
+  label: string
+  detail: string
+  kind: 'person' | 'auto'
+  state: 'done' | 'undone' | 'dropped'
+  user_name: string | null
+  mine: boolean
+  rows: number
+  created_at: string
+  done_at: string
+  undone_at: string | null
+}
+
+export interface HistoryState {
+  /** What Desfés would undo for me, and what Refés would redo. */
+  undo: HistoryAction | null
+  redo: HistoryAction | null
+  actions: HistoryAction[]
+}
+
+export interface ReplayResult {
+  action: HistoryAction
+  message: string
 }

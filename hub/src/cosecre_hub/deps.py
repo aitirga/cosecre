@@ -8,6 +8,7 @@ from .config import Settings
 from .models import User, WorkspaceSetting
 from .security import decode_access_token
 from .services.llm import LLMRegistry
+from .services import history
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -61,6 +62,9 @@ def get_current_user(
     # so it is checked on every request rather than only at sign-in.
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Aquest compte està desactivat.")
+    action = history.current()
+    if action is not None and action.user_id is None:
+        action.user_id = user.id
     return user
 
 

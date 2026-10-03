@@ -8,7 +8,9 @@ import { trackedFetch } from './loading'
  * are right and nobody calls it; in Electron the main process supplies both.
  */
 import type {
+  HistoryState,
   RemovedDuplicate,
+  ReplayResult,
   AuthTokens,
   CaixetaStatus,
   DocumentBrief,
@@ -345,8 +347,16 @@ export async function request<T>(path: string, init: RequestInit = {}, retry = t
     }
   }
 
+  const method = (init.method ?? 'GET').toUpperCase()
+  if (method !== 'GET' && response.ok && typeof window !== 'undefined') {
+    // Anything that changed something may be undone: the undo buttons listen.
+    window.dispatchEvent(new CustomEvent(CHANGED_EVENT, { detail: { path } }))
+  }
   return parseResponse<T>(response)
 }
+
+/** Fired after every successful request that changes something. */
+export const CHANGED_EVENT = 'cosecre:changed'
 
 function unreachableMessage(error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error)
@@ -531,6 +541,21 @@ export const api = {
   },
   downloadAllFiles(): Promise<void> {
     return saveFile(`${RECORDS}/files.zip`, 'cosecre-originals.zip')
+  },
+  getHistory(limit = 60) {
+    return request<HistoryState>(`/history?limit=${limit}`)
+  },
+  undoLast() {
+    return request<ReplayResult>('/history/undo', { method: 'POST' })
+  },
+  redoLast() {
+    return request<ReplayResult>('/history/redo', { method: 'POST' })
+  },
+  undoAction(id: number) {
+    return request<ReplayResult>(`/history/${id}/undo`, { method: 'POST' })
+  },
+  redoAction(id: number) {
+    return request<ReplayResult>(`/history/${id}/redo`, { method: 'POST' })
   },
   getRemovedDuplicates() {
     return request<RemovedDuplicate[]>('/documents/duplicates')

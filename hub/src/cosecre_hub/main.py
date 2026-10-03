@@ -24,6 +24,7 @@ from .services.classification import DocumentClassifier, JevClient
 from .services.llm import LLMRegistry
 from .services.sheets import GoogleSheetsService
 from .idle import ActivityMiddleware, IdleShutdown
+from .services import history
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,22 @@ async def backup_schedule(service: BackupService, interval_seconds: float = 600)
     while True:
         await asyncio.to_thread(service.run_if_due)
         await asyncio.sleep(interval_seconds)
+
+
+
+class HistoryMiddleware:
+    """Every request that changes something becomes one undoable action."""
+
+    def __init__(self, app, api_prefix: str):
+        self.app = app
+        self.api_prefix = api_prefix
+
+    async def __call__(self, scope, receive, send):
+        token = history.begin_request(scope, self.api_prefix)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            history.end_request(token)
 
 
 def create_app(
@@ -163,6 +180,7 @@ def create_app(
     )
     if idle is not None:
         app.add_middleware(ActivityMiddleware, idle=idle)
+    app.add_middleware(HistoryMiddleware, api_prefix=settings.api_prefix)
     app.include_router(api_router, prefix=settings.api_prefix)
 
     @app.get("/healthz", tags=["meta"])

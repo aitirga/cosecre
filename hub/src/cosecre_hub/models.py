@@ -292,6 +292,10 @@ class DuplicateRemoval(Base):
     drive_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     entry_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     removed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    #: The history action that removed it; undoing that action restores it.
+    action_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    #: Set while the entry is back: a restored entry is never removed again.
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Responsable(Base):
@@ -469,3 +473,45 @@ class MatchRun(Base):
     )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# ── History: undo and redo ───────────────────────────────────────────────────
+
+
+class HistoryAction(Base):
+    """One thing someone did — an edit, a deletion, a confirmed payment — or the
+    hub did on its own, with every row it changed in :class:`HistoryChange`."""
+
+    __tablename__ = "history_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    label: Mapped[str] = mapped_column(String(255), default="")
+    #: ``person`` for a request, ``auto`` for what the hub does by itself.
+    kind: Mapped[str] = mapped_column(String(16), default="person")
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    #: ``done`` or ``undone``.
+    state: Mapped[str] = mapped_column(String(16), default="done", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    #: When it last took effect: created, or redone. Undo picks the latest.
+    done_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class HistoryChange(Base):
+    """One row inserted, updated or deleted by an action: its values before and after."""
+
+    __tablename__ = "history_changes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    action_id: Mapped[int] = mapped_column(
+        ForeignKey("history_actions.id", ondelete="CASCADE"), index=True
+    )
+    table_name: Mapped[str] = mapped_column(String(64))
+    #: ``insert``, ``update`` or ``delete``.
+    op: Mapped[str] = mapped_column(String(8))
+    pk: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    #: Only the columns that changed, for an update; the whole row otherwise.
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

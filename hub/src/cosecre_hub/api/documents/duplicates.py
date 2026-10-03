@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from ...deps import get_current_user, get_db, get_workspace_setting
 from ...models import Document, DuplicateRemoval, PaymentMatch, User
+from ...services import history
 from ...services.sheets import GoogleSheetsService, SheetDocumentNotFound
 from .register import IN_FLIGHT, document_snapshot
 
@@ -64,10 +65,12 @@ def _matches(document: Document) -> list[PaymentMatch]:
     return session.query(PaymentMatch).filter(PaymentMatch.document_id == document.id).all()
 
 
-def find_duplicates(documents: list[Document]) -> list[tuple[Document, Document]]:
-    """``(duplicate, kept)`` pairs, oldest-first within each group."""
+def find_duplicates(documents: list[Document], exempt: set[str] = frozenset()) -> list[tuple[Document, Document]]:
+    """``(duplicate, kept)`` pairs. Entries someone restored (``exempt``) never count."""
     groups: dict[tuple[Any, ...], list[Document]] = {}
     for document in documents:
+        if document.internal_doc_number in exempt:
+            continue
         key = _key(document)
         if key is not None:
             groups.setdefault(key, []).append(document)
@@ -104,7 +107,11 @@ def remove_duplicates(app, session: Session, *, sheet_ready: bool) -> int:
     Returns how many entries went. An entry whose sheet row cannot be removed
     is left alone until the next pass, so the two never disagree.
     """
-    pairs = find_duplicates(session.query(Document).all())
+    exempt = {
+        reference
+        for (reference,) in session.query(DuplicateRemoval.reference).filter(DuplicateRemoval.restored_at.isnot(None))
+    }
+    pairs = find_duplicates(session.query(Document).all(), exempt)
     if not pairs:
         return 0
     try:
@@ -121,7 +128,16 @@ def remove_duplicates(app, session: Session, *, sheet_ready: bool) -> int:
     workspace = get_workspace_setting(session) if sheet_ready else None
     removed = 0
     for duplicate, kept in pairs:
-        reference = duplicate.internal_doc_number
+        if _remove_one(session, service, workspace, duplicate, kept):
+            removed += 1
+    return removed
+
+
+def _remove_one(session: Session, service, workspace, duplicate: Document, kept: Document) -> bool:
+    """One removal is one history action, so «Restaura» brings back exactly it."""
+    reference = duplicate.internal_doc_number
+    # The history names the invoice itself, from the rows the action touched.
+    with history.action("Duplicat retirat") as action:
         if workspace is not None and duplicate.sheet_state != "removed":
             try:
                 service.delete_row(workspace, service.find_row(workspace, reference))
@@ -129,9 +145,9 @@ def remove_duplicates(app, session: Session, *, sheet_ready: bool) -> int:
                 pass
             except Exception:  # noqa: BLE001
                 logger.warning("Could not remove the sheet row of duplicate %s", reference, exc_info=True)
-                continue
+                return False
         upload = duplicate.upload
-        session.add(DuplicateRemoval(
+        log = DuplicateRemoval(
             reference=reference,
             kept_reference=kept.internal_doc_number,
             values=document_snapshot(duplicate),
@@ -139,14 +155,16 @@ def remove_duplicates(app, session: Session, *, sheet_ready: bool) -> int:
             stored_path=upload.stored_path if upload else None,
             drive_file_id=duplicate.drive_file_id,
             entry_created_at=duplicate.created_at,
-        ))
+        )
+        session.add(log)
         _move_matches(session, duplicate, kept)
         # The upload (and its file) stays: only the register entry goes.
         session.delete(duplicate)
         session.commit()
-        removed += 1
-        logger.info("Removed %s, an exact duplicate of %s", reference, kept.internal_doc_number)
-    return removed
+    log.action_id = action.id
+    session.commit()
+    logger.info("Removed %s, an exact duplicate of %s", reference, kept.internal_doc_number)
+    return True
 
 
 # ── What Configuració shows ──────────────────────────────────────────────────
@@ -164,6 +182,8 @@ class DuplicateRemovalRead(BaseModel):
     import_value: float | None
     source_file_name: str | None
     removed_at: Any
+    action_id: int | None
+    restored_at: Any
 
 
 @router.get("", response_model=list[DuplicateRemovalRead])
@@ -186,6 +206,8 @@ def list_removed(session: Session = Depends(get_db), _: User = Depends(get_curre
             import_value=row.values.get("import_value"),
             source_file_name=row.source_file_name,
             removed_at=row.removed_at,
+            action_id=row.action_id,
+            restored_at=row.restored_at,
         )
         for row in rows
     ]

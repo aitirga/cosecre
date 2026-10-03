@@ -270,8 +270,9 @@ def delete_statement(
             other = session.get(BankMovement, movement.linked_movement_id)
             if other is not None:
                 other.linked_movement_id = None
-    if statement.stored_path:
-        Path(statement.stored_path).unlink(missing_ok=True)
+    # The file stays, so undoing this brings the statement back whole.
+    for movement in list(statement.movements):
+        session.delete(movement)
     session.delete(statement)
     session.commit()
 
@@ -295,7 +296,8 @@ def update_movement(
         if movement.match_status == "confirmed":
             raise HTTPException(status_code=409, detail="Aquest moviment ja està justificat.")
         movement.categoria = payload.categoria
-        session.query(PaymentMatch).filter(PaymentMatch.movement_id == movement.id).delete()
+        for match in session.query(PaymentMatch).filter(PaymentMatch.movement_id == movement.id).all():
+            session.delete(match)
         movement.match_status = "unmatched" if payload.categoria == PAYMENT else "not_applicable"
     session.commit()
     session.refresh(movement)

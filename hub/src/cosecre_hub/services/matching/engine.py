@@ -325,9 +325,11 @@ def match_movement(
     documents: list[Document] | None = None,
 ) -> Outcome:
     """Replace a movement's open proposals with fresh ones. Commits."""
-    session.query(PaymentMatch).filter(
+    for stale in session.query(PaymentMatch).filter(
         PaymentMatch.movement_id == movement.id, PaymentMatch.status.in_(["proposed", "alternative"])
-    ).delete(synchronize_session=False)
+    ).all():
+        session.delete(stale)
+    session.flush()
     rejected = {
         m.document_id
         for m in session.query(PaymentMatch).filter(

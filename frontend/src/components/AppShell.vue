@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
 import { useAuth } from '../composables/useAuth'
+import { useHistory, useHistoryShortcuts } from '../composables/useHistory'
 import { useModules } from '../modules/registry'
 import { usePlatform } from '../platform'
 import AppIcon from './AppIcon.vue'
@@ -16,6 +17,20 @@ const platform = usePlatform()
 const { navTree, footNav, homeRoute } = useModules()
 
 const menuOpen = ref(false)
+
+const { undoTarget, redoTarget, undo, redo, busy, notice } = useHistory()
+useHistoryShortcuts()
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+const undoTitle = computed(() =>
+  undoTarget.value
+    ? `Desfés: ${undoTarget.value.label}${undoTarget.value.detail ? ` · ${undoTarget.value.detail}` : ''} (${isMac ? '⌘Z' : 'Ctrl+Z'})`
+    : 'No hi ha res per desfer',
+)
+const redoTitle = computed(() =>
+  redoTarget.value
+    ? `Refés: ${redoTarget.value.label}${redoTarget.value.detail ? ` · ${redoTarget.value.detail}` : ''} (${isMac ? '⇧⌘Z' : 'Ctrl+Y'})`
+    : 'No hi ha res per refer',
+)
 
 const displayName = computed(
   () => auth.user.value?.display_name || auth.user.value?.email || 'Sessió iniciada',
@@ -43,10 +58,20 @@ async function handleLogout() {
 <template>
   <div class="shell">
     <aside class="sidebar" :class="{ open: menuOpen }">
-      <RouterLink class="brand" :to="homeRoute" @click="menuOpen = false">
-        <BrandMark :size="24" />
-        <span class="brand-name">Cosecre</span>
-      </RouterLink>
+      <div class="brand-row">
+        <RouterLink class="brand" :to="homeRoute" @click="menuOpen = false">
+          <BrandMark :size="24" />
+          <span class="brand-name">Cosecre</span>
+        </RouterLink>
+        <div class="undo-redo">
+          <button class="btn btn-ghost btn-icon" type="button" :title="undoTitle" :aria-label="undoTitle" :disabled="!undoTarget || busy" @click="undo()">
+            <AppIcon name="undo" />
+          </button>
+          <button class="btn btn-ghost btn-icon" type="button" :title="redoTitle" :aria-label="redoTitle" :disabled="!redoTarget || busy" @click="redo()">
+            <AppIcon name="redo" />
+          </button>
+        </div>
+      </div>
 
       <nav class="nav" aria-label="Seccions">
         <NavTree :nodes="navTree" @navigate="menuOpen = false" />
@@ -84,9 +109,22 @@ async function handleLogout() {
       </button>
       <BrandMark :size="20" />
       <span class="brand-name">Cosecre</span>
+      <div class="undo-redo">
+        <button class="btn btn-ghost btn-icon" type="button" :title="undoTitle" :aria-label="undoTitle" :disabled="!undoTarget || busy" @click="undo()">
+          <AppIcon name="undo" />
+        </button>
+        <button class="btn btn-ghost btn-icon" type="button" :title="redoTitle" :aria-label="redoTitle" :disabled="!redoTarget || busy" @click="redo()">
+          <AppIcon name="redo" />
+        </button>
+      </div>
     </header>
 
     <div v-if="menuOpen" class="scrim" @click="menuOpen = false" />
+
+    <p v-if="notice" class="history-notice" :class="notice.tone" role="status">
+      <AppIcon :name="notice.tone === 'ok' ? 'check' : 'alert'" :size="14" />
+      <span>{{ notice.text }}</span>
+    </p>
 
     <main class="content">
       <RouterView :key="route.fullPath" />
@@ -117,11 +155,51 @@ async function handleLogout() {
   border-right: 1px solid var(--line);
 }
 
+.brand-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+}
+
 .brand {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 8px 14px;
+}
+
+.undo-redo {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.undo-redo .btn:disabled {
+  opacity: 0.35;
+}
+
+.history-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 60;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(92vw, 560px);
+  margin: 0;
+  padding: 7px 12px;
+  border-radius: var(--r-md);
+  background: var(--ink-900, #1c1917);
+  color: #fff;
+  font-size: var(--text-sm);
+  box-shadow: var(--shadow-lg);
+}
+
+.history-notice.error {
+  background: var(--danger-700);
 }
 
 .brand-name {

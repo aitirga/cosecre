@@ -1028,6 +1028,11 @@ class GoogleSheetsService:
         return meta.get("mimeType", "application/octet-stream")
 
     @serialized
+    def trash_drive_file(self, file_id: str, *, trashed: bool = True) -> None:
+        """To the bin (or back): unlike a deletion, an undo can bring it back."""
+        self._files().update(fileId=file_id, body={"trashed": trashed}, supportsAllDrives=True).execute()
+
+    @serialized
     def delete_drive_file(self, file_id: str) -> None:
         self._files().delete(fileId=file_id, supportsAllDrives=True).execute()
 

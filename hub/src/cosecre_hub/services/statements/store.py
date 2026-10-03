@@ -139,9 +139,10 @@ def _refresh(session: Session, movement: BankMovement, item) -> None:
         setattr(movement, name, getattr(item, name))
     if movement.match_status == "confirmed":
         return  # a person's decision outlives a typo fix in the sheet
-    session.query(PaymentMatch).filter(
+    for match in session.query(PaymentMatch).filter(
         PaymentMatch.movement_id == movement.id, PaymentMatch.status != "confirmed"
-    ).delete()
+    ).all():
+        session.delete(match)
     movement.match_status = _initial_status(movement.categoria)
 
 

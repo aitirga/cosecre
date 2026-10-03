@@ -376,7 +376,7 @@ def delete_document(
 
     if document.drive_file_id and service.drive_ready:
         try:
-            service.delete_drive_file(document.drive_file_id)
+            service.trash_drive_file(document.drive_file_id)
         except Exception:  # noqa: BLE001
             logger.warning("Could not remove Drive file for %s", reference, exc_info=True)
 

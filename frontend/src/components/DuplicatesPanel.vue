@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { RouterLink } from 'vue-router'
 
 import { api } from '../api/client'
+import { useHistory } from '../composables/useHistory'
 import { formatAmount, formatDate } from '../document-fields'
 import AppIcon from './AppIcon.vue'
 
@@ -13,6 +14,8 @@ import AppIcon from './AppIcon.vue'
  */
 const removedQuery = useQuery({ queryKey: ['removed-duplicates'], queryFn: api.getRemovedDuplicates })
 const removed = computed(() => removedQuery.data.value ?? [])
+// «Restaura» undoes the action that removed it; «Torna a retirar» redoes it.
+const { undo, redo, busy } = useHistory()
 
 function when(iso: string) {
   return new Date(iso).toLocaleString('ca-ES', { dateStyle: 'short', timeStyle: 'short' })
@@ -27,7 +30,7 @@ function when(iso: string) {
         <p class="hint">
           Quan dos documents del registre diuen exactament el mateix, se’n treu un automàticament (del registre i del
           full). Es conserva el validat o el que ja té el pagament justificat; l’original del retirat no s’esborra i
-          abans es fa una còpia de seguretat.
+          abans es fa una còpia de seguretat. Si n’hi ha un que no ho era, restaura’l: ja no es tornarà a treure.
         </p>
       </div>
     </div>
@@ -46,13 +49,17 @@ function when(iso: string) {
               <th>Data</th>
               <th class="num">Import</th>
               <th>Es conserva</th>
+              <th />
             </tr>
           </thead>
           <tbody>
             <tr v-for="row in removed" :key="row.reference">
-              <td class="mono muted">{{ when(row.removed_at) }}</td>
+              <td class="mono muted">
+                {{ when(row.removed_at) }}
+                <span v-if="row.restored_at" class="tag">Restaurat</span>
+              </td>
               <td>
-                <strong>{{ row.num_factura }}</strong>
+                <strong class="nowrap">{{ row.num_factura }}</strong>
                 <span class="mono muted ref">{{ row.reference }}</span>
               </td>
               <td>{{ row.proveidor }}</td>
@@ -66,6 +73,23 @@ function when(iso: string) {
                   {{ row.kept_reference }}
                 </RouterLink>
                 <span v-else class="muted" title="Aquest document ja no és al registre">{{ row.kept_reference }}</span>
+              </td>
+              <td class="actions">
+                <template v-if="row.action_id">
+                  <button v-if="!row.restored_at" class="btn btn-ghost btn-sm" type="button" :disabled="busy" @click="undo(row.action_id)">
+                    <AppIcon name="undo" :size="13" /> Restaura
+                  </button>
+                  <button
+                    v-else
+                    class="btn btn-ghost btn-sm"
+                    type="button"
+                    title="Torna a retirar-lo"
+                    :disabled="busy"
+                    @click="redo(row.action_id)"
+                  >
+                    <AppIcon name="redo" :size="13" /> Retira
+                  </button>
+                </template>
               </td>
             </tr>
           </tbody>
@@ -91,5 +115,24 @@ function when(iso: string) {
 
 .num {
   text-align: right;
+}
+
+.actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.tag {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs);
+  color: var(--ink-500);
 }
 </style>
