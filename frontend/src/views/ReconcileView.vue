@@ -344,10 +344,6 @@ function onKey(event: KeyboardEvent) {
     peekOpen.value = false
     return
   }
-  if ((event.key === 'p' || event.key === 'P') && hoverCard.value) {
-    pin(hoverCard.value)
-    return
-  }
   if (event.key === 'o' && peekDoc.value) {
     showOriginal(peekDoc.value)
     return
@@ -433,14 +429,11 @@ function thumbLabel(doc: DocumentBrief) {
   return entry.type === 'application/pdf' ? 'PDF' : 'Fitxer'
 }
 
-// ── Detail cards: hover a line for all it carries, pin to keep it ──────────────
+// ── Detail cards: a line's «Detalls» button opens all it carries ──────────────
 
 type Card = { movement: Movement; x: number; y: number }
 const CARD_W = 300
-const hoverCard = ref<Card | null>(null)
 const pinned = ref<Card[]>([])
-let hoverTimer: number | undefined
-let leaveTimer: number | undefined
 
 /** Beside the line, kept on screen and clear of the docked original. */
 function cardAt(rect: DOMRect): { x: number; y: number } {
@@ -449,31 +442,20 @@ function cardAt(rect: DOMRect): { x: number; y: number } {
   return { x, y: Math.min(Math.max(8, rect.top - 4), window.innerHeight - 320) }
 }
 
-function rowEnter(m: Movement, event: MouseEvent) {
-  window.clearTimeout(leaveTimer)
-  window.clearTimeout(hoverTimer)
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  // Slow to appear, quick to follow once one is showing.
-  hoverTimer = window.setTimeout(
-    () => {
-      hoverCard.value = pinned.value.some((c) => c.movement.id === m.id) ? null : { movement: m, ...cardAt(rect) }
-    },
-    hoverCard.value ? 60 : 450,
-  )
-}
-
-function rowLeave() {
-  window.clearTimeout(hoverTimer)
-  leaveTimer = window.setTimeout(() => (hoverCard.value = null), 200)
-}
-
-function cardEnter() {
-  window.clearTimeout(leaveTimer)
+/** Open a line's card beside it, or close it if it is already open. */
+function toggleDetails(m: Movement, event: MouseEvent) {
+  const existing = pinned.value.find((c) => c.movement.id === m.id)
+  if (existing) return unpin(existing)
+  const row = (event.currentTarget as HTMLElement).closest('li') ?? (event.currentTarget as HTMLElement)
+  pin({ movement: m, ...cardAt(row.getBoundingClientRect()) })
 }
 
 function pin(card: Card) {
   if (!pinned.value.some((c) => c.movement.id === card.movement.id)) pinned.value.push({ ...card })
-  hoverCard.value = null
+}
+
+function hasDetails(m: Movement) {
+  return pinned.value.some((c) => c.movement.id === m.id)
 }
 
 function unpin(card: Card) {
@@ -684,8 +666,6 @@ function showOriginal(doc: DocumentBrief) {
               role="option"
               :aria-selected="m.id === selectedId"
               @click="selectedId = m.id"
-              @mouseenter="rowEnter(m, $event)"
-              @mouseleave="rowLeave"
             >
               <span class="m-date">
                 <span class="mono">{{ formatDate(m.data) }}</span>
@@ -708,6 +688,16 @@ function showOriginal(doc: DocumentBrief) {
                 </span>
                 <span v-else class="state-plain">{{ STATUS_LABEL[m.match_status] }}</span>
               </span>
+              <button
+                class="btn btn-ghost btn-sm m-details"
+                :class="{ on: hasDetails(m) }"
+                type="button"
+                title="Tots els detalls del moviment"
+                :aria-pressed="hasDetails(m)"
+                @click.stop="toggleDetails(m, $event)"
+              >
+                <AppIcon name="info" :size="13" /> Detalls
+              </button>
             </li>
           </ul>
 
@@ -723,13 +713,21 @@ function showOriginal(doc: DocumentBrief) {
                 class="movement band-none"
                 :class="{ selected: m.id === selectedId }"
                 @click="selectedId = m.id"
-                @mouseenter="rowEnter(m, $event)"
-                @mouseleave="rowLeave"
               >
                 <span class="m-date mono">{{ formatDate(m.data) }}</span>
                 <span class="m-text"><span class="truncate">{{ m.concepte }}</span></span>
                 <span class="m-amount num">{{ formatAmount(m.import_value) }}</span>
                 <span class="m-state state-plain">{{ CATEGORIA_LABEL[m.categoria] }}</span>
+                <button
+                  class="btn btn-ghost btn-sm m-details"
+                  :class="{ on: hasDetails(m) }"
+                  type="button"
+                  title="Tots els detalls del moviment"
+                  :aria-pressed="hasDetails(m)"
+                  @click.stop="toggleDetails(m, $event)"
+                >
+                  <AppIcon name="info" :size="13" /> Detalls
+                </button>
               </li>
             </ul>
           </div>
@@ -996,16 +994,6 @@ function showOriginal(doc: DocumentBrief) {
       pinned
       @close="unpin(card)"
       @move="(x, y) => Object.assign(card, { x, y })"
-    />
-    <MovementCard
-      v-if="hoverCard"
-      :movement="hoverCard.movement"
-      :x="hoverCard.x"
-      :y="hoverCard.y"
-      :pinned="false"
-      @enter="cardEnter"
-      @leave="rowLeave"
-      @pin="hoverCard && pin(hoverCard)"
     />
 
     <DocumentPeek
@@ -1390,7 +1378,7 @@ function showOriginal(doc: DocumentBrief) {
 
 .movement {
   display: grid;
-  grid-template-columns: 74px minmax(0, 1fr) auto 92px;
+  grid-template-columns: 74px minmax(0, 1fr) auto 92px auto;
   align-items: center;
   gap: 10px;
   padding: 6px 8px 6px 10px;
@@ -1446,6 +1434,15 @@ function showOriginal(doc: DocumentBrief) {
 
 .m-state {
   justify-self: end;
+}
+
+.m-details {
+  color: var(--ink-500);
+}
+
+.m-details.on {
+  background: var(--accent-100);
+  color: var(--accent-700, var(--ink-900));
 }
 
 .state-confirmed {
@@ -1821,8 +1818,13 @@ function showOriginal(doc: DocumentBrief) {
 
 @container (max-width: 440px) {
   .movement {
-    grid-template-columns: 70px minmax(0, 1fr) auto;
+    grid-template-columns: 70px minmax(0, 1fr) auto auto;
     gap: 2px 8px;
+  }
+
+  .m-details {
+    grid-column: 4;
+    grid-row: 1 / span 2;
   }
 
   .m-date {

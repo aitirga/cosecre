@@ -8,8 +8,8 @@ import AppIcon from './AppIcon.vue'
 
 /**
  * Everything a statement line carries, floating beside it. The list keeps to
- * what decides a match; this is where the rest lives. Hovering shows it,
- * pinning keeps it — and a pinned card can be dragged out of the way.
+ * what decides a match; this is where the rest lives. A line's «Detalls»
+ * button opens it, and it can be dragged out of the way.
  */
 const props = defineProps<{ movement: Movement; x: number; y: number; pinned: boolean }>()
 const emit = defineEmits<{
