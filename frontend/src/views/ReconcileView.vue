@@ -261,7 +261,43 @@ const candidates = computed(() => [...groups(['proposed']).slice(0, 1), ...group
 const focusKey = ref<number | null>(null)
 const viewed = computed(() => candidates.value.find((g) => g.key === focusKey.value) ?? lead.value)
 const viewedMatch = computed(() => viewed.value?.matches[0] ?? null)
-const alternatives = computed(() => candidates.value.filter((g) => g !== viewed.value))
+// Groups are rebuilt on every read, so they are told apart by key, never by identity.
+const viewingLead = computed(() => !!viewed.value && viewed.value.key === lead.value?.key)
+const alternatives = computed(() => candidates.value.filter((g) => g.key !== viewed.value?.key))
+
+/** Field by field: what the bank line says beside what the register entry says. */
+const comparison = computed(() => {
+  const m = detail.value
+  const group = viewed.value
+  const match = viewedMatch.value
+  if (!m || !group || !match) return []
+  const docs = group.matches.map((x) => x.document)
+  const join = (pick: (d: DocumentBrief) => string | null | undefined) =>
+    [...new Set(docs.map(pick).filter((v): v is string => !!v))].join(' + ')
+  const amounts = docs.filter((d) => d.import_value != null)
+  const days = signalText('date', match).replace(/^Data\s*/, '')
+  return [
+    { key: 'amount', label: 'Import', bank: formatAmount(Math.abs(m.import_value)),
+      reg: amounts.length ? formatAmount(amounts.reduce((sum, d) => sum + (d.import_value ?? 0), 0)) : '', note: '' },
+    { key: 'date', label: 'Data', bank: formatDate(m.data), reg: join((d) => formatDate(d.data_factura)),
+      note: days },
+    { key: 'number', label: 'Núm. factura', bank: m.num_factura_hint, reg: join((d) => d.num_factura), note: '' },
+    { key: 'cif', label: 'CIF', bank: m.cif_hint, reg: join((d) => d.cif_proveidor), note: '' },
+    { key: 'iban', label: 'IBAN', bank: m.iban_hint, reg: join((d) => d.compte_corrent), note: '' },
+    { key: 'name', label: 'Nom', bank: m.concepte, reg: join((d) => d.proveidor), note: '' },
+  ]
+    .filter((row) => row.bank || row.reg)
+    // One side blank is a gap in the data, not a disagreement.
+    .map((row) => ({ ...row, tone: row.bank && row.reg ? signalTone(match.signals[row.key]) : 'missing' }))
+})
+
+const MARK: Record<string, string> = { on: '✓', part: '≈', off: '≠', missing: '·' }
+const MARK_TITLE: Record<string, string> = {
+  on: 'Coincideix',
+  part: 'Coincideix en part',
+  off: 'No coincideix',
+  missing: 'Només un dels dos ho diu',
+}
 
 function step(offset: number) {
   const list = visible.value
@@ -380,8 +416,6 @@ function signalText(key: string, match: PaymentMatch) {
   }
   return SIGNAL_LABEL[key] ?? key
 }
-
-const SIGNALS = ['amount', 'number', 'cif', 'iban', 'name', 'date']
 
 function pct(value: number | undefined) {
   return value == null ? '—' : `${Math.round(value * 100)} %`
@@ -739,7 +773,10 @@ function showOriginal(doc: DocumentBrief) {
           <p v-if="!selectedId" class="empty">Tria un moviment.</p>
           <p v-else-if="!detail" class="empty">Carregant…</p>
           <template v-else>
-            <div class="mv">
+            <div class="mv side-bank">
+              <div class="side-label">
+                <AppIcon name="bank" :size="13" /> Extracte <span class="side-sub">· {{ detail.compte }}</span>
+              </div>
               <div class="mv-top">
                 <span class="mv-amount" :class="{ in: detail.import_value > 0 }">{{ formatAmount(detail.import_value) }}</span>
                 <span class="mv-date mono">
@@ -815,7 +852,7 @@ function showOriginal(doc: DocumentBrief) {
               <header class="proposal-head">
                 <span class="big">{{ viewed.confidence }}</span>
                 <span class="band-label">{{ BAND_LABEL[band(viewed.confidence)] }}</span>
-                <span v-if="viewed === lead" class="decided muted">{{ DECIDED_LABEL[viewedMatch?.decided_by ?? ''] ?? viewedMatch?.decided_by }}</span>
+                <span v-if="viewingLead" class="decided muted">{{ DECIDED_LABEL[viewedMatch?.decided_by ?? ''] ?? viewedMatch?.decided_by }}</span>
                 <template v-else>
                   <span class="decided muted">{{ lead ? 'Alternativa' : 'Candidata' }}</span>
                   <button class="btn btn-ghost btn-sm back" type="button" @click="focusKey = null">{{ lead ? 'Torna a la proposta' : 'Tanca' }}</button>
@@ -824,41 +861,53 @@ function showOriginal(doc: DocumentBrief) {
               <p v-if="viewed.matches.length > 1" class="set-note">
                 Un sol pagament de {{ viewed.matches.length }} factures que sumen l'import.
               </p>
+              <div class="side-reg">
+                <div class="side-label">
+                  <AppIcon name="invoice" :size="13" /> Registre
+                  <span class="side-sub">· {{ viewed.matches.length > 1 ? `${viewed.matches.length} factures` : viewingLead ? 'factura proposada' : 'factura candidata' }}</span>
+                </div>
               <article v-for="match in viewed.matches" :key="match.id" class="invoice">
-                <RouterLink class="inv-main" :to="{ name: 'document', params: { internalDocNumber: match.document.num_doc_intern } }">
-                  <strong>{{ match.document.num_factura || 'Sense número' }}</strong>
-                  <span>{{ match.document.proveidor || 'Proveïdor desconegut' }}</span>
-                </RouterLink>
-                <span class="inv-meta mono">
-                  {{ formatDate(match.document.data_factura) }} · {{ formatAmount(match.document.import_value) }}
-                </span>
-                <span class="inv-meta muted">
-                  {{ match.document.cif_proveidor || 'sense CIF' }}
-                  <template v-if="match.document.compte"> · {{ match.document.compte }}</template>
-                  <template v-if="match.document.metode_pagament"> · {{ match.document.metode_pagament }}</template>
-                </span>
-                <button
-                  v-if="match.document.file_url"
-                  class="thumb"
-                  :class="{ on: peekOpen && peekDoc?.num_doc_intern === match.document.num_doc_intern }"
-                  type="button"
-                  title="Mostra l'original (O)"
-                  @click="showOriginal(match.document)"
-                >
-                  <img v-if="thumb(match.document)" :src="thumb(match.document) as string" alt="" />
-                  <span v-else class="thumb-file">{{ thumbLabel(match.document) }}</span>
-                </button>
-              </article>
-              <div class="signals">
-                <span
-                  v-for="key in SIGNALS"
-                  :key="key"
-                  class="signal"
-                  :class="signalTone(viewedMatch?.signals[key])"
-                >
-                  {{ signalText(key, viewedMatch as PaymentMatch) }}
-                  {{ signalTone(viewedMatch?.signals[key]) === 'on' ? '✓' : signalTone(viewedMatch?.signals[key]) === 'part' ? '~' : '—' }}
-                </span>
+                  <RouterLink class="inv-main" :to="{ name: 'document', params: { internalDocNumber: match.document.num_doc_intern } }">
+                    <strong>{{ match.document.num_factura || 'Sense número' }}</strong>
+                    <span>{{ match.document.proveidor || 'Proveïdor desconegut' }}</span>
+                  </RouterLink>
+                  <span class="inv-meta mono">
+                    {{ formatDate(match.document.data_factura) }} · {{ formatAmount(match.document.import_value) }}
+                  </span>
+                  <span class="inv-meta muted">
+                    {{ match.document.cif_proveidor || 'sense CIF' }}
+                    <template v-if="match.document.compte"> · {{ match.document.compte }}</template>
+                    <template v-if="match.document.metode_pagament"> · {{ match.document.metode_pagament }}</template>
+                  </span>
+                  <button
+                    v-if="match.document.file_url"
+                    class="thumb"
+                    :class="{ on: peekOpen && peekDoc?.num_doc_intern === match.document.num_doc_intern }"
+                    type="button"
+                    title="Mostra l'original (O)"
+                    @click="showOriginal(match.document)"
+                  >
+                    <img v-if="thumb(match.document)" :src="thumb(match.document) as string" alt="" />
+                    <span v-else class="thumb-file">{{ thumbLabel(match.document) }}</span>
+                  </button>
+                </article>
+              </div>
+
+              <div class="compare" role="table" aria-label="Comparació entre l'extracte i el registre">
+                <div class="cmp-row cmp-head" role="row">
+                  <span role="columnheader" />
+                  <span class="cmp-bank" role="columnheader"><AppIcon name="bank" :size="12" /> Extracte</span>
+                  <span role="columnheader" />
+                  <span class="cmp-reg" role="columnheader"><AppIcon name="invoice" :size="12" /> Registre</span>
+                </div>
+                <div v-for="row in comparison" :key="row.key" class="cmp-row" :class="row.tone" role="row">
+                  <span class="cmp-label" role="rowheader">{{ row.label }}</span>
+                  <span class="cmp-val cmp-bank" :title="row.bank" role="cell">{{ row.bank || '—' }}</span>
+                  <span class="cmp-mark" :title="MARK_TITLE[row.tone]" role="cell">{{ MARK[row.tone] }}</span>
+                  <span class="cmp-val cmp-reg" :title="row.reg" role="cell">
+                    {{ row.reg || '—' }}<span v-if="row.note" class="cmp-note">{{ row.note }}</span>
+                  </span>
+                </div>
               </div>
               <p v-if="viewedMatch?.reason" class="reason">{{ viewedMatch.reason }}</p>
               <details v-if="viewedMatch?.ai_trace?.openai" class="trace">
@@ -936,7 +985,7 @@ function showOriginal(doc: DocumentBrief) {
 
             <!-- Alternatives -->
             <section v-if="alternatives.length && !confirmed" class="alternatives">
-              <h3 class="section-title">{{ viewed === lead ? 'Altres candidates' : 'Candidates' }}</h3>
+              <h3 class="section-title">{{ viewingLead ? 'Altres candidates' : 'Candidates' }}</h3>
               <article v-for="group in alternatives" :key="group.key" class="alt">
                 <span class="pill" :class="band(group.confidence)"><i class="dot" :class="band(group.confidence)" />{{ group.confidence }}</span>
                 <span class="alt-text">
@@ -945,7 +994,7 @@ function showOriginal(doc: DocumentBrief) {
                     <strong>{{ match.document.num_factura || 'Sense número' }}</strong>
                     <span class="muted"> {{ match.document.proveidor }} · {{ formatDate(match.document.data_factura) }} · {{ formatAmount(match.document.import_value) }}</span>
                   </template>
-                  <span v-if="group === lead" class="tag">Proposta</span>
+                  <span v-if="group.key === lead?.key" class="tag">Proposta</span>
                   <span v-if="group.matches[0].reason" class="alt-reason muted">{{ group.matches[0].reason }}</span>
                 </span>
                 <span class="alt-actions">
@@ -1018,6 +1067,13 @@ function showOriginal(doc: DocumentBrief) {
   --band-low: var(--danger-700);
   --band-low-bg: var(--danger-100);
   --band-none: var(--ink-400);
+  /* The two sides of every comparison: the bank's line and the register's entry. */
+  --bank: #33607f;
+  --bank-bg: #edf3f7;
+  --bank-line: #c7d7e3;
+  --reg: var(--accent-700);
+  --reg-bg: #fbf1ec;
+  --reg-line: var(--accent-200);
 
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1492,8 +1548,140 @@ function showOriginal(doc: DocumentBrief) {
 .mv {
   display: grid;
   gap: 4px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--line);
+}
+
+.side-bank,
+.side-reg {
+  padding: 8px 12px 10px;
+  border: 1px solid var(--bank-line);
+  border-left: 3px solid var(--bank);
+  border-radius: var(--r-md);
+  background: var(--bank-bg);
+}
+
+.side-reg {
+  margin-top: 4px;
+  border-color: var(--reg-line);
+  border-left-color: var(--reg);
+  background: var(--reg-bg);
+}
+
+.side-reg .invoice:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.side-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bank);
+}
+
+.side-reg .side-label {
+  color: var(--reg);
+}
+
+.side-sub {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-500);
+}
+
+/* ── Field-by-field comparison ─────────────────────────────────────────── */
+.compare {
+  display: grid;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  font-size: var(--text-sm);
+}
+
+.cmp-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) 26px minmax(0, 1fr);
+  align-items: center;
+  border-top: 1px solid var(--line);
+}
+
+.cmp-row > span {
+  padding: 4px 8px;
+  min-width: 0;
+}
+
+.cmp-head {
+  border-top: 0;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cmp-head .cmp-bank,
+.cmp-head .cmp-reg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cmp-bank {
+  background: var(--bank-bg);
+  color: var(--bank);
+}
+
+.cmp-reg {
+  background: var(--reg-bg);
+  color: var(--reg);
+}
+
+.cmp-val {
+  color: var(--ink-900);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.cmp-label {
+  color: var(--ink-500);
+  font-size: var(--text-xs);
+}
+
+.cmp-mark {
+  text-align: center;
+  font-weight: 700;
+  padding: 4px 0 !important;
+}
+
+.cmp-row.on .cmp-mark {
+  color: var(--olive-700);
+}
+
+.cmp-row.part .cmp-mark {
+  color: var(--gold-800);
+}
+
+.cmp-row.off .cmp-mark {
+  color: var(--ink-400);
+}
+
+.cmp-row.off .cmp-val {
+  color: var(--ink-500);
+}
+
+.cmp-row.missing .cmp-mark {
+  color: var(--ink-400);
+}
+
+.cmp-note {
+  margin-left: 6px;
+  color: var(--ink-500);
+  font-size: var(--text-xs);
 }
 
 .mv-top {
