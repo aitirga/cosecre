@@ -939,16 +939,7 @@ function showOriginal(doc: DocumentBrief) {
             <!-- Alternatives -->
             <section v-if="alternatives.length && !confirmed" class="alternatives">
               <h3 class="section-title">{{ viewed === lead ? 'Altres candidates' : 'Candidates' }}</h3>
-              <article
-                v-for="group in alternatives"
-                :key="group.key"
-                class="alt"
-                role="button"
-                tabindex="0"
-                title="Compara-la amb el moviment"
-                @click="focusKey = group.key"
-                @keydown.enter.self.stop.prevent="focusKey = group.key"
-              >
+              <article v-for="group in alternatives" :key="group.key" class="alt">
                 <span class="pill" :class="band(group.confidence)"><i class="dot" :class="band(group.confidence)" />{{ group.confidence }}</span>
                 <span class="alt-text">
                   <template v-for="(match, i) in group.matches" :key="match.id">
@@ -959,9 +950,14 @@ function showOriginal(doc: DocumentBrief) {
                   <span v-if="group === lead" class="tag">Proposta</span>
                   <span v-if="group.matches[0].reason" class="alt-reason muted">{{ group.matches[0].reason }}</span>
                 </span>
-                <button class="btn btn-outline btn-sm" type="button" :disabled="decide.isPending.value" @click.stop="confirmGroup(group)">
-                  Confirmar
-                </button>
+                <span class="alt-actions">
+                  <button class="btn btn-ghost btn-sm" type="button" title="Compara-la amb el moviment" @click="focusKey = group.key">
+                    <AppIcon name="info" :size="13" /> Detalls
+                  </button>
+                  <button class="btn btn-outline btn-sm" type="button" :disabled="decide.isPending.value" @click="confirmGroup(group)">
+                    Confirmar
+                  </button>
+                </span>
               </article>
             </section>
 
@@ -1772,16 +1768,9 @@ function showOriginal(doc: DocumentBrief) {
   margin-right: 4px;
 }
 
-.alt {
-  margin: 0 -6px;
-  padding: 3px 6px;
-  border-radius: var(--r-md);
-  cursor: pointer;
-}
-
-.alt:hover,
-.alt:focus-visible {
-  background: var(--surface-1);
+.alt-actions {
+  display: inline-flex;
+  gap: 4px;
 }
 
 .tag {
