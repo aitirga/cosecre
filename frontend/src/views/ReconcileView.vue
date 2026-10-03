@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
@@ -31,11 +31,40 @@ const queryClient = useQueryClient()
 const statementsQuery = useQuery({ queryKey: ['reconcile-statements'], queryFn: api.reconcileStatements })
 const statements = computed<ReconcileStatement[]>(() => statementsQuery.data.value ?? [])
 
+/** The five places money moves, in the order people think of them. */
+const ACCOUNTS = ['General', 'Material i Sortides', 'Menjador', 'Targeta Prepagament', 'Caixeta']
+
+/** Prefilter by account; empty means every statement. Kept in the URL. */
+const account = computed(() => (typeof route.query.compte === 'string' ? route.query.compte : ''))
+
+const accountChips = computed(() =>
+  ACCOUNTS.map((name) => {
+    const own = statements.value.filter((s) => s.compte === name)
+    return { name, count: own.length, pending: own.reduce((n, s) => n + s.unmatched + s.proposed, 0) }
+  }),
+)
+
+/**
+ * Newest first: the latest period, then the latest brought in. A statement
+ * whose every line was already known (dropped twice, or covered by a longer
+ * one) has nothing of its own to justify, so it goes to the end, greyed.
+ */
+const shown = computed(() =>
+  statements.value
+    .filter((s) => !account.value || s.compte === account.value)
+    .slice()
+    .sort(
+      (a, b) =>
+        Number(!a.payments) - Number(!b.payments) ||
+        (b.period_to ?? '').localeCompare(a.period_to ?? '') ||
+        b.created_at.localeCompare(a.created_at),
+    ),
+)
+
 const statementId = computed<number | null>(() => {
   const asked = Number(route.query.extracte)
-  if (asked && statements.value.some((s) => s.id === asked)) return asked
-  const pending = statements.value.find((s) => s.unmatched + s.proposed > 0)
-  return (pending ?? statements.value[0])?.id ?? null
+  if (asked && shown.value.some((s) => s.id === asked)) return asked
+  return (shown.value.find((s) => s.payments) ?? shown.value[0])?.id ?? null
 })
 const statement = computed(() => statements.value.find((s) => s.id === statementId.value) ?? null)
 
@@ -44,12 +73,46 @@ function pickStatement(id: number) {
   selectedId.value = null
 }
 
-function statementLabel(s: ReconcileStatement) {
-  const range = s.period_from
-    ? `${formatDate(s.period_from)} – ${formatDate(s.period_to)}`
-    : 'sense moviments'
-  return `${s.compte} · ${range} · ${s.payments} pagaments`
+function pickAccount(name: string) {
+  const query = { ...route.query }
+  delete query.extracte
+  if (name && name !== account.value) query.compte = name
+  else delete query.compte
+  void router.replace({ query })
+  selectedId.value = null
 }
+
+function shortPeriod(s: ReconcileStatement) {
+  if (!s.period_from || !s.period_to) return 'Sense moviments'
+  const sameYear = s.period_from.slice(0, 4) === s.period_to.slice(0, 4)
+  const from = formatDate(s.period_from)
+  return `${sameYear ? from.slice(0, 5) : from} – ${formatDate(s.period_to)}`
+}
+
+function share(s: ReconcileStatement) {
+  return s.payments ? Math.round((s.confirmed / s.payments) * 100) : 0
+}
+
+// The strip scrolls sideways; let an ordinary mouse wheel do it too.
+const strip = ref<HTMLElement | null>(null)
+function onWheel(event: WheelEvent) {
+  const el = strip.value
+  if (!el || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return
+  if (el.scrollWidth <= el.clientWidth) return
+  el.scrollLeft += event.deltaY
+  event.preventDefault()
+}
+function scrollStrip(direction: 1 | -1) {
+  strip.value?.scrollBy({ left: direction * 480, behavior: 'smooth' })
+}
+watch(statementId, async (id) => {
+  await nextTick()
+  strip.value?.querySelector<HTMLElement>(`[data-statement="${id}"]`)?.scrollIntoView({
+    block: 'nearest',
+    inline: 'nearest',
+    behavior: 'smooth',
+  })
+})
 
 // ── The run ──────────────────────────────────────────────────────────────────
 
@@ -335,19 +398,71 @@ async function openOriginal(doc: DocumentBrief) {
 
     <template v-else-if="statement">
       <section class="card toolbar">
-        <div class="toolbar-main">
-          <label class="picker">
-            <span class="picker-label">Extracte</span>
-            <select
-              class="select"
-              :value="statementId ?? ''"
-              @change="pickStatement(Number(($event.target as HTMLSelectElement).value))"
+        <div class="type-row">
+          <span class="picker-label">Extractes</span>
+          <div class="type-chips" role="group" aria-label="Filtra per compte">
+            <button class="chip" :class="{ on: !account }" type="button" @click="pickAccount('')">
+              Tots <span>{{ statements.length }}</span>
+            </button>
+            <button
+              v-for="chip in accountChips"
+              :key="chip.name"
+              class="chip"
+              :class="{ on: account === chip.name }"
+              type="button"
+              :disabled="!chip.count"
+              @click="pickAccount(chip.name)"
             >
-              <option v-for="s in statements" :key="s.id" :value="s.id">
-                {{ statementLabel(s) }}{{ s.unmatched + s.proposed ? '' : ' ✓' }}
-              </option>
-            </select>
-          </label>
+              {{ chip.name }}
+              <span>{{ chip.count }}</span>
+              <i v-if="chip.pending" class="pending-dot" :title="`${chip.pending} pendents`" />
+            </button>
+          </div>
+          <div class="strip-nav">
+            <button class="btn btn-ghost btn-icon btn-sm" type="button" title="Més recents" @click="scrollStrip(-1)">
+              <AppIcon name="chevron" :size="13" class="flip" />
+            </button>
+            <button class="btn btn-ghost btn-icon btn-sm" type="button" title="Més antics" @click="scrollStrip(1)">
+              <AppIcon name="chevron" :size="13" />
+            </button>
+          </div>
+        </div>
+
+        <div ref="strip" class="strip" role="listbox" aria-label="Extractes, del més recent al més antic" @wheel="onWheel">
+          <button
+            v-for="s in shown"
+            :key="s.id"
+            :data-statement="s.id"
+            class="st"
+            :class="{ on: s.id === statementId, empty: !s.payments }"
+            type="button"
+            role="option"
+            :aria-selected="s.id === statementId"
+            @click="pickStatement(s.id)"
+          >
+            <span class="st-top">
+              <strong class="truncate">{{ s.compte }}</strong>
+              <span class="st-source">{{ SOURCE_LABEL[s.source] }}</span>
+            </span>
+            <span class="st-period mono">{{ shortPeriod(s) }}</span>
+            <span class="st-bar"><span :style="{ width: `${share(s)}%` }" /></span>
+            <span v-if="!s.payments" class="st-foot">
+              <span>{{ s.rows_total ? 'Ja inclòs en un altre extracte' : 'Sense moviments' }}</span>
+            </span>
+            <span v-else class="st-foot">
+              <span>{{ s.confirmed }}/{{ s.payments }} justificats</span>
+              <span v-if="s.payments && !(s.unmatched + s.proposed)" class="st-ok"><AppIcon name="check" :size="11" /></span>
+              <span v-else class="st-dots">
+                <template v-if="s.bands.high"><i class="dot high" />{{ s.bands.high }}</template>
+                <template v-if="s.bands.medium"><i class="dot medium" />{{ s.bands.medium }}</template>
+                <template v-if="s.bands.low"><i class="dot low" />{{ s.bands.low }}</template>
+                <template v-if="s.unmatched"><i class="dot none" />{{ s.unmatched }}</template>
+              </span>
+            </span>
+          </button>
+        </div>
+
+        <div class="toolbar-main">
 
           <div class="progress-block">
             <div class="progress-line">
@@ -687,14 +802,159 @@ async function openOriginal(doc: DocumentBrief) {
   flex-wrap: wrap;
 }
 
-.picker {
-  display: grid;
+/* ── Statement strip ─────────────────────────────────────────────────────── */
+.type-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.type-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  min-width: 0;
+}
+
+.type-chips .chip {
+  white-space: nowrap;
+}
+
+.type-chips .chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pending-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-600);
+}
+
+.strip-nav {
+  display: flex;
   gap: 2px;
-  min-width: 300px;
+  margin-left: auto;
+}
+
+.flip {
+  transform: rotate(180deg);
+}
+
+.strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  /* Fade the far edge so it reads as "more this way". */
+  mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+}
+
+.st {
+  flex: 0 0 208px;
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  text-align: left;
+  scroll-snap-align: start;
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.st > * {
+  width: 100%;
+  min-width: 0;
+}
+
+.st:hover {
+  border-color: var(--line-strong);
+}
+
+.st.empty {
+  background: var(--surface-1);
+  color: var(--ink-400);
+}
+
+.st.empty strong {
+  color: var(--ink-500);
+}
+
+.st.on {
+  border-color: var(--accent-500);
+  box-shadow: 0 0 0 1px var(--accent-500);
+}
+
+.st-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.st-source {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--ink-400);
+}
+
+.st-period {
+  font-size: var(--text-sm);
+  color: var(--ink-700);
+}
+
+.st-bar {
+  height: 3px;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.st-bar span {
+  display: block;
+  height: 100%;
+  background: var(--olive-700);
+}
+
+.st-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--ink-500);
+  font-variant-numeric: tabular-nums;
+}
+
+.st-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.st-dots .dot {
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+}
+
+.st-ok {
+  display: inline-flex;
+  color: var(--olive-700);
 }
 
 .picker-label,
 .section-title {
+  flex: none;
   margin: 0;
   font-size: var(--text-xs);
   font-weight: 600;
@@ -1219,9 +1479,40 @@ async function openOriginal(doc: DocumentBrief) {
     max-height: 420px;
   }
 
-  .picker {
-    min-width: 0;
-    width: 100%;
+  .type-row {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 560px) {
+  .movement {
+    grid-template-columns: 62px minmax(0, 1fr) auto;
+    gap: 2px 8px;
+  }
+
+  .m-date {
+    font-size: var(--text-xs);
+  }
+
+  .m-date {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .m-text {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .m-amount {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+  }
+
+  .m-state {
+    grid-column: 3;
+    grid-row: 2;
   }
 }
 </style>
