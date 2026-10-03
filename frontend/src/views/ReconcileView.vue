@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
@@ -16,6 +16,8 @@ import {
   band,
 } from '../matching'
 import AppIcon from '../components/AppIcon.vue'
+import DocumentPeek from '../components/DocumentPeek.vue'
+import MovementCard from '../components/MovementCard.vue'
 
 /**
  * Justifying a statement: the AI proposes an invoice for each movement, a
@@ -338,6 +340,18 @@ watch(selectedId, () => {
 function onKey(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
   if (target && ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return
+  if (event.key === 'Escape' && peekOpen.value) {
+    peekOpen.value = false
+    return
+  }
+  if ((event.key === 'p' || event.key === 'P') && hoverCard.value) {
+    pin(hoverCard.value)
+    return
+  }
+  if (event.key === 'o' && peekDoc.value) {
+    showOriginal(peekDoc.value)
+    return
+  }
   if (event.key === 'ArrowDown' || event.key === 'j') {
     step(1)
     event.preventDefault()
@@ -377,9 +391,142 @@ function pct(value: number | undefined) {
   return value == null ? '—' : `${Math.round(value * 100)} %`
 }
 
-async function openOriginal(doc: DocumentBrief) {
-  const url = await api.getDocumentFileBlob(doc.num_doc_intern)
-  window.open(url, '_blank', 'noopener')
+/** The statement mixes payment methods (a bank account), so each line says which. */
+const mixedTipus = computed(() => new Set(payments.value.map((m) => m.tipus).filter(Boolean)).size > 1)
+
+function subline(m: Movement) {
+  return [m.mes_dades, mixedTipus.value || !m.mes_dades ? m.tipus : ''].filter(Boolean).join(' · ')
+}
+
+// ── Originals ────────────────────────────────────────────────────────────────
+
+/** Fetched once per invoice and kept for the visit: stepping back is instant. */
+type Original = { url: string; type: string } | 'loading' | 'missing'
+const originals = reactive(new Map<string, Original>())
+
+async function loadOriginal(doc: DocumentBrief) {
+  if (!doc.file_url || originals.has(doc.num_doc_intern)) return
+  originals.set(doc.num_doc_intern, 'loading')
+  try {
+    originals.set(doc.num_doc_intern, await api.getDocumentFile(doc.num_doc_intern))
+  } catch {
+    originals.set(doc.num_doc_intern, 'missing')
+  }
+}
+onBeforeUnmount(() => {
+  for (const entry of originals.values()) if (typeof entry === 'object') URL.revokeObjectURL(entry.url)
+})
+
+/** The invoices the card is showing: the confirmed ones, else the proposal. */
+const shownDocs = computed(() => (confirmed.value ?? lead.value)?.matches.map((m) => m.document) ?? [])
+watch(shownDocs, (docs) => docs.forEach(loadOriginal), { immediate: true })
+
+function thumb(doc: DocumentBrief) {
+  const entry = originals.get(doc.num_doc_intern)
+  return typeof entry === 'object' && entry.type.startsWith('image/') ? entry.url : null
+}
+
+function thumbLabel(doc: DocumentBrief) {
+  const entry = originals.get(doc.num_doc_intern)
+  if (entry === 'loading' || !entry) return '…'
+  if (entry === 'missing') return '—'
+  return entry.type === 'application/pdf' ? 'PDF' : 'Fitxer'
+}
+
+// ── Detail cards: hover a line for all it carries, pin to keep it ──────────────
+
+type Card = { movement: Movement; x: number; y: number }
+const CARD_W = 300
+const hoverCard = ref<Card | null>(null)
+const pinned = ref<Card[]>([])
+let hoverTimer: number | undefined
+let leaveTimer: number | undefined
+
+/** Beside the line, kept on screen and clear of the docked original. */
+function cardAt(rect: DOMRect): { x: number; y: number } {
+  const right = window.innerWidth - 8
+  const x = rect.right + 8 + CARD_W <= right ? rect.right + 8 : Math.max(8, rect.right - CARD_W - 120)
+  return { x, y: Math.min(Math.max(8, rect.top - 4), window.innerHeight - 320) }
+}
+
+function rowEnter(m: Movement, event: MouseEvent) {
+  window.clearTimeout(leaveTimer)
+  window.clearTimeout(hoverTimer)
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  // Slow to appear, quick to follow once one is showing.
+  hoverTimer = window.setTimeout(
+    () => {
+      hoverCard.value = pinned.value.some((c) => c.movement.id === m.id) ? null : { movement: m, ...cardAt(rect) }
+    },
+    hoverCard.value ? 60 : 450,
+  )
+}
+
+function rowLeave() {
+  window.clearTimeout(hoverTimer)
+  leaveTimer = window.setTimeout(() => (hoverCard.value = null), 200)
+}
+
+function cardEnter() {
+  window.clearTimeout(leaveTimer)
+}
+
+function pin(card: Card) {
+  if (!pinned.value.some((c) => c.movement.id === card.movement.id)) pinned.value.push({ ...card })
+  hoverCard.value = null
+}
+
+function unpin(card: Card) {
+  pinned.value = pinned.value.filter((c) => c !== card)
+}
+
+/** The selected line's card, from the button on the right-hand card. */
+function pinSelected(event: MouseEvent) {
+  if (!detail.value) return
+  const existing = pinned.value.find((c) => c.movement.id === detail.value?.id)
+  if (existing) return unpin(existing)
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  pin({ movement: detail.value, x: Math.max(8, rect.left - CARD_W - 8), y: Math.max(8, rect.top) })
+}
+
+// A pinned card keeps showing the line's latest state after a decision.
+watch(movements, (list) => {
+  for (const card of pinned.value) card.movement = list.find((m) => m.id === card.movement.id) ?? card.movement
+})
+
+// The docked viewer follows the selection: it shows the picked invoice while it
+// is on the card, and the card's first one otherwise.
+const peekOpen = ref(false)
+const peekRef = ref<string | null>(null)
+const peekDoc = computed(
+  () => shownDocs.value.find((d) => d.num_doc_intern === peekRef.value) ?? shownDocs.value.find((d) => d.file_url) ?? null,
+)
+const peekFile = computed(() => {
+  const entry = peekDoc.value ? originals.get(peekDoc.value.num_doc_intern) : undefined
+  return typeof entry === 'object' ? entry : null
+})
+
+/**
+ * Where the original first floats: in the free margin right of the page when
+ * the screen has one, else over the movement list — the proposal it is being
+ * checked against stays in view either way.
+ */
+function peekHome() {
+  const page = document.querySelector('.reconcile')?.getBoundingClientRect()
+  const list = document.querySelector('.panes .list')?.getBoundingClientRect()
+  const free = page ? window.innerWidth - page.right - 32 : 0
+  if (page && free >= 340) return { x: page.right + 16, y: 16, w: Math.min(free, 640), h: window.innerHeight - 32 }
+  const top = Math.max(16, list?.top ?? 16)
+  return { x: list?.left ?? 16, y: top, w: Math.max(340, (list?.width ?? 440) - 16), h: Math.min(window.innerHeight - top - 16, 760) }
+}
+
+function showOriginal(doc: DocumentBrief) {
+  if (peekOpen.value && peekDoc.value?.num_doc_intern === doc.num_doc_intern) {
+    peekOpen.value = false
+    return
+  }
+  peekRef.value = doc.num_doc_intern
+  peekOpen.value = true
 }
 </script>
 
@@ -537,13 +684,21 @@ async function openOriginal(doc: DocumentBrief) {
               role="option"
               :aria-selected="m.id === selectedId"
               @click="selectedId = m.id"
+              @mouseenter="rowEnter(m, $event)"
+              @mouseleave="rowLeave"
             >
-              <span class="m-date mono">{{ formatDate(m.data) }}</span>
+              <span class="m-date">
+                <span class="mono">{{ formatDate(m.data) }}</span>
+                <span v-if="m.external_ref" class="m-ref mono muted">{{ m.external_ref }}</span>
+              </span>
               <span class="m-text">
                 <span class="truncate">{{ m.concepte }}</span>
-                <span class="truncate muted">{{ m.mes_dades || m.tipus }}</span>
+                <span class="truncate muted">{{ subline(m) }}</span>
               </span>
-              <span class="m-amount num">{{ formatAmount(m.import_value) }}</span>
+              <span class="m-amount">
+                <span class="num">{{ formatAmount(m.import_value) }}</span>
+                <span v-if="m.saldo != null" class="m-saldo num muted" title="Saldo després del moviment">{{ formatAmount(m.saldo) }}</span>
+              </span>
               <span class="m-state">
                 <span v-if="m.match_status === 'confirmed'" class="state-confirmed">
                   <AppIcon name="check" :size="11" /> Confirmat
@@ -562,7 +717,15 @@ async function openOriginal(doc: DocumentBrief) {
               {{ others.length }} moviments que no són pagaments
             </button>
             <ul v-if="showOthers" class="movements dim">
-              <li v-for="m in others" :key="m.id" class="movement band-none" :class="{ selected: m.id === selectedId }" @click="selectedId = m.id">
+              <li
+                v-for="m in others"
+                :key="m.id"
+                class="movement band-none"
+                :class="{ selected: m.id === selectedId }"
+                @click="selectedId = m.id"
+                @mouseenter="rowEnter(m, $event)"
+                @mouseleave="rowLeave"
+              >
                 <span class="m-date mono">{{ formatDate(m.data) }}</span>
                 <span class="m-text"><span class="truncate">{{ m.concepte }}</span></span>
                 <span class="m-amount num">{{ formatAmount(m.import_value) }}</span>
@@ -581,7 +744,18 @@ async function openOriginal(doc: DocumentBrief) {
             <div class="mv">
               <div class="mv-top">
                 <span class="mv-amount" :class="{ in: detail.import_value > 0 }">{{ formatAmount(detail.import_value) }}</span>
-                <span class="mv-date mono">{{ formatDate(detail.data) }}</span>
+                <span class="mv-date mono">
+                  {{ formatDate(detail.data) }}
+                  <button
+                    class="btn btn-ghost btn-icon btn-sm"
+                    :class="{ on: pinned.some((c) => c.movement.id === detail?.id) }"
+                    type="button"
+                    title="Tots els detalls del moviment"
+                    @click="pinSelected"
+                  >
+                    <AppIcon name="info" :size="14" />
+                  </button>
+                </span>
               </div>
               <div class="mv-concept">{{ detail.concepte }}</div>
               <div v-if="detail.mes_dades" class="mv-extra muted">{{ detail.mes_dades }}</div>
@@ -591,6 +765,13 @@ async function openOriginal(doc: DocumentBrief) {
                 <span class="muted">{{ SOURCE_LABEL[detail.source] }}</span>
                 <span v-if="detail.num_factura_hint" class="muted">· núm. {{ detail.num_factura_hint }}</span>
                 <span v-if="detail.cif_hint" class="muted">· CIF {{ detail.cif_hint }}</span>
+              </div>
+              <div v-if="detail.external_ref || detail.saldo != null || (detail.data_valor && detail.data_valor !== detail.data)" class="mv-facts">
+                <span v-if="detail.external_ref"><span class="muted">Ref.</span> <span class="mono">{{ detail.external_ref }}</span></span>
+                <span v-if="detail.data_valor && detail.data_valor !== detail.data">
+                  <span class="muted">Data valor</span> <span class="mono">{{ formatDate(detail.data_valor) }}</span>
+                </span>
+                <span v-if="detail.saldo != null"><span class="muted">Saldo</span> <span class="num">{{ formatAmount(detail.saldo) }}</span></span>
               </div>
             </div>
 
@@ -617,6 +798,17 @@ async function openOriginal(doc: DocumentBrief) {
                   <span>{{ match.document.proveidor }}</span>
                 </RouterLink>
                 <span class="inv-meta mono">{{ formatDate(match.document.data_factura) }} · {{ formatAmount(match.document.import_value) }}</span>
+                <button
+                  v-if="match.document.file_url"
+                  class="thumb"
+                  :class="{ on: peekOpen && peekDoc?.num_doc_intern === match.document.num_doc_intern }"
+                  type="button"
+                  title="Mostra l'original (O)"
+                  @click="showOriginal(match.document)"
+                >
+                  <img v-if="thumb(match.document)" :src="thumb(match.document) as string" alt="" />
+                  <span v-else class="thumb-file">{{ thumbLabel(match.document) }}</span>
+                </button>
               </article>
             </section>
 
@@ -647,8 +839,16 @@ async function openOriginal(doc: DocumentBrief) {
                   <template v-if="match.document.compte"> · {{ match.document.compte }}</template>
                   <template v-if="match.document.metode_pagament"> · {{ match.document.metode_pagament }}</template>
                 </span>
-                <button v-if="match.document.file_url" class="btn btn-ghost btn-sm original" type="button" @click="openOriginal(match.document)">
-                  <AppIcon name="image" :size="13" /> Original
+                <button
+                  v-if="match.document.file_url"
+                  class="thumb"
+                  :class="{ on: peekOpen && peekDoc?.num_doc_intern === match.document.num_doc_intern }"
+                  type="button"
+                  title="Mostra l'original (O)"
+                  @click="showOriginal(match.document)"
+                >
+                  <img v-if="thumb(match.document)" :src="thumb(match.document) as string" alt="" />
+                  <span v-else class="thumb-file">{{ thumbLabel(match.document) }}</span>
                 </button>
               </article>
               <div class="signals">
@@ -790,6 +990,38 @@ async function openOriginal(doc: DocumentBrief) {
         </div>
       </section>
     </template>
+
+    <MovementCard
+      v-for="card in pinned"
+      :key="`pin-${card.movement.id}`"
+      :movement="card.movement"
+      :x="card.x"
+      :y="card.y"
+      pinned
+      @close="unpin(card)"
+      @move="(x, y) => Object.assign(card, { x, y })"
+    />
+    <MovementCard
+      v-if="hoverCard"
+      :movement="hoverCard.movement"
+      :x="hoverCard.x"
+      :y="hoverCard.y"
+      :pinned="false"
+      @enter="cardEnter"
+      @leave="rowLeave"
+      @pin="hoverCard && pin(hoverCard)"
+    />
+
+    <DocumentPeek
+      v-if="peekOpen"
+      :src="peekFile?.url ?? null"
+      :type="peekFile?.type ?? ''"
+      :loading="!!peekDoc && originals.get(peekDoc.num_doc_intern) === 'loading'"
+      :title="peekDoc ? peekDoc.num_factura || 'Sense número' : 'Cap factura proposada'"
+      :subtitle="peekDoc ? `${peekDoc.proveidor} · ${formatDate(peekDoc.data_factura)} · ${formatAmount(peekDoc.import_value)}` : ''"
+      :home="peekHome"
+      @close="peekOpen = false"
+    />
   </div>
 </template>
 
@@ -1120,6 +1352,7 @@ async function openOriginal(doc: DocumentBrief) {
   display: grid;
   gap: 8px;
   padding: 10px;
+  container-type: inline-size;
 }
 
 .chips {
@@ -1197,11 +1430,20 @@ async function openOriginal(doc: DocumentBrief) {
   line-height: 1.3;
 }
 
-.m-text .muted {
+.m-date,
+.m-amount {
+  display: grid;
+  line-height: 1.3;
+}
+
+.m-text .muted,
+.m-ref,
+.m-saldo {
   font-size: var(--text-xs);
 }
 
 .m-amount {
+  justify-items: end;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -1267,6 +1509,16 @@ async function openOriginal(doc: DocumentBrief) {
   justify-content: space-between;
 }
 
+.mv-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mv-date .on {
+  color: var(--accent-700);
+}
+
 .mv-amount {
   font-size: var(--text-xl);
   font-weight: 600;
@@ -1279,6 +1531,14 @@ async function openOriginal(doc: DocumentBrief) {
 
 .mv-concept {
   font-weight: 500;
+}
+
+.mv-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
 }
 
 .mv-meta {
@@ -1373,13 +1633,49 @@ async function openOriginal(doc: DocumentBrief) {
 }
 
 .inv-meta {
-  grid-column: 1 / -1;
+  grid-column: 1;
   font-size: var(--text-sm);
 }
 
-.original {
+.thumb {
   grid-column: 2;
-  grid-row: 1;
+  grid-row: 1 / span 3;
+  align-self: start;
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 76px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  cursor: zoom-in;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.thumb:hover {
+  border-color: var(--line-strong);
+}
+
+.thumb.on {
+  border-color: var(--accent-500);
+  box-shadow: 0 0 0 1px var(--accent-500);
+}
+
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+}
+
+.thumb-file {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--ink-500);
 }
 
 .signals {
@@ -1534,14 +1830,18 @@ async function openOriginal(doc: DocumentBrief) {
   }
 }
 
-@media (max-width: 560px) {
+@container (max-width: 440px) {
   .movement {
-    grid-template-columns: 62px minmax(0, 1fr) auto;
+    grid-template-columns: 70px minmax(0, 1fr) auto;
     gap: 2px 8px;
   }
 
   .m-date {
     font-size: var(--text-xs);
+  }
+
+  .m-date .mono {
+    font-size: inherit;
   }
 
   .m-date {

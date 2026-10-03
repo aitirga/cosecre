@@ -516,6 +516,15 @@ export const api = {
   getDocumentFileBlob(reference: string): Promise<string> {
     return fetchBlobUrl(`${RECORDS}/${reference}/file`)
   },
+  /** Like `getDocumentFileBlob`, keeping the MIME type: a photo and a PDF are shown differently. */
+  async getDocumentFile(reference: string): Promise<{ url: string; type: string }> {
+    const response = await authorizedFetch(`${RECORDS}/${reference}/file`)
+    if (!response.ok) {
+      throw new ApiError(response.status, response.statusText || "No s'ha pogut obtenir el fitxer.")
+    }
+    const blob = await response.blob()
+    return { url: URL.createObjectURL(blob), type: blob.type }
+  },
   downloadDocumentFile(reference: string, fallbackName: string): Promise<void> {
     return saveFile(`${RECORDS}/${reference}/file`, fallbackName)
   },

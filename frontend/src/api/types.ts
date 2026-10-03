@@ -376,7 +376,10 @@ export interface Movement {
   saldo: number | null
   num_factura_hint: string
   cif_hint: string
+  iban_hint: string
   external_ref: string
+  /** The line as the source gave it. */
+  raw: Record<string, unknown>
   match_status: MatchStatus
   linked_movement_id: number | null
   confidence: number | null
