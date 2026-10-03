@@ -139,6 +139,19 @@ not a new out-of-memory restart.
 
 ## Deploy and inspect
 
+Every push to `main` deploys on its own: `.github/workflows/deploy.yml` runs the
+hub tests and the typecheck, then the same `fly deploy` as below. It needs one
+repository secret, a deploy token scoped to this app:
+
+```sh
+fly tokens create deploy -a cosecre-aitirga | gh secret set FLY_API_TOKEN
+```
+
+Deploys queue rather than overlap. Pushing while an extraction runs still
+interrupts it, as a manual deploy would.
+
+By hand:
+
 ```sh
 fly deploy --remote-only --ha=false --strategy immediate
 fly status
