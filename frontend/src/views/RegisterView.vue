@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { RouterLink, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '../api/client'
 import type { DocumentRecord, ExtractionStatus, Movement, PaidBy } from '../api/types'
@@ -14,12 +14,14 @@ import {
 } from '../document-fields'
 import AppIcon from '../components/AppIcon.vue'
 import DocumentIntake from '../components/DocumentIntake.vue'
+import DocumentWindow from '../components/DocumentWindow.vue'
 import ImageViewer from '../components/ImageViewer.vue'
 import MovementCard from '../components/MovementCard.vue'
 import SyncPanel from '../components/SyncPanel.vue'
 import StatusPill from '../components/StatusPill.vue'
 
 const queryClient = useQueryClient()
+const route = useRoute()
 const router = useRouter()
 const { activeTrackedJobs, syncFromDocuments } = useExtractionTracker()
 
@@ -214,8 +216,49 @@ function closePhoto() {
   previewSrc.value = null
 }
 
+// ── The open entry ───────────────────────────────────────────────────────────
+// It lives in the address (`?doc=`), so a reload or a shared link reopens it
+// and the browser's Back closes it.
+const openId = computed(() => (typeof route.query.doc === 'string' ? route.query.doc : null))
+/** The list as it stood when the window opened; see DocumentWindow. */
+const queue = ref<string[] | null>(null)
+let pushedHere = false
+
 function openRecord(record: DocumentRecord) {
-  void router.push({ name: 'document', params: { internalDocNumber: record.num_doc_intern } })
+  queue.value = visible.value.map((item) => item.num_doc_intern)
+  pushedHere = true
+  void router.push({ query: { ...route.query, doc: record.num_doc_intern } })
+}
+
+function showEntry(id: string) {
+  void router.replace({ query: { ...route.query, doc: id } })
+}
+
+function closeEntry() {
+  if (pushedHere) {
+    pushedHere = false
+    router.back()
+  } else {
+    const { doc: _doc, ...rest } = route.query
+    void router.replace({ query: rest })
+  }
+}
+
+watch(openId, (id) => {
+  if (id) return
+  pushedHere = false
+  queue.value = null
+})
+
+/** A plain click opens the window; ⌘/Ctrl/middle click still opens a tab. */
+function onRefClick(event: MouseEvent, record: DocumentRecord) {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return
+  event.preventDefault()
+  openRecord(record)
+}
+
+function documentHref(record: DocumentRecord) {
+  return router.resolve({ name: 'document', params: { internalDocNumber: record.num_doc_intern } }).href
 }
 
 const showUpload = ref(true)
@@ -368,15 +411,12 @@ const showUpload = ref(true)
               v-for="record in visible"
               :key="record.num_doc_intern"
               class="row"
+              :class="{ current: record.num_doc_intern === openId }"
               @click="openRecord(record)"
             >
               <td><StatusPill :status="record.extraction_status" /></td>
               <td>
-                <RouterLink
-                  class="ref"
-                  :to="{ name: 'document', params: { internalDocNumber: record.num_doc_intern } }"
-                  @click.stop
-                >
+                <a class="ref" :href="documentHref(record)" @click.stop="onRefClick($event, record)">
                   <strong>
                     {{ record.num_factura || 'Sense número' }}
                     <span
@@ -399,7 +439,7 @@ const showUpload = ref(true)
                       "
                     />
                   </span>
-                </RouterLink>
+                </a>
               </td>
               <td class="supplier">
                 <span v-if="record.proveidor" class="truncate">{{ record.proveidor }}</span>
@@ -478,6 +518,15 @@ const showUpload = ref(true)
     </section>
 
     <SyncPanel v-if="showSync" @close="closeSync" />
+
+    <DocumentWindow
+      v-if="openId"
+      :id="openId"
+      :queue="queue ?? visible.map((item) => item.num_doc_intern)"
+      :documents="documents"
+      @open="showEntry"
+      @close="closeEntry"
+    />
 
     <ImageViewer v-if="previewSrc" :src="previewSrc" alt="Document original" @close="closePhoto" />
 
@@ -653,6 +702,15 @@ const showUpload = ref(true)
 
 .row {
   cursor: pointer;
+}
+
+/* The entry open in the window, so closing it leaves you where you were. */
+.row.current td {
+  background: var(--accent-100);
+}
+
+.row.current td:first-child {
+  box-shadow: inset 2px 0 0 var(--accent-500);
 }
 
 .ref {
