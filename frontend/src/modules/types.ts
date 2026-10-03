@@ -31,6 +31,22 @@ export interface CosecreNavItem {
    * whatever standing it gives people of its own.
    */
   visible?: () => boolean
+  /**
+   * The nav group this entry sits in, by id. Groups are declared in
+   * `CosecreModule.navGroups` by any module, so two modules can share one.
+   * Omitted means the top level.
+   */
+  group?: string
+  /** `foot` pins the entry to the bottom of the sidebar, beside the user. */
+  placement?: 'main' | 'foot'
+}
+
+/** A collapsible heading in the sidebar. Nest one under another with `parent`. */
+export interface CosecreNavGroup {
+  id: string
+  label: string
+  icon?: IconName
+  parent?: string
 }
 
 export interface CosecreModule {
@@ -42,6 +58,7 @@ export interface CosecreModule {
   /** Mounted at the top level, outside the shell. Full-bleed views. */
   rootRoutes?: RouteRecordRaw[]
   nav: CosecreNavItem[]
+  navGroups?: CosecreNavGroup[]
   /** Off when the hub does not advertise the capability this module needs. */
   enabled?: (hub: HubMeta | null) => boolean
   /**

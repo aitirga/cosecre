@@ -8,8 +8,9 @@
 import { computed } from 'vue'
 import type { RouteLocationNormalized, RouteLocationRaw, RouteRecordRaw } from 'vue-router'
 
+import type { NavGroup, NavNode } from '../components/nav'
 import { useAuth } from '../composables/useAuth'
-import type { CosecreModule, CosecreNavItem } from './types'
+import type { CosecreModule, CosecreNavGroup, CosecreNavItem } from './types'
 
 /**
  * Plain, not `reactive`.
@@ -77,6 +78,22 @@ export function useModules() {
       .filter((item) => item.visible?.() ?? true),
   )
 
+  const navGroups = computed(() => activeModules().flatMap((module) => module.navGroups ?? []))
+
+  /** The sidebar body, and what is pinned to its foot. */
+  const navTree = computed(() =>
+    buildNavTree(
+      navItems.value.filter((item) => item.placement !== 'foot'),
+      navGroups.value,
+    ),
+  )
+  const footNav = computed(() =>
+    buildNavTree(
+      navItems.value.filter((item) => item.placement === 'foot'),
+      navGroups.value,
+    ),
+  )
+
   /**
    * Where "home" is.
    *
@@ -102,5 +119,46 @@ export function useModules() {
     return item.name === routeName || (item.childRoutes?.includes(routeName) ?? false)
   }
 
-  return { navItems, homeRoute, isActive }
+  return { navItems, navTree, footNav, homeRoute, isActive }
+}
+
+/**
+ * Hangs nav items under their groups, and groups under their parents.
+ *
+ * Groups appear where their first item (or first non-empty subgroup) does, so
+ * module registration order still decides the sidebar's order. A group with
+ * nothing visible in it is dropped, which is how an admin-only section
+ * disappears for members. An unknown group id falls back to the top level
+ * rather than hiding the item.
+ */
+function buildNavTree(items: CosecreNavItem[], groups: CosecreNavGroup[]): NavNode[] {
+  const declared = new Map(groups.map((group) => [group.id, group]))
+  const built = new Map<string, NavGroup>()
+  const root: NavNode[] = []
+
+  function groupNode(id: string, seen = new Set<string>()): NavGroup | null {
+    const existing = built.get(id)
+    if (existing) return existing
+    const spec = declared.get(id)
+    if (!spec || seen.has(id)) return null
+    seen.add(id)
+
+    const node: NavGroup = { kind: 'group', id, label: spec.label, icon: spec.icon, children: [] }
+    built.set(id, node)
+    const parent = spec.parent ? groupNode(spec.parent, seen) : null
+    ;(parent ? parent.children : root).push(node)
+    return node
+  }
+
+  for (const item of items) {
+    const parent = item.group ? groupNode(item.group) : null
+    ;(parent ? parent.children : root).push({
+      kind: 'link',
+      name: item.name,
+      label: item.label,
+      icon: item.icon,
+      childRoutes: item.childRoutes,
+    })
+  }
+  return root
 }

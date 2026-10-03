@@ -24,9 +24,16 @@ export const documentsModule: CosecreModule = {
     { path: 'account', name: 'account', component: AccountView },
     { path: 'settings', name: 'settings', component: SettingsView, meta: { requiresAdmin: true } },
   ],
+  navGroups: [{ id: 'comptabilitat', label: 'Comptabilitat' }],
   nav: [
-    { name: 'register', label: 'Registre', icon: 'invoice', childRoutes: ['document'] },
-    { name: 'settings', label: 'Configuració', icon: 'sliders', adminOnly: true },
+    {
+      name: 'register',
+      label: 'Registre',
+      icon: 'invoice',
+      childRoutes: ['document'],
+      group: 'comptabilitat',
+    },
+    { name: 'settings', label: 'Configuració', icon: 'sliders', adminOnly: true, placement: 'foot' },
   ],
   // Registered last, so its unconditional claim on home is the default rather
   // than an override of a module with a better reason to be there.

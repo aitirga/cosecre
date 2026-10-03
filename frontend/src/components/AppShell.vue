@@ -7,12 +7,13 @@ import { useModules } from '../modules/registry'
 import { usePlatform } from '../platform'
 import AppIcon from './AppIcon.vue'
 import BrandMark from './BrandMark.vue'
+import NavTree from './NavTree.vue'
 
 const auth = useAuth()
 const router = useRouter()
 const route = useRoute()
 const platform = usePlatform()
-const { navItems, homeRoute, isActive } = useModules()
+const { navTree, footNav, homeRoute } = useModules()
 
 const menuOpen = ref(false)
 
@@ -48,17 +49,11 @@ async function handleLogout() {
       </RouterLink>
 
       <nav class="nav" aria-label="Seccions">
-        <RouterLink
-          v-for="item in navItems"
-          :key="item.name"
-          class="nav-item"
-          :class="{ active: isActive(item, route.name as string) }"
-          :to="{ name: item.name }"
-          @click="menuOpen = false"
-        >
-          <AppIcon :name="item.icon" :size="15" />
-          {{ item.label }}
-        </RouterLink>
+        <NavTree :nodes="navTree" @navigate="menuOpen = false" />
+      </nav>
+
+      <nav v-if="footNav.length" class="foot-nav" aria-label="Configuració">
+        <NavTree :nodes="footNav" @navigate="menuOpen = false" />
       </nav>
 
       <div class="sidebar-foot">
@@ -136,32 +131,21 @@ async function handleLogout() {
 }
 
 .nav {
-  display: grid;
-  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 7px 9px;
-  border-radius: var(--r-md);
-  font-size: var(--text-base);
-  font-weight: 500;
-  color: var(--ink-500);
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease;
+/* Configuration sits at the bottom, right above the signed-in user. */
+.foot-nav {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 
-.nav-item:hover {
-  background: var(--surface-2);
-  color: var(--ink-900);
-}
-
-.nav-item.active {
-  background: var(--accent-100);
-  color: var(--accent-700);
+.foot-nav + .sidebar-foot {
+  margin-top: 0;
+  padding-top: 4px;
+  border-top: 0;
 }
 
 .sidebar-foot {
