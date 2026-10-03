@@ -9,6 +9,7 @@ from .llm import router as llm_router
 from .meta import router as meta_router
 from .reconciliation import router as reconciliation_router
 from .statements import router as statements_router
+from .status import router as status_router
 from .users import router as users_router
 
 #: Everything under the versioned prefix. Grouped core-first so the generated
@@ -24,6 +25,7 @@ api_router.include_router(statements_router, prefix="/statements", tags=["statem
 api_router.include_router(
     reconciliation_router, prefix="/reconciliation", tags=["reconciliation"]
 )
+api_router.include_router(status_router, prefix="/status", tags=["status"])
 api_router.include_router(backups_router, prefix="/backups", tags=["backups"])
 api_router.include_router(history_router, prefix="/history", tags=["history"])
 

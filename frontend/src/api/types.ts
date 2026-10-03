@@ -513,3 +513,115 @@ export interface ReplayResult {
   action: HistoryAction
   message: string
 }
+
+// ── Estat ───────────────────────────────────────────────────────────────────
+
+/** How many, and how much money they add up to (always positive). */
+export interface Tally {
+  count: number
+  amount: number
+}
+
+export interface PaymentTotals {
+  total: Tally
+  confirmed: Tally
+  /** The AI put an invoice forward; a person has to confirm it. */
+  proposed: Tally
+  /** Nobody has run the justification over it yet. */
+  unmatched: Tally
+  /** No invoice in the register: the AI found none, or a person said so. */
+  missing: Tally
+}
+
+export interface AccountStatus {
+  compte: string
+  statements: number
+  period_from: string | null
+  period_to: string | null
+  last_upload_at: string | null
+  days_since: number | null
+  payments: PaymentTotals
+  gaps: { from_month: string; to_month: string; months: number }[]
+}
+
+export interface MonthCell {
+  compte: string
+  covered: boolean
+  payments: number
+  confirmed: number
+  pending: number
+  missing: number
+  pending_amount: number
+}
+
+export interface MovementIssue {
+  movement_id: number
+  import_id: number
+  compte: string
+  data: string | null
+  concepte: string
+  mes_dades: string
+  amount: number
+  match_status: MatchStatus
+  documents: string[]
+  documents_amount: number | null
+  /** Positive: the invoices fall short of what left the account. */
+  difference: number | null
+}
+
+export interface DocumentIssue {
+  num_doc_intern: string
+  num_factura: string
+  proveidor: string
+  data_factura: string | null
+  data_pagament: string | null
+  import_value: number | null
+  compte: string
+  pagament: string
+  metode_pagament: string
+  has_proposal: boolean
+  /** A statement of its account covers its date, so the payment should be there. */
+  covered: boolean
+  days: number | null
+}
+
+export interface IssueList<T> {
+  total: Tally
+  items: T[]
+}
+
+export interface RegisterHealth {
+  total: number
+  in_flight: number
+  errors: number
+  needs_validation: number
+  validated: number
+  not_in_sheet: number
+  without_file: number
+  invalid_iban: number
+  duplicates_removed: number
+  missing_fields: Record<string, number>
+  by_tipus: Record<string, number>
+}
+
+export interface StatusOverview {
+  generated_at: string
+  today: string
+  payments: PaymentTotals
+  documents: {
+    total: number
+    payable: number
+    justified: number
+    validated: number
+    needs_validation: number
+  }
+  accounts: AccountStatus[]
+  months: { month: string; cells: MonthCell[] }[]
+  missing_invoices: IssueList<MovementIssue>
+  amount_mismatches: IssueList<MovementIssue>
+  paid_not_found: IssueList<DocumentIssue>
+  overdue: IssueList<DocumentIssue>
+  health: RegisterHealth
+  caixeta_synced_at: string | null
+  last_run_at: string | null
+}

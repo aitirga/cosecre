@@ -234,6 +234,22 @@ watch(visible, (list) => {
   }
 })
 
+// `?moviment=` (from Estat) opens one movement, wherever the filter is. Once:
+// the param stays in the URL, because the shell remounts a view whose URL changes.
+let movementAsked = Number(route.query.moviment) || null
+watch(
+  movements,
+  (list) => {
+    const found = movementAsked ? list.find((m) => m.id === movementAsked) : undefined
+    if (!found) return
+    movementAsked = null
+    if (found.categoria === 'pagament' && !visible.value.some((m) => m.id === found.id)) filter.value = 'all'
+    if (found.categoria !== 'pagament') showOthers.value = true
+    selectedId.value = found.id
+  },
+  { immediate: true },
+)
+
 const detailQuery = useQuery({
   queryKey: computed(() => ['reconcile-movement', selectedId.value]),
   queryFn: () => api.reconcileMovement(selectedId.value as number),

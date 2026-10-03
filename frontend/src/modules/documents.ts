@@ -13,6 +13,7 @@ import ReconcileView from '../views/ReconcileView.vue'
 import RegisterView from '../views/RegisterView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import StatementsView from '../views/StatementsView.vue'
+import StatusView from '../views/StatusView.vue'
 import type { CosecreModule } from './types'
 
 /**
@@ -33,6 +34,7 @@ export const documentsModule: CosecreModule = {
   id: 'documents',
   appSlug: 'cosecre-docs',
   routes: [
+    { path: 'estat', name: 'status', component: StatusView },
     { path: 'registre', name: 'register', component: RegisterView },
     { path: 'registre/:internalDocNumber', name: 'document', component: DocumentDetailView },
     { path: 'extractes', name: 'statements', component: StatementsView },
@@ -50,6 +52,8 @@ export const documentsModule: CosecreModule = {
     { id: 'tasques', label: 'Tasques' },
   ],
   nav: [
+    // Top level, first: the overview everything else is the detail of.
+    { name: 'status', label: 'Estat', icon: 'activity' },
     {
       name: 'register',
       label: 'Registre',

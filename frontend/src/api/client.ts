@@ -20,6 +20,7 @@ import type {
   MovementDetail,
   ReconcileStatement,
   Statement,
+  StatusOverview,
   BackupComparison,
   BackupOverview,
   CaptureSource,
@@ -686,6 +687,11 @@ export const api = {
   },
   documentPayments(reference: string) {
     return request<DocumentPayment[]>(`/reconciliation/documents/${reference}/payments`)
+  },
+
+  // ── Estat ───────────────────────────────────────────────────────────────
+  status() {
+    return request<StatusOverview>('/status')
   },
 
   // ── Documents app settings ──────────────────────────────────────────────
