@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -50,7 +50,9 @@ watch(documents, (updated) => {
 })
 
 // ── The bank movement that paid an entry, floating beside it ─────────────────
-type MovementCardState = { movement: Movement; x: number; y: number }
+// Each card is anchored to the chip that opened it: it scrolls with its row,
+// and dragging it only changes where it sits relative to that chip.
+type MovementCardState = { movement: Movement; x: number; y: number; anchor: HTMLElement; dx: number; dy: number }
 const movementCards = ref<MovementCardState[]>([])
 const MOVEMENT_CARD_W = 300
 
@@ -63,12 +65,33 @@ async function toggleMovement(payment: PaidBy, event: MouseEvent) {
     movementCards.value = movementCards.value.filter((c) => c.movement.id !== payment.movement_id)
     return
   }
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const anchor = event.currentTarget as HTMLElement
+  const rect = anchor.getBoundingClientRect()
   const x = rect.right + 8 + MOVEMENT_CARD_W <= window.innerWidth - 8 ? rect.right + 8 : Math.max(8, rect.left - MOVEMENT_CARD_W - 8)
   const y = Math.min(Math.max(8, rect.top - 4), window.innerHeight - 320)
   const movement = await api.reconcileMovement(payment.movement_id)
-  if (!movementOpen(movement.id)) movementCards.value.push({ movement, x, y })
+  if (movementOpen(movement.id)) return
+  const now = anchor.getBoundingClientRect()
+  movementCards.value.push({ movement, x, y, anchor, dx: x - now.left, dy: y - now.top })
 }
+
+function moveMovement(card: MovementCardState, x: number, y: number) {
+  const rect = card.anchor.getBoundingClientRect()
+  Object.assign(card, { x, y, dx: x - rect.left, dy: y - rect.top })
+}
+
+function followAnchors() {
+  for (const card of movementCards.value) {
+    if (!card.anchor.isConnected) continue
+    const rect = card.anchor.getBoundingClientRect()
+    card.x = rect.left + card.dx
+    card.y = rect.top + card.dy
+  }
+}
+
+// Capture catches the table's own scroller as well as the page.
+onMounted(() => window.addEventListener('scroll', followAnchors, { capture: true, passive: true }))
+onBeforeUnmount(() => window.removeEventListener('scroll', followAnchors, { capture: true }))
 
 function closeMovement(card: MovementCardState) {
   movementCards.value = movementCards.value.filter((c) => c !== card)
@@ -538,7 +561,7 @@ const showUpload = ref(true)
       :y="card.y"
       pinned
       @close="closeMovement(card)"
-      @move="(x, y) => Object.assign(card, { x, y })"
+      @move="(x, y) => moveMovement(card, x, y)"
     />
 
     <Teleport to="body">
