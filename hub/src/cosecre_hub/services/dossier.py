@@ -166,8 +166,14 @@ def _original(document: Document) -> Original:
     return Original("image", path, name)
 
 
-def _lines(session: Session, statement: StatementImport, proposals: bool) -> list[Line]:
-    movements = (
+def _lines(
+    session: Session,
+    statement: StatementImport,
+    proposals: bool,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> list[Line]:
+    query = (
         session.query(BankMovement)
         .options(
             selectinload(BankMovement.matches)
@@ -175,8 +181,13 @@ def _lines(session: Session, statement: StatementImport, proposals: bool) -> lis
             .selectinload(Document.upload)
         )
         .filter(BankMovement.import_id == statement.id)
-        .all()
     )
+    # A range keeps only the lines dated inside it; an undated line has no place in one.
+    if date_from:
+        query = query.filter(BankMovement.data >= date_from)
+    if date_to:
+        query = query.filter(BankMovement.data <= date_to)
+    movements = query.all()
     # A statement reads oldest first; undated lines (rare) go last.
     movements.sort(key=lambda m: (m.data or date.max, m.id))
     lines = []
@@ -226,10 +237,10 @@ def _wrap(text: str, font: str, size: float, width: float, max_lines: int) -> li
     return lines
 
 
-def _period(statement: StatementImport, lines: list[Line]) -> str:
+def _period(statement: StatementImport, lines: list[Line], date_from: date | None = None, date_to: date | None = None) -> str:
     dates = [line.movement.data for line in lines if line.movement.data]
-    start = statement.period_from or (min(dates) if dates else None)
-    end = statement.period_to or (max(dates) if dates else None)
+    start = date_from or statement.period_from or (min(dates) if dates else None)
+    end = date_to or statement.period_to or (max(dates) if dates else None)
     if not start and not end:
         return "sense dates"
     return f"{format_date(start)} – {format_date(end)}"
@@ -246,10 +257,15 @@ def _status(line: Line) -> tuple[str, object]:
     return label, colour
 
 
-def file_name(statement: StatementImport) -> str:
+def file_name(statement: StatementImport, date_from: date | None = None, date_to: date | None = None) -> str:
+    account = "".join(ch if ch.isalnum() else "-" for ch in statement.compte.lower()).strip("-") or "extracte"
+    if date_from or date_to:
+        start = date_from or statement.period_from
+        end = date_to or statement.period_to
+        span = "-".join(f"{d:%Y%m%d}" for d in (start, end) if d)
+        return f"dossier-{account}-{span}.pdf"
     stamp = statement.period_to or statement.period_from or date.today()
-    account = "".join(ch if ch.isalnum() else "-" for ch in statement.compte.lower()).strip("-")
-    return f"dossier-{account or 'extracte'}-{stamp:%Y-%m}.pdf"
+    return f"dossier-{account}-{stamp:%Y-%m}.pdf"
 
 
 # ── Pages ────────────────────────────────────────────────────────────────────
@@ -297,7 +313,15 @@ def _index_pages(count: int) -> int:
     return 1 + -(-(count - first) // rest)
 
 
-def _draw_index(pages: _Pages, statement: StatementImport, lines: list[Line], period: str, proposals: bool, today: date) -> None:
+def _draw_index(
+    pages: _Pages,
+    statement: StatementImport,
+    lines: list[Line],
+    period: str,
+    proposals: bool,
+    today: date,
+    ranged: bool = False,
+) -> None:
     c = pages.c
     payments = [line for line in lines if line.is_payment]
     confirmed = [line for line in payments if line.movement.match_status == "confirmed"]
@@ -322,6 +346,8 @@ def _draw_index(pages: _Pages, statement: StatementImport, lines: list[Line], pe
     c.setFont(SANS, 8)
     c.setFillColor(INK_400)
     note = f"Generat el {format_date(today)}."
+    if ranged:
+        note += f" Només els moviments del període {period}."
     if proposals:
         note += " Inclou propostes encara no confirmades, marcades com a PROPOSTA."
     c.drawString(MARGIN, TOP - 59, _fit(note, SANS, 8, CONTENT_W))
@@ -373,7 +399,8 @@ def _draw_index(pages: _Pages, statement: StatementImport, lines: list[Line], pe
         if not lines and first:
             c.setFont(SANS, 8.5)
             c.setFillColor(INK_400)
-            c.drawString(MARGIN, y - ROW_H, "Aquest extracte no té cap moviment.")
+            empty = "No hi ha cap moviment en aquest període." if ranged else "Aquest extracte no té cap moviment."
+            c.drawString(MARGIN, y - ROW_H, empty)
         pages.finish_page()
         first = False
         if not remaining:
@@ -630,11 +657,23 @@ def _image(path: Path) -> tuple[ImageReader, tuple[int, int]]:
 # ── Putting it together ──────────────────────────────────────────────────────
 
 
-def build(session: Session, statement: StatementImport, *, proposals: bool = False, today: date | None = None) -> Path:
-    """Write the dossier to a temporary file and return its path; the caller deletes it."""
+def build(
+    session: Session,
+    statement: StatementImport,
+    *,
+    proposals: bool = False,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    today: date | None = None,
+) -> Path:
+    """Write the dossier to a temporary file and return its path; the caller deletes it.
+
+    ``date_from``/``date_to`` (both inclusive, either optional) narrow it to the
+    lines dated inside that range: a quarter of a year-long statement, say.
+    """
     today = today or date.today()
-    lines = _lines(session, statement, proposals)
-    period = _period(statement, lines)
+    lines = _lines(session, statement, proposals, date_from, date_to)
+    period = _period(statement, lines, date_from, date_to)
 
     # Number every page before drawing any: index, then each sheet followed by
     # its PDF original, if it has one.
@@ -650,7 +689,7 @@ def build(session: Session, statement: StatementImport, *, proposals: bool = Fal
     try:
         drawn = io.BytesIO()
         pages = _Pages(drawn, statement, period, total)
-        _draw_index(pages, statement, lines, period, proposals, today)
+        _draw_index(pages, statement, lines, period, proposals, today, ranged=bool(date_from or date_to))
         for line in lines:
             for sheet in line.sheets:
                 _draw_sheet(pages, line, sheet, len(lines))

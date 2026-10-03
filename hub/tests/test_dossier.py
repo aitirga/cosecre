@@ -102,3 +102,32 @@ def test_a_broken_photo_or_an_empty_statement_still_gives_a_dossier(register):
     pdf = PdfReader(io.BytesIO(client.get(f"{DOSSIER}/{empty}", headers=headers).content))
     assert len(pdf.pages) == 1
     assert client.get(f"{DOSSIER}/999", headers=headers).status_code == 404
+
+
+def test_a_date_range_keeps_only_the_lines_dated_inside_it(register):
+    client, headers, _, _ = register
+    early = upload(client, headers, content=_jpeg())
+    scanned = upload(client, headers, source="file", name="f.pdf", content=_pdf(2), mime="application/pdf")
+    statement_id = _statement(
+        client,
+        [
+            (-100.0, "confirmed", [(early, "confirmed")], "pagament"),  # 2 Jan
+            (-40.0, "confirmed", [(scanned, "confirmed")], "pagament"),  # 3 Jan
+            (-9.0, "unmatched", [], "pagament"),  # 4 Jan
+        ],
+    )
+
+    response = client.get(f"{DOSSIER}/{statement_id}?date_from=2026-01-03&date_to=2026-01-04", headers=headers)
+    assert response.status_code == 200, response.text
+    assert "dossier-general-20260103-20260104.pdf" in response.headers["content-disposition"]
+    pdf = PdfReader(io.BytesIO(response.content))
+    # Index, the PDF's sheet and its two pages; the 2 January photo stays out.
+    assert len(pdf.pages) == 4
+    index = pdf.pages[0].extract_text()
+    assert "03/01/2026" in index and "02/01/2026" not in index.split("Índex")[-1]
+    assert "Només els moviments" in index
+
+    nothing = client.get(f"{DOSSIER}/{statement_id}?date_from=2026-02-01", headers=headers)
+    assert len(PdfReader(io.BytesIO(nothing.content)).pages) == 1
+    backwards = client.get(f"{DOSSIER}/{statement_id}?date_from=2026-01-05&date_to=2026-01-01", headers=headers)
+    assert backwards.status_code == 422

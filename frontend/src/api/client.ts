@@ -696,11 +696,18 @@ export const api = {
 
   // ── Eines ───────────────────────────────────────────────────────────────
   /** The statement as one PDF: an index, then each invoice with its original. */
-  downloadStatementDossier(statement: Statement, proposals: boolean): Promise<void> {
-    return saveFile(
-      `/tools/statement-dossier/${statement.id}${proposals ? '?proposals=true' : ''}`,
-      `dossier-${statement.compte}.pdf`,
-    )
+  /** ``from``/``to`` (``yyyy-mm-dd``, inclusive) keep only the lines dated inside them. */
+  downloadStatementDossier(
+    statement: Statement,
+    proposals: boolean,
+    range: { from?: string | null; to?: string | null } = {},
+  ): Promise<void> {
+    const params = new URLSearchParams()
+    if (proposals) params.set('proposals', 'true')
+    if (range.from) params.set('date_from', range.from)
+    if (range.to) params.set('date_to', range.to)
+    const query = params.toString() ? `?${params}` : ''
+    return saveFile(`/tools/statement-dossier/${statement.id}${query}`, `dossier-${statement.compte}.pdf`)
   },
 
   // ── Documents app settings ──────────────────────────────────────────────
