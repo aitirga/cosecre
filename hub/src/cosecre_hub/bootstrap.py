@@ -51,6 +51,8 @@ ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("workspace_settings", "caixeta_synced_at", "DATETIME"),
     ("workspace_settings", "caixeta_fingerprint", "VARCHAR(64) DEFAULT '' NOT NULL"),
     ("bank_movements", "codi", "VARCHAR(20) DEFAULT '' NOT NULL"),
+    ("bank_movements", "mirror_refs", "TEXT"),
+    ("bank_movements", "mirror_numbers", "TEXT"),
 ]
 
 #: Models that were once the default and should follow the configured one,

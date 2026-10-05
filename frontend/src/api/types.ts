@@ -468,6 +468,26 @@ export interface MatchRun {
   finished_at: string | null
 }
 
+export interface MirrorLine {
+  codi: string
+  compte: string
+  text: string
+}
+
+/** The statements mirrored in the accounting spreadsheet, one tab per account. */
+export interface MirrorStatus {
+  configured: boolean
+  spreadsheet_url: string | null
+  synced_at: string | null
+  running: boolean
+  error: string | null
+  tabs: string[]
+  /** Edits read from the sheet and applied: a line justified, or no longer. */
+  applied: MirrorLine[]
+  /** Edits that could not apply; the sheet was put back as the database has it. */
+  issues: MirrorLine[]
+}
+
 export interface CaixetaStatus {
   configured: boolean
   synced_at: string | null

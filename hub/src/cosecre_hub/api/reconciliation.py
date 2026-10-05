@@ -33,6 +33,7 @@ from ..schemas.statements import (
 from ..services.matching import engine
 from ..services.matching.confidence import band
 from ..services.statements import PAYMENT
+from . import statements_mirror
 from .documents.register import push_document
 from .statements.routes import to_document_brief as _brief
 from .statements.routes import to_movement_read, to_statement_read
@@ -338,19 +339,28 @@ def active_run(
 # ── Deciding ─────────────────────────────────────────────────────────────────
 
 
-@router.post("/movements/{movement_id}/confirm", response_model=MovementDetail)
-def confirm(
-    movement_id: int,
-    payload: ConfirmRequest,
-    request: Request,
-    session: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """This movement paid these invoices. Fills in their payment fields."""
-    movement = _movement(session, movement_id)
-    documents = session.query(Document).filter(Document.internal_doc_number.in_(payload.document_refs)).all()
-    if len(documents) != len(set(payload.document_refs)):
-        raise HTTPException(status_code=404, detail="Alguna factura no existeix.")
+class MatchConflict(Exception):
+    """A confirmation that cannot happen; the message is for a person."""
+
+
+def _push_documents(app, session: Session, documents: list[Document]) -> None:
+    for document in documents:
+        try:
+            push_document(app, session, document)
+            session.commit()
+        except Exception:  # noqa: BLE001 — the database has it; the sheet catches up on the next sync
+            logger.warning("Could not push %s to the sheet", document.internal_doc_number, exc_info=True)
+            session.rollback()
+
+
+def confirm_documents(
+    app, session: Session, movement: BankMovement, documents: list[Document], user_id: int | None
+) -> None:
+    """This movement paid these invoices: confirm it and fill in their payment fields.
+
+    Shared by the confirm button and the statements sheet, where typing an
+    invoice next to a line means the same thing.
+    """
     taken = (
         session.query(PaymentMatch)
         .filter(
@@ -361,8 +371,9 @@ def confirm(
         .first()
     )
     if taken is not None:
-        raise HTTPException(
-            status_code=409, detail="Aquesta factura ja està justificada amb un altre moviment."
+        raise MatchConflict(
+            f"La factura {taken.document.internal_doc_number} ja està justificada amb el moviment "
+            f"{taken.movement.codi or taken.movement.id}."
         )
 
     now = datetime.now(UTC)
@@ -384,7 +395,7 @@ def confirm(
             )
             session.add(match)
         match.status = "confirmed"
-        match.confirmed_by_id = user.id
+        match.confirmed_by_id = user_id
         match.confirmed_at = now
 
         document.pagament = "Pagat"
@@ -409,14 +420,43 @@ def confirm(
                 other.movement.match_status = "unmatched"
     movement.match_status = "confirmed"
     session.commit()
+    _push_documents(app, session, documents)
 
-    for document in documents:
-        try:
-            push_document(request.app, session, document)
-            session.commit()
-        except Exception:  # noqa: BLE001 — the database has it; the sheet catches up on the next sync
-            logger.warning("Could not push %s to the sheet", document.internal_doc_number, exc_info=True)
-            session.rollback()
+
+def undo_movement(app, session: Session, movement: BankMovement) -> None:
+    """Take back a confirmation or a "Cap factura". Invoice fields already written stay."""
+    unjustified = [m.document for m in movement.matches if m.status == "confirmed" and m.document]
+    for match in list(movement.matches):
+        if match.status == "confirmed" and match.decided_by == "person":
+            session.delete(match)
+        elif match.status in {"confirmed", "rejected"}:
+            match.status = "alternative"
+    movement.match_status = "unmatched"
+    session.commit()
+    # Only their row colour changes: no longer green.
+    _push_documents(app, session, unjustified)
+
+
+@router.post("/movements/{movement_id}/confirm", response_model=MovementDetail)
+def confirm(
+    movement_id: int,
+    payload: ConfirmRequest,
+    request: Request,
+    session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """This movement paid these invoices. Fills in their payment fields."""
+    movement = _movement(session, movement_id)
+    documents = session.query(Document).filter(Document.internal_doc_number.in_(payload.document_refs)).all()
+    if len(documents) != len(set(payload.document_refs)):
+        raise HTTPException(status_code=404, detail="Alguna factura no existeix.")
+    try:
+        confirm_documents(request.app, session, movement, documents, user.id)
+    except MatchConflict:
+        raise HTTPException(
+            status_code=409, detail="Aquesta factura ja està justificada amb un altre moviment."
+        ) from None
+    statements_mirror.schedule(request.app)
     session.expire_all()
     return _detail(session, _movement(session, movement_id))
 
@@ -469,24 +509,8 @@ def undo(
     _: User = Depends(get_current_user),
 ):
     """Take back a confirmation or a "Cap factura". Invoice fields already written stay as they are."""
-    movement = _movement(session, movement_id)
-    unjustified = [m.document for m in movement.matches if m.status == "confirmed" and m.document]
-    for match in list(movement.matches):
-        if match.status == "confirmed" and match.decided_by == "person":
-            session.delete(match)
-        elif match.status in {"confirmed", "rejected"}:
-            match.status = "alternative"
-    movement.match_status = "unmatched"
-    session.commit()
-
-    # Only their row colour changes: no longer green.
-    for document in unjustified:
-        try:
-            push_document(request.app, session, document)
-            session.commit()
-        except Exception:  # noqa: BLE001 — the database has it; the sheet catches up on the next sync
-            logger.warning("Could not push %s to the sheet", document.internal_doc_number, exc_info=True)
-            session.rollback()
+    undo_movement(request.app, session, _movement(session, movement_id))
+    statements_mirror.schedule(request.app)
     session.expire_all()
     return _detail(session, _movement(session, movement_id))
 

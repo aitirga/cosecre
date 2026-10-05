@@ -140,6 +140,9 @@ def create_app(
             session.close()
         app.state.caixeta_checked_at = 0.0
         app.state.caixeta_error = None
+        app.state.mirror_synced_at = None
+        app.state.mirror_error = None
+        app.state.mirror_timer = None
         tasks = []
         # The machine wakes because someone is about to use it: read the caixeta now.
         tasks.append(asyncio.create_task(asyncio.to_thread(caixeta_sync.sync_if_due, app)))
@@ -155,6 +158,9 @@ def create_app(
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+            timer = getattr(app.state, "mirror_timer", None)
+            if timer is not None:
+                timer.cancel()
             classifier.close()
             sheet_service.close()
             engine.dispose()

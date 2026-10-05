@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { RouterLink } from 'vue-router'
 
 import { api, ApiError } from '../api/client'
-import type { Categoria, Movement, Statement } from '../api/types'
+import type { Categoria, MirrorStatus, Movement, Statement } from '../api/types'
 import { METODES_PAGAMENT, formatAmount, formatDate } from '../document-fields'
 import { CATEGORIA_LABEL, SOURCE_LABEL } from '../matching'
 import AppIcon from '../components/AppIcon.vue'
@@ -119,6 +119,28 @@ function dismiss(id: string) {
   drops.value = drops.value.filter((d) => d.id !== id)
 }
 
+// ── The accounting spreadsheet ───────────────────────────────────────────────
+// Every account has a tab there. The button brings in what people typed in its
+// invoice columns, then rewrites the tabs from here.
+
+const mirrorQuery = useQuery({ queryKey: ['statements-mirror'], queryFn: api.mirrorStatus })
+const mirrorResult = ref<MirrorStatus | null>(null)
+const mirrorSync = useMutation({
+  mutationFn: api.syncMirror,
+  onSuccess: (status) => {
+    queryClient.setQueryData(['statements-mirror'], status)
+    mirrorResult.value = status
+    if (status.applied.length) {
+      refresh()
+      void queryClient.invalidateQueries({ queryKey: ['reconcile-statements'] })
+    }
+  },
+})
+const mirrorError = computed(() => {
+  const error = mirrorSync.error.value
+  return error instanceof ApiError ? error.message : error ? String(error) : mirrorQuery.data.value?.error
+})
+
 // ── Caixeta ──────────────────────────────────────────────────────────────────
 
 const caixetaSync = useMutation({
@@ -199,7 +221,61 @@ function amountClass(m: Movement) {
           <RouterLink :to="{ name: 'reconcile' }">Justificar extractes</RouterLink>.
         </p>
       </div>
+      <div v-if="mirrorQuery.data.value?.configured" class="head-actions">
+        <a
+          v-if="mirrorQuery.data.value.spreadsheet_url"
+          class="btn btn-ghost"
+          :href="mirrorQuery.data.value.spreadsheet_url"
+          target="_blank"
+          rel="noopener"
+        >
+          <AppIcon name="external" />
+          Obre el full
+        </a>
+        <button
+          class="btn btn-outline"
+          type="button"
+          :disabled="mirrorSync.isPending.value || mirrorQuery.data.value.running"
+          :title="`Porta a Cosecre les factures escrites a les pestanyes «Extracte …» del full de comptabilitat, i torna a escriure-les. Última: ${ago(mirrorQuery.data.value.synced_at)}.`"
+          @click="mirrorSync.mutate()"
+        >
+          <AppIcon name="sheet" :class="{ spin: mirrorSync.isPending.value }" />
+          {{ mirrorSync.isPending.value ? 'Sincronitzant…' : 'Sincronitza amb el full' }}
+        </button>
+      </div>
     </header>
+
+    <p v-if="mirrorError" class="notice notice-error">
+      <AppIcon name="alert" :size="15" />
+      <span>{{ mirrorError }}</span>
+    </p>
+    <section v-else-if="mirrorResult" class="card mirror-result">
+      <div class="card-head">
+        <h2 class="card-title">
+          <AppIcon name="check" :size="14" class="ok" />
+          Full sincronitzat
+        </h2>
+        <span class="muted">
+          {{ mirrorResult.applied.length ? `${mirrorResult.applied.length} canvis del full aplicats` : 'Cap canvi al full' }}
+          · {{ mirrorResult.tabs.length }} pestanyes reescrites
+        </span>
+        <button class="btn btn-ghost btn-icon btn-sm" type="button" title="Amaga" @click="mirrorResult = null">
+          <AppIcon name="close" :size="14" />
+        </button>
+      </div>
+      <ul v-if="mirrorResult.applied.length || mirrorResult.issues.length" class="mirror-lines">
+        <li v-for="line in mirrorResult.applied" :key="`a-${line.compte}-${line.codi}`">
+          <span class="mono">{{ line.codi }}</span>
+          <span class="muted">{{ line.compte }}</span>
+          <span>{{ line.text }}</span>
+        </li>
+        <li v-for="line in mirrorResult.issues" :key="`i-${line.compte}-${line.codi}`" class="issue">
+          <span class="mono">{{ line.codi }}</span>
+          <span class="muted">{{ line.compte }}</span>
+          <span>{{ line.text }} <span class="muted">— al full hi torna a haver el que diu Cosecre.</span></span>
+        </li>
+      </ul>
+    </section>
 
     <section class="sources" aria-label="Fonts">
       <article v-for="source in coverage" :key="source.compte" class="source">
@@ -632,6 +708,49 @@ function amountClass(m: Movement) {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 6px;
+}
+
+.head-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mirror-result .card-head {
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.mirror-result .card-head .btn {
+  margin-left: auto;
+}
+
+.mirror-result .card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mirror-result .ok {
+  color: var(--olive-700);
+}
+
+.mirror-lines {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 16px 12px;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+
+.mirror-lines li {
+  display: grid;
+  grid-template-columns: 64px 140px 1fr;
+  gap: 10px;
+}
+
+.mirror-lines .issue {
+  color: var(--danger-700);
 }
 
 .caixeta {

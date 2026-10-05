@@ -395,6 +395,12 @@ class BankMovement(Base):
     #: Our own key for the line, one series per account (``TP_007``, ``MEN_112``);
     #: the caixeta keeps its sheet's ``Cix_NNN``. See ``statements.store.assign_codes``.
     codi: Mapped[str] = mapped_column(String(20), default="", server_default="", index=True)
+    #: What the statements mirror last wrote in this line's "Codi intern factura"
+    #: and "Núm. factura" cells; ``None`` until it has written the line at all.
+    #: A cell that differs from these was edited by hand. See
+    #: ``api.statements_mirror``.
+    mirror_refs: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mirror_numbers: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     #: ``unmatched``, ``proposed``, ``confirmed``, ``rejected`` or ``not_applicable``.
     match_status: Mapped[str] = mapped_column(String(20), default="unmatched", index=True)

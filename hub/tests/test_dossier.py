@@ -42,6 +42,7 @@ def _statement(client, lines):
             movement = BankMovement(
                 import_id=statement.id, fingerprint=f"m{day}", source="caixa_xls", compte="General",
                 data=date(2026, 1, 1) + timedelta(days=day), concepte=f"COMPRA {day} · Café Ñandú", import_value=amount,
+                codi=f"G_{day:03d}",
                 match_status=status, categoria=categoria,
             )
             session.add(movement)
@@ -53,7 +54,7 @@ def _statement(client, lines):
         return statement.id
 
 
-def test_the_dossier_puts_each_invoice_after_the_index_with_pdf_originals_inline(register):
+def test_the_dossier_is_the_statement_then_each_payments_paper_in_order(register):
     client, headers, _, _ = register
     photo = upload(client, headers, content=_jpeg())
     scanned = upload(client, headers, source="file", name="f.pdf", content=_pdf(2), mime="application/pdf")
@@ -61,11 +62,11 @@ def test_the_dossier_puts_each_invoice_after_the_index_with_pdf_originals_inline
     statement_id = _statement(
         client,
         [
-            (-100.0, "confirmed", [(photo, "confirmed")], "pagament"),
-            (-40.0, "confirmed", [(scanned, "confirmed")], "pagament"),
-            (-12.5, "proposed", [(proposed, "proposed")], "pagament"),
-            (-3.0, "not_applicable", [], "comissio"),
-            (-9.0, "unmatched", [], "pagament"),
+            (-100.0, "confirmed", [(photo, "confirmed")], "pagament"),  # G_001: ticket page
+            (-40.0, "confirmed", [(scanned, "confirmed")], "pagament"),  # G_002: the PDF, whole
+            (-12.5, "proposed", [(proposed, "proposed")], "pagament"),  # G_003: a guess → blank page
+            (-3.0, "not_applicable", [], "comissio"),  # G_004: a fee, no page
+            (-9.0, "unmatched", [], "pagament"),  # G_005: blank page
         ],
     )
 
@@ -75,20 +76,26 @@ def test_the_dossier_puts_each_invoice_after_the_index_with_pdf_originals_inline
     assert "dossier-general-2026-03.pdf" in response.headers["content-disposition"]
 
     pdf = PdfReader(io.BytesIO(response.content))
-    # Index, the photo's sheet, the PDF's sheet and its two pages. No proposals.
-    assert len(pdf.pages) == 5
-    index = pdf.pages[0].extract_text()
-    assert "Extracte General" in index and "Justificat" in index and "Pendent" in index
-    assert "Comissió" in index
-    assert "1 / 5" in index
-    assert "pàgines 4–5" in pdf.pages[2].extract_text()
-    assert "Factura en PDF, pàgina 1" in pdf.pages[3].extract_text()
-    assert [item.title for item in pdf.outline][0] == "Índex de moviments"
-    assert len(pdf.outline) == 3
+    assert len(pdf.pages) == 6
+    table = pdf.pages[0].extract_text()
+    assert "Extracte General" in table and "CODI INTERN FACTURA" in table
+    assert all(f"G_00{n}" in table for n in range(1, 6))
+    assert photo in table and scanned in table
+    assert proposed not in table  # a proposal is not written in
+    assert pdf.pages[0].mediabox.width > pdf.pages[0].mediabox.height  # landscape, like the bank's sheet
 
-    with_proposals = PdfReader(io.BytesIO(client.get(f"{DOSSIER}/{statement_id}?proposals=true", headers=headers).content))
-    assert len(with_proposals.pages) == 6
-    assert "PROPOSTA" in with_proposals.pages[5].extract_text()
+    ticket = pdf.pages[1].extract_text()
+    assert "CODI INTERN" in ticket and "G_001" in ticket and photo in ticket and "-100,00" in ticket
+    assert "Factura en PDF, pàgina 1" in pdf.pages[2].extract_text()
+    assert "Factura en PDF, pàgina 2" in pdf.pages[3].extract_text()
+    blank = pdf.pages[4].extract_text()
+    assert "G_003" in blank and "02/01/2026" not in blank and "-12,50" in blank and proposed not in blank
+    assert "G_005" in pdf.pages[5].extract_text()
+    assert "6 / 6" in pdf.pages[5].extract_text()
+
+    outline = [item.title for item in pdf.outline]
+    assert outline[0] == "Extracte"
+    assert [title.split(" · ")[0] for title in outline[1:]] == ["G_001", "G_002", "G_003", "G_005"]
 
 
 def test_a_broken_photo_or_an_empty_statement_still_gives_a_dossier(register):
@@ -102,6 +109,15 @@ def test_a_broken_photo_or_an_empty_statement_still_gives_a_dossier(register):
     pdf = PdfReader(io.BytesIO(client.get(f"{DOSSIER}/{empty}", headers=headers).content))
     assert len(pdf.pages) == 1
     assert client.get(f"{DOSSIER}/999", headers=headers).status_code == 404
+
+
+def test_a_long_statement_runs_over_several_pages(register):
+    client, headers, _, _ = register
+    statement_id = _statement(client, [(-1.0, "not_applicable", [], "comissio")] * 60)
+    pdf = PdfReader(io.BytesIO(client.get(f"{DOSSIER}/{statement_id}", headers=headers).content))
+    assert len(pdf.pages) == 3
+    text = "".join(page.extract_text() for page in pdf.pages)
+    assert all(f"G_{n:03d}" in text for n in range(1, 61))
 
 
 def test_a_date_range_keeps_only_the_lines_dated_inside_it(register):
@@ -121,11 +137,11 @@ def test_a_date_range_keeps_only_the_lines_dated_inside_it(register):
     assert response.status_code == 200, response.text
     assert "dossier-general-20260103-20260104.pdf" in response.headers["content-disposition"]
     pdf = PdfReader(io.BytesIO(response.content))
-    # Index, the PDF's sheet and its two pages; the 2 January photo stays out.
+    # The statement, the PDF's two pages, and the 4 January blank page.
     assert len(pdf.pages) == 4
-    index = pdf.pages[0].extract_text()
-    assert "03/01/2026" in index and "02/01/2026" not in index.split("Índex")[-1]
-    assert "Només els moviments" in index
+    table = pdf.pages[0].extract_text()
+    assert "G_002" in table and "G_001" not in table
+    assert "Només els moviments" in table
 
     nothing = client.get(f"{DOSSIER}/{statement_id}?date_from=2026-02-01", headers=headers)
     assert len(PdfReader(io.BytesIO(nothing.content)).pages) == 1

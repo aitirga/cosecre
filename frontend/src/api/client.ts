@@ -13,6 +13,7 @@ import type {
   ReplayResult,
   AuthTokens,
   CaixetaStatus,
+  MirrorStatus,
   DocumentBrief,
   DocumentPayment,
   MatchRun,
@@ -640,6 +641,14 @@ export const api = {
     })
   },
 
+  mirrorStatus() {
+    return request<MirrorStatus>('/statements/mirror')
+  },
+  /** Brings the spreadsheet's edits into the database, then rewrites its statement tabs. */
+  syncMirror() {
+    return request<MirrorStatus>('/statements/mirror/sync', { method: 'POST' })
+  },
+
   // ── Justifying statements (matching) ────────────────────────────────────
   reconcileStatements() {
     return request<ReconcileStatement[]>('/reconciliation/statements')
@@ -699,11 +708,9 @@ export const api = {
   /** ``from``/``to`` (``yyyy-mm-dd``, inclusive) keep only the lines dated inside them. */
   downloadStatementDossier(
     statement: Statement,
-    proposals: boolean,
     range: { from?: string | null; to?: string | null } = {},
   ): Promise<void> {
     const params = new URLSearchParams()
-    if (proposals) params.set('proposals', 'true')
     if (range.from) params.set('date_from', range.from)
     if (range.to) params.set('date_to', range.to)
     const query = params.toString() ? `?${params}` : ''

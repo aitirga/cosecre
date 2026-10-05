@@ -121,6 +121,24 @@ _LAYOUT_TTL_SECONDS = 60
 #: Not a column: a flag in a row's values that only picks its colour.
 JUSTIFIED_KEY = "justificat"
 
+#: Row tones of the statements mirror: a justified line, and a payment whose
+#: invoice cells are still empty.
+_MIRROR_TONES = {"justified": _JUSTIFIED_COLOUR, "pending": _PENDING_COLOUR}
+
+
+@dataclass(slots=True)
+class MirrorTabData:
+    """One statements tab to write. ``kinds``: ``text``, ``date`` or ``money`` per column."""
+
+    title: str
+    headers: list[str]
+    kinds: list[str]
+    widths: tuple[int, ...]
+    #: Leading columns that get a warning-only protection when the tab is created.
+    protected_columns: int
+    rows: list[list[Any]]
+    tones: list[str]
+
 
 class SheetDocumentNotFound(RuntimeError):
     """A successful sheet read did not find this document's reference."""
@@ -729,6 +747,121 @@ class GoogleSheetsService:
         )
         ranges = response.get("valueRanges", [])
         return {title: (ranges[i].get("values", []) if i < len(ranges) else []) for i, title in enumerate(titles)}
+
+    # ── Statements mirror ────────────────────────────────────────────────────
+
+    @serialized
+    def read_mirror(self, workspace: WorkspaceSetting, titles: list[str]) -> dict[str, list[list[Any]]]:
+        """The named tabs of the register's spreadsheet, unformatted; missing ones left out."""
+        spreadsheet_id = self._spreadsheet_id(workspace)
+        existing = {t.get("title", "") for t in self._tabs(spreadsheet_id)}
+        wanted = [title for title in titles if title in existing]
+        if not wanted:
+            return {}
+        response = (
+            self._values()
+            .batchGet(
+                spreadsheetId=spreadsheet_id,
+                ranges=[f"{quote_title(title)}!A1:Z" for title in wanted],
+                valueRenderOption="UNFORMATTED_VALUE",
+                dateTimeRenderOption="SERIAL_NUMBER",
+            )
+            .execute()
+        )
+        ranges = response.get("valueRanges", [])
+        return {title: (ranges[i].get("values", []) if i < len(ranges) else []) for i, title in enumerate(wanted)}
+
+    @serialized
+    def write_mirror(self, workspace: WorkspaceSetting, tabs: list[MirrorTabData]) -> None:
+        """Rewrite each tab whole: header, every line, and the colour of each row.
+
+        One batch for all of them. A tab is created the first time, with its
+        widths and a warning on the bank's columns; after that its widths and
+        anything a person formatted outside the written range are left alone.
+        The grid is resized to the lines, so a line that went away goes too.
+        """
+        if not tabs:
+            return
+        spreadsheet_id = self._spreadsheet_id(workspace)
+        existing = {t.get("title", ""): t for t in self._tabs(spreadsheet_id)}
+        requests: list[dict[str, Any]] = []
+
+        missing = [tab for tab in tabs if tab.title not in existing]
+        if missing:
+            reply = (
+                self._spreadsheets()
+                .batchUpdate(
+                    spreadsheetId=spreadsheet_id,
+                    body={"requests": [{"addSheet": {"properties": {"title": tab.title}}} for tab in missing]},
+                )
+                .execute()
+            )
+            for tab, answer in zip(missing, reply.get("replies", []), strict=False):
+                properties = answer["addSheet"]["properties"]
+                existing[tab.title] = properties
+                sheet_id = int(properties["sheetId"])
+                for index, width in enumerate(tab.widths):
+                    requests.append({
+                        "updateDimensionProperties": {
+                            "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": index, "endIndex": index + 1},
+                            "properties": {"pixelSize": width},
+                            "fields": "pixelSize",
+                        }
+                    })
+                if tab.protected_columns:
+                    requests.append({
+                        "addProtectedRange": {
+                            "protectedRange": {
+                                "range": {"sheetId": sheet_id, "startColumnIndex": 0, "endColumnIndex": tab.protected_columns},
+                                "description": "Dades del banc: les escriu Cosecre a cada sincronització.",
+                                "warningOnly": True,
+                            }
+                        }
+                    })
+
+        for tab in tabs:
+            sheet_id = int(existing[tab.title]["sheetId"])
+            width = len(tab.headers)
+            requests.append({
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": sheet_id,
+                        # One spare row: Sheets will not freeze every row of a grid, and
+                        # an empty tab would otherwise be only its header.
+                        "gridProperties": {"rowCount": len(tab.rows) + 2, "columnCount": width, "frozenRowCount": 1},
+                    },
+                    "fields": "gridProperties(rowCount,columnCount,frozenRowCount)",
+                }
+            })
+            header = [
+                {
+                    "userEnteredValue": {"stringValue": text},
+                    "userEnteredFormat": {"textFormat": {"bold": True}, "backgroundColor": _HEADER_COLOUR},
+                }
+                for text in tab.headers
+            ]
+            rows = [{"values": header}]
+            for values, tone in zip(tab.rows, tab.tones, strict=True):
+                cells = []
+                for index, (kind, value) in enumerate(zip(tab.kinds, values, strict=True)):
+                    cell = value_to_cell("amount" if kind == "money" else kind, value)
+                    fmt = cell.setdefault("userEnteredFormat", {})
+                    colour = _MIRROR_TONES.get(tone)
+                    if tone == "pending" and index < tab.protected_columns:
+                        colour = None  # only the cells to fill in ask for attention
+                    if colour:
+                        fmt["backgroundColor"] = colour
+                    cells.append(cell)
+                rows.append({"values": cells})
+            rows.append({"values": [{} for _ in tab.headers]})  # clears the spare row
+            requests.append({
+                "updateCells": {
+                    "rows": rows,
+                    "start": {"sheetId": sheet_id, "rowIndex": 0, "columnIndex": 0},
+                    "fields": "userEnteredValue,userEnteredFormat",
+                }
+            })
+        self._batch(spreadsheet_id, requests)
 
     @serialized
     def read_register(self, workspace: WorkspaceSetting) -> list[SheetRow]:

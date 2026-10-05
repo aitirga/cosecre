@@ -22,7 +22,6 @@ const statementsQuery = useQuery({
 })
 const statements = computed<ReconcileStatement[]>(() => statementsQuery.data.value ?? [])
 
-const proposals = ref(false)
 const building = ref<number | null>(null)
 const error = ref('')
 
@@ -125,17 +124,17 @@ function share(t: Tally) {
   return t.payments ? Math.round((t.confirmed / t.payments) * 100) : 0
 }
 
-/** What the PDF will hold, in words: how many sheets it gets. */
+/** What the PDF will hold after the statement, in words. */
 function sheets(t: Tally) {
-  const count = t.confirmed + (proposals.value ? t.proposed : 0)
-  return count === 1 ? '1 fitxa' : `${count} fitxes`
+  const blank = t.payments - t.confirmed
+  return `${t.confirmed} amb factura · ${blank} ${blank === 1 ? 'pàgina' : 'pàgines'} en blanc`
 }
 
 async function generate(statement: ReconcileStatement) {
   building.value = statement.id
   error.value = ''
   try {
-    await api.downloadStatementDossier(statement, proposals.value, active.value ? span(statement) : {})
+    await api.downloadStatementDossier(statement, active.value ? span(statement) : {})
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : 'No s’ha pogut generar el dossier.'
   } finally {
@@ -150,10 +149,12 @@ async function generate(statement: ReconcileStatement) {
       <div>
         <h1 class="page-title">Dossier d'extracte</h1>
         <p class="page-lead">
-          Un PDF per extracte: primer l'índex de tots els moviments, amb el seu estat; després, per
-          a cada pagament justificat, una fitxa amb el moviment, l'entrada del registre i la foto
-          de la factura. Els originals en PDF s'hi afegeixen sencers. Amb unes dates, només hi
-          entren els moviments d'aquell període.
+          Un PDF per extracte. Primer, l'extracte com el dona el banc, amb el número i el codi intern
+          de la factura de cada moviment — en blanc si encara no n'hi ha cap de confirmada, per
+          posar-la a mà. Després, en el mateix ordre, cada factura en PDF sencera; cada tiquet,
+          imprès en una pàgina amb el codi, la data, el concepte i l'import del moviment; i, per
+          als pagaments sense factura, aquesta pàgina en blanc. Amb unes dates, només hi entren
+          els moviments d'aquell període.
         </p>
       </div>
     </header>
@@ -161,11 +162,6 @@ async function generate(statement: ReconcileStatement) {
     <section class="card">
       <div class="card-head">
         <h2 class="card-title">Extractes</h2>
-        <label class="toggle">
-          <input v-model="proposals" type="checkbox" />
-          <span>Inclou propostes sense confirmar</span>
-          <span class="muted">— marcades com a proposta; per revisar, no per lliurar</span>
-        </label>
       </div>
 
       <div class="range">
@@ -260,14 +256,6 @@ async function generate(statement: ReconcileStatement) {
 .dossier {
   display: grid;
   gap: 16px;
-}
-
-.toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--text-sm);
-  cursor: pointer;
 }
 
 .range {

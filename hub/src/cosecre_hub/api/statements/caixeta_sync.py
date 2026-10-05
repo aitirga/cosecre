@@ -76,6 +76,9 @@ def sync(app, session: Session, *, force: bool = False) -> bool | None:
         )
         workspace.caixeta_fingerprint = fingerprint
         session.commit()
+        from ..statements_mirror import schedule  # the mirror imports the reconciliation, which imports us
+
+        schedule(app)
         logger.info("Caixeta synced: %d movements, %d new", statement.rows_total, statement.rows_new)
         return True
 

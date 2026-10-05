@@ -224,7 +224,15 @@ async def upload_statement(
         stored_path=stored_path,
         user_id=user.id,
     )
+    _mirror(request.app)
     return to_statement_read(statement, warnings + list(parsed.meta.get("warnings") or []))
+
+
+def _mirror(app) -> None:
+    # Imported here: the mirror reaches the reconciliation, which imports this module.
+    from ..statements_mirror import schedule
+
+    schedule(app)
 
 
 def _keep(content: bytes, file_name: str, settings) -> Path:
@@ -281,7 +289,10 @@ def download_statement(
 
 @router.delete("/imports/{statement_id}", status_code=204, response_model=None)
 def delete_statement(
-    statement_id: int, session: Session = Depends(get_db), _: User = Depends(get_current_user)
+    statement_id: int,
+    request: Request,
+    session: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
 ) -> None:
     """Remove a statement brought in by mistake. Refused once anything in it is confirmed."""
     statement = _statement(session, statement_id)
@@ -300,6 +311,7 @@ def delete_statement(
         session.delete(movement)
     session.delete(statement)
     session.commit()
+    _mirror(request.app)
 
 
 @router.patch("/movements/{movement_id}", response_model=MovementRead)

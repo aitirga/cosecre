@@ -36,6 +36,11 @@ class FakeSheets(GoogleSheetsService):
         #: Tab title → rows, for ``read_tabs`` (the caixeta).
         self.tabs: dict[str, list[list[Any]]] = {}
         self.tab_reads = 0
+        #: The statements mirror: tab title → grid (header first), as Sheets
+        #: reads it back unformatted; and each written row's tone.
+        self.mirror: dict[str, list[list[Any]]] = {}
+        self.mirror_tones: dict[str, list[str]] = {}
+        self.mirror_writes = 0
 
     # ── Register ─────────────────────────────────────────────────────────────
 
@@ -132,6 +137,40 @@ class FakeSheets(GoogleSheetsService):
         return "backup-id"
 
     # ── Other spreadsheets ───────────────────────────────────────────────────
+
+    # ── Statements mirror ───────────────────────────────────────────────────
+
+    def read_mirror(self, workspace, titles):
+        if self.fail_writes:
+            raise RuntimeError("Google is down")
+        return {t: [list(r) for r in self.mirror[t]] for t in titles if t in self.mirror}
+
+    def write_mirror(self, workspace, tabs):
+        from datetime import date
+
+        from cosecre_hub.services.text_format import to_sheets_serial
+
+        if self.fail_writes:
+            raise RuntimeError("Google is down")
+        self.mirror_writes += 1
+        for tab in tabs:
+            def plain(value):
+                if isinstance(value, date):
+                    return to_sheets_serial(value)
+                return "" if value is None else value
+            self.mirror[tab.title] = [list(tab.headers)] + [[plain(v) for v in row] for row in tab.rows]
+            self.mirror_tones[tab.title] = list(tab.tones)
+
+    def set_mirror_cell(self, title: str, codi: str, header: str, value: Any) -> None:
+        """A person typing in the sheet."""
+        grid = self.mirror[title]
+        column = grid[0].index(header)
+        row = next(r for r in grid[1:] if r[0] == codi)
+        row[column] = value
+
+    def mirror_cell(self, title: str, codi: str, header: str) -> Any:
+        grid = self.mirror[title]
+        return next(r for r in grid[1:] if r[0] == codi)[grid[0].index(header)]
 
     def read_tabs(self, spreadsheet_id, pattern):
         import re

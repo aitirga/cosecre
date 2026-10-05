@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     #: sets one in Configuració. Kept out of the code: the repository is public.
     caixeta_spreadsheet_url: str | None = None
 
+    #: How long the statements mirror waits after a change before rewriting the
+    #: sheet, so a run of confirmations costs one write. ``0`` writes at once,
+    #: in the request — what the tests use.
+    statement_mirror_delay_seconds: float = Field(default=5.0, ge=0)
+
     #: How many documents the models read at once. Reading is almost all
     #: waiting on the model API, so this is about API rate limits and memory
     #: (each in-flight photo is held base64-encoded), not CPU.
