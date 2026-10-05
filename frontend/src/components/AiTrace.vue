@@ -98,7 +98,7 @@ const when = computed(() =>
     <summary class="card-head">
       <div>
         <h2 class="card-title">
-          <AppIcon name="sparkles" :size="14" />
+          <AppIcon name="sparkles" :size="14" class="ai-mark" />
           Com ho ha decidit la IA
         </h2>
         <p class="hint">

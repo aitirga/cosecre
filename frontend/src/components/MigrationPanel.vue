@@ -129,7 +129,7 @@ onUnmounted(() => (preview.value = null))
         </button>
         <button
           v-if="status && status.enrichment_pending && !status.enrichment_running"
-          class="btn btn-ghost"
+          class="btn btn-ai-outline"
           type="button"
           :disabled="resumeMutation.isPending.value"
           @click="resumeMutation.mutate()"
@@ -163,7 +163,7 @@ onUnmounted(() => (preview.value = null))
       <div v-if="status && enrichTotal" class="enrich">
         <div class="enrich-top">
           <span>
-            <AppIcon name="sparkles" :size="13" />
+            <AppIcon name="sparkles" :size="13" class="ai-mark" />
             Lectura amb IA: {{ status.enrichment_done }} de {{ enrichTotal }}
           </span>
           <span v-if="status.enrichment_running" class="badge badge-accent">

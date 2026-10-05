@@ -9,4 +9,28 @@ export const IPC = {
   checkForUpdates: 'cosecre:update:check',
   applyUpdate: 'cosecre:update:apply',
   updateStateChanged: 'cosecre:update:changed',
+
+  // The print tool. Handled by `src/main/print/ipc.ts`.
+  printListPrinters: 'cosecre:print:printers:list',
+  printRefreshPrinters: 'cosecre:print:printers:refresh',
+  printConverterStatus: 'cosecre:print:converter:status',
+  printPickFiles: 'cosecre:print:files:pick',
+  printAddFiles: 'cosecre:print:files:add',
+  printGetJobs: 'cosecre:print:jobs:list',
+  printUpdateJobOptions: 'cosecre:print:jobs:update-options',
+  printApplyOptionsToAll: 'cosecre:print:jobs:apply-options-all',
+  printRemoveJob: 'cosecre:print:jobs:remove',
+  printClearFinished: 'cosecre:print:jobs:clear-finished',
+  printJobs: 'cosecre:print:jobs:print',
+  printCancelJob: 'cosecre:print:jobs:cancel',
+  printRetryJob: 'cosecre:print:jobs:retry',
+  printReadPrintable: 'cosecre:print:jobs:read-printable',
+  printReportPageCount: 'cosecre:print:jobs:report-page-count',
+  printGetHistory: 'cosecre:print:history:list',
+  printClearHistory: 'cosecre:print:history:clear',
+  printGetSettings: 'cosecre:print:settings:get',
+  printSetSettings: 'cosecre:print:settings:set',
+  // main -> renderer
+  printJobsChanged: 'cosecre:print:jobs:changed',
+  printHistoryChanged: 'cosecre:print:history:changed',
 } as const

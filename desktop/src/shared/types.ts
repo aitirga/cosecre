@@ -1,3 +1,5 @@
+import type { PrintBridge } from '@print/contract'
+
 export type UpdatePhase =
   | 'idle'
   | 'checking'
@@ -48,4 +50,6 @@ export interface CosecreDesktopApi {
   checkForUpdates(): Promise<UpdateState>
   applyUpdate(): Promise<void>
   onUpdateState(callback: (state: UpdateState) => void): () => void
+  /** The print tool. Handed to the web app as `PlatformIntegration.print`. */
+  print: PrintBridge
 }

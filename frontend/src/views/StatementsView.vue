@@ -706,7 +706,7 @@ function amountClass(m: Movement) {
   border: 1px solid var(--accent-200);
   border-left: 3px solid var(--accent-700);
   border-radius: var(--r-sm);
-  background: #fbf1ec;
+  background: var(--accent-50);
   color: var(--ink-900);
   font-size: var(--text-xs);
   cursor: pointer;

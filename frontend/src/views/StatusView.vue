@@ -451,7 +451,7 @@ const healthRows = computed(() => {
           </p>
           <ul v-else class="todos">
             <li v-for="todo in todos" :key="todo.key" class="todo" :class="todo.level">
-              <AppIcon :name="todo.icon" :size="15" class="todo-icon" />
+              <AppIcon :name="todo.icon" :size="15" class="todo-icon" :class="{ 'ai-mark': todo.icon === 'sparkle' }" />
               <div class="todo-body">
                 <span class="todo-text">{{ todo.text }}</span>
                 <span v-if="todo.detail" class="todo-detail">{{ todo.detail }}</span>
@@ -941,6 +941,11 @@ const healthRows = computed(() => {
 
 .todo.warn .todo-icon {
   color: var(--gold-800);
+}
+
+/* "Let the AI propose": violet whatever the level, like every AI mark. */
+.todo .todo-icon.ai-mark {
+  color: var(--ai-500);
 }
 
 .todo-body {

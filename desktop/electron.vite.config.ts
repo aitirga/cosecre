@@ -12,17 +12,23 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
  */
 const WEB_SRC = resolve('../frontend/src')
 
+/**
+ * The print tool's contract lives with the web app that renders it; the main
+ * process and the preload import the same file as `@print/contract`.
+ */
+const PRINT_SRC = resolve('../frontend/src/print')
+
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
     resolve: {
-      alias: { '@shared': resolve('src/shared') },
+      alias: { '@shared': resolve('src/shared'), '@print': PRINT_SRC },
     },
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
     resolve: {
-      alias: { '@shared': resolve('src/shared') },
+      alias: { '@shared': resolve('src/shared'), '@print': PRINT_SRC },
     },
   },
   renderer: {
@@ -36,6 +42,7 @@ export default defineConfig({
       alias: {
         '@web': WEB_SRC,
         '@shared': resolve('src/shared'),
+        '@print': PRINT_SRC,
         '@': resolve('src/renderer/src'),
       },
     },

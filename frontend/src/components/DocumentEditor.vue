@@ -307,7 +307,7 @@ const SHEET_STATE = {
         </span>
       </p>
       <p v-if="reviewCount" class="notice review-notice">
-        <AppIcon name="sparkles" :size="15" />
+        <AppIcon name="sparkles" :size="15" class="ai-mark" />
         <span>
           La IA no n'està segura en {{ reviewCount }}
           {{ reviewCount === 1 ? 'camp, marcat' : 'camps, marcats' }} en groc. Passa-hi el ratolí
@@ -700,11 +700,12 @@ const SHEET_STATE = {
 .ai-tag {
   padding: 0 4px;
   border-radius: var(--r-xs);
-  border: 1px solid var(--line);
+  border: 1px solid var(--ai-200);
+  background: var(--ai-50);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: var(--ink-400);
+  color: var(--ai-700);
   cursor: help;
 }
 
@@ -771,7 +772,7 @@ const SHEET_STATE = {
   gap: 4px;
   padding: 2px 7px;
   border-radius: var(--r-full);
-  background: rgba(28, 25, 23, 0.72);
+  background: rgba(27, 44, 70, 0.72);
   color: #fff;
   font-size: var(--text-xs);
   font-weight: 600;

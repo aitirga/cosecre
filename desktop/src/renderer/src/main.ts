@@ -51,5 +51,6 @@ createCosecreApp({
     // has to reconcile the old hub's cached state.
     changeHub: (url) => bridge.setHubUrl(url),
     settingsPanel: UpdatePanel,
+    print: bridge.print,
   },
 }).mount('#app')

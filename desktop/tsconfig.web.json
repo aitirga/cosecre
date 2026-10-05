@@ -25,6 +25,7 @@
     "paths": {
       "@web/*": ["../frontend/src/*"],
       "@shared/*": ["src/shared/*"],
+      "@print/*": ["../frontend/src/print/*"],
       "@/*": ["src/renderer/src/*"]
     }
   }

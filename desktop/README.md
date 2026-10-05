@@ -14,6 +14,7 @@ desktop shell substitutes is only what has to differ:
 | Session tokens | `localStorage` | the main process, namespaced per hub |
 | Routing | `history` | `hash` — a packaged renderer is loaded from `file://` |
 | Updates | reload the page | GitHub Releases, via electron-updater |
+| Printing | not available | *Eines → Impressió*, via `PlatformIntegration.print` |
 
 ## Developing
 
@@ -54,10 +55,34 @@ src/
 ├── main/
 │   ├── store.ts    # atomic JSON: hub URL + per-hub session tokens
 │   ├── updater.ts  # GitHub Releases check, with runtime signature detection
-│   └── menu.ts     # the application menu (⌘C/⌘V live here on macOS)
+│   ├── menu.ts     # the application menu (⌘C/⌘V live here on macOS)
+│   └── print/      # the print tool's engine — see below
 ├── preload/    # contextBridge API (`window.cosecreDesktop`)
 └── renderer/   # entry point + the desktop-only Updates panel and CSS
 ```
+
+### The print tool
+
+*Eines → Impressió* used to be a separate app, Cosecre-print. Its engine now
+runs here, in `src/main/print/`, and its UI is a module of the web app
+(`frontend/src/modules/print.ts`), handed the engine as
+`PlatformIntegration.print`. The contract between the two is
+`frontend/src/print/contract.ts`, which the main process imports as
+`@print/contract`.
+
+- **Everything becomes a PDF first.** Word files go through LibreOffice
+  (`soffice --convert-to pdf`, one profile directory per concurrent process —
+  instances sharing a profile silently drop conversions), so the preview is
+  exactly what prints.
+- **Printers work in parallel**, each with its own serial queue. macOS and
+  Linux submit with `lp` and track the CUPS job id; Windows runs the
+  SumatraPDF that `pdf-to-printer` ships — unpacked from the asar, see
+  `asarUnpack` in `electron-builder.yml` — and matches jobs by name.
+- **Settings and history** are JSON under `<userData>/print/`; a diagnostic
+  log is written to `<userData>/print/logs/print.log` (there is no viewer in
+  the app).
+- **The preview uses pdf.js's legacy build.** pdf.js 6 relies on
+  `Map#getOrInsertComputed`, which this Electron's Chromium does not have yet.
 
 ### Why tokens live in the main process
 

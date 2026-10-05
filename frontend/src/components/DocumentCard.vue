@@ -167,7 +167,7 @@ function onPointerUp() {
   gap: 8px;
   margin: 0 -12px;
   padding: 7px 6px 7px 12px;
-  background: #fbf1ec;
+  background: var(--accent-50);
   border-bottom: 1px solid var(--accent-200);
   cursor: move;
 }

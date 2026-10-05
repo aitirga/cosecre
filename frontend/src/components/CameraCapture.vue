@@ -224,7 +224,7 @@ video {
   left: 8px;
   padding: 2px 8px;
   border-radius: var(--r-full);
-  background: rgba(28, 25, 23, 0.72);
+  background: rgba(27, 44, 70, 0.72);
   color: #fff;
   font-size: var(--text-sm);
   font-weight: 600;

@@ -168,7 +168,7 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgba(20, 17, 15, 0.94);
+  background: rgba(14, 24, 40, 0.94);
 }
 
 .stage {
@@ -214,7 +214,7 @@ onBeforeUnmount(() => {
   gap: 2px;
   padding: 4px;
   border-radius: var(--r-lg);
-  background: rgba(28, 25, 23, 0.86);
+  background: rgba(27, 44, 70, 0.88);
   box-shadow: var(--shadow-md);
 }
 
@@ -227,7 +227,7 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: var(--r-md);
   background: transparent;
-  color: #f5efe6;
+  color: #eef3fb;
   font-size: var(--text-lg);
   line-height: 1;
   cursor: pointer;
@@ -258,7 +258,7 @@ onBeforeUnmount(() => {
   margin: 0;
   text-align: center;
   font-size: var(--text-sm);
-  color: rgba(245, 239, 230, 0.6);
+  color: rgba(238, 243, 251, 0.6);
   pointer-events: none;
 }
 

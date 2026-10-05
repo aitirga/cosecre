@@ -19,12 +19,18 @@ publish:
   owner: aitirga
   repo: cosecre
 
-# The main, preload and renderer bundles are self-contained; the only thing that
-# has to exist as a real module at runtime is electron-updater, which
-# externalizeDepsPlugin leaves alone.
+# The main, preload and renderer bundles are self-contained; what has to exist
+# as real modules at runtime are this package's dependencies (electron-updater
+# and the print tool's), which externalizeDepsPlugin leaves alone.
 files:
   - out/**
   - package.json
+
+# pdf-to-printer ships a SumatraPDF executable that has to exist on disk as a
+# real file — it cannot be launched from inside the asar archive. The Windows
+# print driver rewrites its path to app.asar.unpacked.
+asarUnpack:
+  - node_modules/pdf-to-printer/**
 
 mac:
   target:

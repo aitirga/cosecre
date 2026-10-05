@@ -12,6 +12,7 @@ import { createApp, type App as VueApp, type Component } from 'vue'
 import { configureApi, type TokenStorage } from './api/client'
 import App from './App.vue'
 import { documentsModule } from './modules/documents'
+import { printModule } from './modules/print'
 import { registerModules } from './modules/registry'
 import type { CosecreModule } from './modules/types'
 import { PLATFORM_KEY, type PlatformIntegration } from './platform'
@@ -28,8 +29,11 @@ export type { PlatformIntegration } from './platform'
  * The first module to claim "home" wins, and documents claims it for everyone,
  * so a module with a narrower claim has to be asked before it. A shell that
  * wants a different set passes `modules:` and gets exactly those.
+ *
+ * Print claims no home, so it only has to come after documents for the
+ * sidebar: its entry joins the Eines group documents opens.
  */
-const DEFAULT_MODULES: CosecreModule[] = [documentsModule]
+const DEFAULT_MODULES: CosecreModule[] = [documentsModule, printModule]
 
 export interface CosecreAppOptions {
   apiBaseUrl?: string

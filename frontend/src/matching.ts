@@ -57,6 +57,14 @@ export const SIGNAL_LABEL: Record<string, string> = {
   consistency: 'Compte i mètode',
 }
 
+/** Deciders that are a model rather than a rule or a person. */
+const AI_DECIDERS = new Set(['openai', 'jev', 'jev+openai'])
+
+/** Whether a match was proposed by the AI — shown in the AI's violet. */
+export function byAi(decidedBy: string | null | undefined): boolean {
+  return AI_DECIDERS.has(decidedBy ?? '')
+}
+
 export const DECIDED_LABEL: Record<string, string> = {
   rules: 'Regles',
   openai: 'gpt-6-luna',

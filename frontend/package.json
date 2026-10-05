@@ -1,7 +1,7 @@
 {
   "name": "@cosecre/web",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Cosecre web client — also the UI the desktop app renders",
   "type": "module",
   "scripts": {
@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@tanstack/vue-query": "^5.96.2",
+    "pdfjs-dist": "^6.4.299",
     "vue": "^3.5.30",
     "vue-router": "^4.6.3"
   },

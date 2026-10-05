@@ -7,6 +7,8 @@
  */
 import { inject, type Component, type InjectionKey } from 'vue'
 
+import type { PrintBridge } from './print/contract'
+
 export interface PlatformIntegration {
   /** Which shell is hosting the app. Shown in Settings, and used for copy. */
   name: 'web' | 'desktop'
@@ -21,6 +23,11 @@ export interface PlatformIntegration {
   changeHub?: (url: string) => Promise<void>
   /** Extra card rendered at the bottom of Settings, e.g. the desktop updater. */
   settingsPanel?: Component
+  /**
+   * Local printing — printers, LibreOffice, the spooler. Only a desktop shell
+   * can reach those; the print tool tells a browser tab where to get one.
+   */
+  print?: PrintBridge
 }
 
 export const PLATFORM_KEY: InjectionKey<PlatformIntegration> = Symbol('cosecre.platform')

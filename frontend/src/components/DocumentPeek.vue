@@ -411,7 +411,7 @@ function onPanEnd() {
   border: 0;
   border-radius: var(--r-sm);
   background: transparent;
-  color: #f5efe6;
+  color: #eef3fb;
   font-size: var(--text-base);
   line-height: 1;
   cursor: pointer;

@@ -34,16 +34,19 @@ export default defineConfig(({ mode }) => {
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [/^\/api(?:\/|$)/, /^\/healthz$/],
           globPatterns: ['**/*.{js,css,html,svg,woff2}'],
+          // The print tool's desktop half carries pdf.js and only ever runs in
+          // the desktop app; a browser should not download it ahead of time.
+          globIgnores: ['**/PrintWorkbench-*', '**/pdf.worker*'],
         },
         includeAssets: ['favicon.svg'],
         manifest: {
           name: 'Cosecre',
           short_name: 'Cosecre',
           description: 'Registre de documents comptables.',
-          // Matches --accent-700 and --surface-1 in style.css, so the splash and
+          // Matches --accent-600 and --surface-1 in style.css, so the splash and
           // the address bar do not flash a colour the app never uses.
-          theme_color: '#b83c14',
-          background_color: '#fbf5ea',
+          theme_color: '#3f6fce',
+          background_color: '#f5f9fe',
           display: 'standalone',
           start_url: '/',
           icons: [

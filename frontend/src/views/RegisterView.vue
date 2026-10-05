@@ -781,11 +781,11 @@ const showUpload = ref(true)
   gap: 4px;
   max-width: 100%;
   padding: 1px 7px;
-  border: 1px solid #c7d7e3;
-  border-left: 3px solid #33607f;
+  border: 1px solid var(--teal-200);
+  border-left: 3px solid var(--teal-700);
   border-radius: var(--r-sm);
-  background: #edf3f7;
-  color: #33607f;
+  background: var(--teal-100);
+  color: var(--teal-700);
   font-size: var(--text-xs);
   white-space: nowrap;
   cursor: pointer;
@@ -793,7 +793,7 @@ const showUpload = ref(true)
 
 .bank-chip:hover,
 .bank-chip.on {
-  border-color: #33607f;
+  border-color: var(--teal-700);
 }
 
 .supplier {

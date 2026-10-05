@@ -14,6 +14,7 @@ import {
   SOURCE_LABEL,
   STATUS_LABEL,
   band,
+  byAi,
 } from '../matching'
 import AppIcon from '../components/AppIcon.vue'
 import DocumentPeek from '../components/DocumentPeek.vue'
@@ -665,7 +666,7 @@ function showOriginal(doc: DocumentBrief) {
 
           <button
             v-if="!running"
-            class="btn btn-primary start"
+            class="btn btn-ai start"
             type="button"
             :disabled="!counts.unmatched || startRun.isPending.value"
             @click="startRun.mutate()"
@@ -868,7 +869,10 @@ function showOriginal(doc: DocumentBrief) {
               <header class="proposal-head">
                 <span class="big">{{ viewed.confidence }}</span>
                 <span class="band-label">{{ BAND_LABEL[band(viewed.confidence)] }}</span>
-                <span v-if="viewingLead" class="decided muted">{{ DECIDED_LABEL[viewedMatch?.decided_by ?? ''] ?? viewedMatch?.decided_by }}</span>
+                <span v-if="viewingLead" class="decided" :class="byAi(viewedMatch?.decided_by) ? 'ai' : 'muted'">
+                  <AppIcon v-if="byAi(viewedMatch?.decided_by)" name="sparkles" :size="12" />
+                  {{ DECIDED_LABEL[viewedMatch?.decided_by ?? ''] ?? viewedMatch?.decided_by }}
+                </span>
                 <template v-else>
                   <span class="decided muted">{{ lead ? 'Alternativa' : 'Candidata' }}</span>
                   <button class="btn btn-ghost btn-sm back" type="button" @click="focusKey = null">{{ lead ? 'Torna a la proposta' : 'Tanca' }}</button>
@@ -927,7 +931,7 @@ function showOriginal(doc: DocumentBrief) {
               </div>
               <p v-if="viewedMatch?.reason" class="reason">{{ viewedMatch.reason }}</p>
               <details v-if="viewedMatch?.ai_trace?.openai" class="trace">
-                <summary>Com s'hi ha arribat</summary>
+                <summary><AppIcon name="sparkles" :size="12" class="ai-mark" /> Com s'hi ha arribat</summary>
                 <dl>
                   <dt>gpt-6-luna</dt>
                   <dd>
@@ -977,7 +981,7 @@ function showOriginal(doc: DocumentBrief) {
               <div class="decide">
                 <button
                   v-if="detail.match_status !== 'rejected'"
-                  class="btn btn-outline btn-sm"
+                  class="btn btn-ai-outline btn-sm"
                   type="button"
                   :disabled="decide.isPending.value"
                   @click="decide.mutate({ kind: 'repropose' })"
@@ -1084,11 +1088,11 @@ function showOriginal(doc: DocumentBrief) {
   --band-low-bg: var(--danger-100);
   --band-none: var(--ink-400);
   /* The two sides of every comparison: the bank's line and the register's entry. */
-  --bank: #33607f;
-  --bank-bg: #edf3f7;
-  --bank-line: #c7d7e3;
+  --bank: var(--teal-700);
+  --bank-bg: var(--teal-100);
+  --bank-line: var(--teal-200);
   --reg: var(--accent-700);
-  --reg-bg: #fbf1ec;
+  --reg-bg: var(--accent-50);
   --reg-line: var(--accent-200);
 
   display: grid;
@@ -1802,8 +1806,20 @@ function showOriginal(doc: DocumentBrief) {
 }
 
 .decided {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   margin-left: auto;
   font-size: var(--text-xs);
+}
+
+/* Who proposed it, in the AI's colour when it was a model. */
+.decided.ai {
+  padding: 1px 7px;
+  border-radius: var(--r-full);
+  background: var(--surface-0);
+  color: var(--ai-700);
+  font-weight: 600;
 }
 
 .set-note {

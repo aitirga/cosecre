@@ -32,16 +32,16 @@ const slow = computed(() => networkLoading.pending.value > 0 && elapsed.value > 
 </template>
 
 <style scoped>
-.startup-loading { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: #fbf5ea; }
-.startup-card { width: min(100%, 340px); text-align: center; color: #36342e; }
+.startup-loading { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: #f5f9fe; }
+.startup-card { width: min(100%, 340px); text-align: center; color: #1b2c46; }
 .startup-card svg { margin: 0 auto 12px; }
 .startup-card h1 { margin: 0 0 20px; font-size: 28px; }
 .startup-card p { margin: 12px 0; }
-.startup-card .loading-hint { min-height: 44px; font-size: 14px; color: #726d61; }
-.loading-track { height: 4px; overflow: hidden; border-radius: 4px; background: #e8decb; }
-.loading-track span { display: block; width: 35%; height: 100%; background: #b83c14; border-radius: inherit; animation: loading-slide 1.4s ease-in-out infinite; }
+.startup-card .loading-hint { min-height: 44px; font-size: 14px; color: #566b8c; }
+.loading-track { height: 4px; overflow: hidden; border-radius: 4px; background: #dfeafc; }
+.loading-track span { display: block; width: 35%; height: 100%; background: #3f6fce; border-radius: inherit; animation: loading-slide 1.4s ease-in-out infinite; }
 .request-loading { position: fixed; inset: 0 0 auto; z-index: 2000; pointer-events: none; }
-.request-loading p { width: fit-content; margin: 8px auto; padding: 8px 14px; border: 1px solid #e8decb; border-radius: 8px; background: #fbf5ea; color: #36342e; font-size: 14px; box-shadow: 0 2px 8px #0001; }
+.request-loading p { width: fit-content; margin: 8px auto; padding: 8px 14px; border: 1px solid #dfeafc; border-radius: 8px; background: #f5f9fe; color: #1b2c46; font-size: 14px; box-shadow: 0 2px 8px #0001; }
 @keyframes loading-slide { from { transform: translateX(-100%); } to { transform: translateX(386%); } }
 @media (prefers-reduced-motion: reduce) { .loading-track span { animation: none; width: 100%; opacity: .65; } }
 </style>

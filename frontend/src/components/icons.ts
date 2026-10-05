@@ -39,6 +39,15 @@ export const ICONS = {
   download: ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'm7 10 5 5 5-5', 'M12 15V3'],
   check: ['m20 6-11 11-5-5'],
   chevron: ['m9 18 6-6-6-6'],
+  chevronLeft: ['m15 18-6-6 6-6'],
+  minus: ['M5 12h14'],
+  /** The print tool. */
+  printer: [
+    'M6 9V3h12v6',
+    'M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2',
+    'M6 14h12v8H6z',
+  ],
+  file: ['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z', 'M14 2v6h6'],
   plus: ['M12 5v14', 'M5 12h14'],
   invoice: [
     'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z',

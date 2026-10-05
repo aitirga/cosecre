@@ -192,7 +192,7 @@ async function handleLogout() {
   margin: 0;
   padding: 7px 12px;
   border-radius: var(--r-md);
-  background: var(--ink-900, #1c1917);
+  background: var(--ink-900);
   color: #fff;
   font-size: var(--text-sm);
   box-shadow: var(--shadow-lg);
@@ -340,7 +340,7 @@ async function handleLogout() {
     position: fixed;
     inset: 0;
     z-index: 40;
-    background: rgba(28, 25, 23, 0.35);
+    background: rgba(27, 44, 70, 0.3);
   }
 
   .content {

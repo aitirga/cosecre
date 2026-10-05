@@ -18,11 +18,12 @@ Three pieces, one of which does all the work:
 | [**frontend/**](frontend) | `@cosecre/web` | The web app. Vue 3 + Vite, installable as a PWA — which is what makes phone camera capture work. |
 | [**desktop/**](desktop) | `cosecre-desktop` | Windows, macOS and Linux. Renders the *same* Vue app, with its own hub picker and auto-updates. |
 
-One app runs on it today, and the shell hosts it without knowing what it does:
+Two apps run on it today, and the shell hosts them without knowing what they do:
 
 | | |
 |---|---|
 | **Documents** | Photograph an invoice or a receipt, and it comes back as structured fields in a shared spreadsheet — checked by a person before it counts. |
+| **Impressió** | *Eines → Impressió.* Print batches of PDF and Word files, each to its own printer, with every printer working at once. Formerly the standalone Cosecre-print. Desktop only — it needs the machine's spooler and LibreOffice; a browser tab points at the installer. |
 
 A second, [AIM](https://github.com/aitirga/aim), runs as its own server and its
 own client and uses this hub for sign-in. That is the arrangement the hub was

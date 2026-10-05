@@ -2,21 +2,27 @@
   Cosecre design tokens and primitives.
   ─────────────────────────────────────────────────────────────────────────────
 
-  One light theme, warm paper surfaces, one terracotta accent. The palette is
-  the original brand palette; what changed is that every step now has a job and
-  a measured contrast ratio, instead of being reached for by feel.
+  One light theme: blue-tinted white surfaces and one brand blue — the palette
+  Cosecre-print introduced, now the whole app's — plus violet, reserved for
+  one meaning only: the AI did this. Every step has a job and a measured
+  contrast ratio, instead of being reached for by feel.
 
   Families, numbered the conventional way (low = light, high = dark):
 
-    surface-*   warm off-whites. surface-1 is the app background, surface-0 the
-                raised material on top of it (cards, table rows, inputs).
-    ink-*       text tones. Every step clears 4.5:1 on surface-1 *and* on
-                surface-2, so any of them is safe down to 11px.
-    accent-*    the brand terracotta. 400/500 are graphics only — 500 is
-                2.8:1 and must never carry text. 700 is the text and
-                filled-button step (5.2:1 on paper, 5.7:1 with white).
-    olive/gold/danger  status hues. `-100` is the fill, `-200` the border,
-                `-700`/`-800` the text tone that clears 4.5:1 on that fill.
+    surface-*   blue-tinted whites. surface-1 is the app background, surface-0
+                the raised material on top of it (cards, table rows, inputs).
+    ink-*       text tones, navy-cast. Every step clears 4.5:1 on surface-1
+                *and* on surface-2, so any of them is safe down to 11px.
+    accent-*    the brand blue. 400/500 are graphics only — 500 is 3.1:1 and
+                must never carry text. 600 is the filled-button step (4.8:1
+                with white), 700 the accent *text* step (6.3:1 on surface-1).
+    ai-*        violet, for AI output and AI actions — proposals, extracted
+                fields, "let the AI do it" buttons. Nothing else may use it, so
+                that it stays a signal. 600 fills (5.9:1 with white), 700 text.
+    olive/gold/danger  status hues: green, amber, red. The names predate the
+                blue palette and are kept so every component keeps working;
+                `-100` is the fill, `-200` the border, `-700`/`-800` the text
+                tone that clears 4.5:1 on that fill.
 
   Contrast was measured, not estimated. The ratios in the comments are real.
 
@@ -27,42 +33,60 @@
 :root {
   /* ── Surfaces ────────────────────────────────────────────────────────── */
   --surface-0: #ffffff;
-  --surface-1: #fbf5ea; /* app background */
-  --surface-2: #f5ecdd; /* subtle fill, row hover */
-  --surface-3: #ece0cd; /* pressed, track */
-  --line: #e4d8c4; /* hairline */
-  --line-strong: #d3c3aa; /* input borders, dividers that must read */
+  --surface-1: #f5f9fe; /* app background */
+  --surface-2: #edf3fc; /* subtle fill, row hover */
+  --surface-3: #e0eaf8; /* pressed, track */
+  --line: #dbe5f3; /* hairline */
+  --line-strong: #c2d2ea; /* input borders, dividers that must read */
 
   /* ── Text ────────────────────────────────────────────────────────────── */
-  --ink-900: #1c1917; /* 16.1:1 on surface-1 — primary */
-  --ink-700: #3b322c; /* 11.5:1 — headings, strong labels */
-  --ink-500: #5c5048; /* 7.2:1  — secondary body */
-  --ink-400: #6f6259; /* 5.4:1  — muted labels, still AA at 11px */
+  --ink-900: #1b2c46; /* 13.3:1 on surface-1 — primary */
+  --ink-700: #2f4361; /* 9.5:1  — headings, strong labels */
+  --ink-500: #4a5f7f; /* 6.1:1  — secondary body */
+  --ink-400: #566b8c; /* 5.1:1  — muted labels, still AA at 11px (4.9 on surface-2) */
 
   /* ── Accent ──────────────────────────────────────────────────────────── */
-  --accent-100: #fdeee7;
-  --accent-200: #fbdccf;
-  --accent-300: #f8bda5;
-  --accent-400: #f68d68;
-  --accent-500: #f36a3e; /* brand mark, graphics — NOT text (2.8:1) */
-  --accent-600: #dc4f22;
-  --accent-700: #b83c14; /* accent text, filled buttons */
-  --accent-800: #94300f; /* hover for the above */
+  --accent-50: #eff5fe; /* selected row */
+  --accent-100: #dfeafc;
+  --accent-200: #cbdcf9;
+  --accent-300: #b3cdf5;
+  --accent-400: #7ea8ee;
+  --accent-500: #5b8de6; /* brand mark, focus ring, graphics — NOT text (3.1:1) */
+  --accent-600: #3f6fce; /* filled buttons (4.8:1 with white) */
+  --accent-700: #2f5aa8; /* accent text (6.3:1), hover for filled buttons */
+  --accent-800: #244a8f; /* pressed */
+
+  /* ── AI ──────────────────────────────────────────────────────────────── */
+  --ai-50: #f6f3fe;
+  --ai-100: #eeeafd;
+  --ai-200: #ddd4fb;
+  --ai-400: #9b84ec;
+  --ai-500: #7c5fe0; /* icons and marks — graphics only */
+  --ai-600: #6a4bd1; /* filled AI buttons (5.9:1 with white) */
+  --ai-700: #5b46b0; /* AI text (6.1:1 on ai-100) */
+  --ai-800: #4a3796;
+
+  /* ── Counterpart ─────────────────────────────────────────────────────── */
+  /* Teal marks the bank's side of a comparison, so it never reads as the
+     register's own blue. */
+  --teal-100: #e4f5f6;
+  --teal-200: #b8e2e6;
+  --teal-700: #10707d; /* 5.3:1 on teal-100 */
 
   /* ── Status ──────────────────────────────────────────────────────────── */
-  --olive-100: #e8efe6;
-  --olive-200: #cfdccc;
-  --olive-700: #3a5a3c; /* 6.6:1 on olive-100 */
+  --olive-100: #e3f6ec;
+  --olive-200: #c7ebd7;
+  --olive-700: #1d7a51; /* 4.7:1 on olive-100 */
 
-  --gold-100: #fdf1d5;
-  --gold-200: #f2ddab;
-  --gold-500: #ffcd65; /* brand gold — graphics only */
-  --gold-800: #6f4c05; /* 6.9:1 on gold-100 */
+  --gold-100: #fdf1de;
+  --gold-200: #f7ddb4;
+  --gold-500: #f0b44c; /* graphics only */
+  --gold-800: #7a4f0e; /* 6.4:1 on gold-100 */
 
-  --danger-100: #fceceb;
-  --danger-200: #f2c9c6;
-  --danger-600: #c53030;
-  --danger-700: #a52626; /* 6.3:1 on danger-100 */
+  --danger-100: #fdeaee;
+  --danger-200: #f8ccd5;
+  --danger-600: #c43a55;
+  --danger-700: #a63549; /* 5.6:1 on danger-100 */
 
   /* ── Radii ───────────────────────────────────────────────────────────── */
   --r-xs: 3px;
@@ -73,10 +97,10 @@
   --r-full: 999px;
 
   /* ── Elevation ───────────────────────────────────────────────────────── */
-  --shadow-xs: 0 1px 2px rgba(28, 25, 23, 0.05);
-  --shadow-sm: 0 1px 3px rgba(28, 25, 23, 0.07), 0 1px 2px rgba(28, 25, 23, 0.04);
-  --shadow-md: 0 4px 12px rgba(28, 25, 23, 0.09), 0 1px 3px rgba(28, 25, 23, 0.05);
-  --shadow-lg: 0 16px 40px rgba(28, 25, 23, 0.16), 0 2px 8px rgba(28, 25, 23, 0.06);
+  --shadow-xs: 0 1px 2px rgba(27, 44, 70, 0.05);
+  --shadow-sm: 0 1px 3px rgba(27, 44, 70, 0.07), 0 1px 2px rgba(27, 44, 70, 0.04);
+  --shadow-md: 0 4px 12px rgba(27, 44, 70, 0.09), 0 1px 3px rgba(27, 44, 70, 0.05);
+  --shadow-lg: 0 16px 40px rgba(27, 44, 70, 0.16), 0 2px 8px rgba(27, 44, 70, 0.06);
 
   /* ── Type ────────────────────────────────────────────────────────────── */
   /* A system stack rather than a webfont: it needs no network round trip, so it
@@ -109,7 +133,7 @@
   line-height: 1.5;
   color: var(--ink-900);
   /* Pins Chromium's own widgets — select popups, scrollbars, date pickers — to
-     light. Without it they follow the OS and land dark-on-cream. */
+     light. Without it they follow the OS and land dark-on-white. */
   color-scheme: light;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -295,14 +319,39 @@ button {
 }
 
 .btn-primary {
-  background: var(--accent-700);
-  border-color: var(--accent-700);
+  background: var(--accent-600);
+  border-color: var(--accent-600);
   color: #fff;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent-800);
-  border-color: var(--accent-800);
+  background: var(--accent-700);
+  border-color: var(--accent-700);
+}
+
+/* "Let the AI do it". Violet so an AI action is never mistaken for an
+   ordinary one; reserve it for buttons that start AI work. */
+.btn-ai {
+  background: var(--ai-600);
+  border-color: var(--ai-600);
+  color: #fff;
+}
+
+.btn-ai:hover:not(:disabled) {
+  background: var(--ai-700);
+  border-color: var(--ai-700);
+}
+
+/* The quieter AI action, beside ordinary outline buttons. */
+.btn-ai-outline {
+  background: var(--surface-0);
+  border-color: var(--ai-200);
+  color: var(--ai-700);
+}
+
+.btn-ai-outline:hover:not(:disabled) {
+  background: var(--ai-50);
+  border-color: var(--ai-400);
 }
 
 .btn-outline {
@@ -464,6 +513,12 @@ button {
   color: var(--accent-700);
 }
 
+.badge-ai {
+  background: var(--ai-100);
+  border-color: var(--ai-200);
+  color: var(--ai-700);
+}
+
 .badge-olive {
   background: var(--olive-100);
   border-color: var(--olive-200);
@@ -594,7 +649,7 @@ button {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(28, 25, 23, 0.42);
+  background: rgba(27, 44, 70, 0.32);
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
 }
@@ -645,6 +700,18 @@ button {
   color: var(--olive-700);
 }
 
+.notice-warn {
+  background: var(--gold-100);
+  border-color: var(--gold-200);
+  color: var(--gold-800);
+}
+
+.notice-ai {
+  background: var(--ai-50);
+  border-color: var(--ai-200);
+  color: var(--ai-700);
+}
+
 .notice-info {
   background: var(--surface-2);
   border-color: var(--line);
@@ -662,6 +729,11 @@ button {
 }
 
 /* ── Utilities ─────────────────────────────────────────────────────────── */
+/* Colours an icon (or any mark) as AI output without changing its text. */
+.ai-mark {
+  color: var(--ai-500);
+}
+
 .muted {
   color: var(--ink-400);
 }

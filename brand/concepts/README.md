@@ -3,6 +3,10 @@
 The two marks considered for v0.1.1, kept as a record of the choice. Both keep
 the Cosecre C and put it on something; they differ in what.
 
+**Superseded in v0.2.0.** When the print tool moved into Cosecre, its mark —
+*Aperture*, the C whose opening is a paper slot — became the app's icon, along
+with Cosecre-print's blue palette. Ledger, below, was the icon until then.
+
 | | | |
 |---|---|---|
 | [`option-a-desk.svg`](option-a-desk.svg) | **Desk** | The C on a writing desk — the secretary's workspace. Holds together best at 16px: the overhanging top and two legs stay separable when everything else has merged. |

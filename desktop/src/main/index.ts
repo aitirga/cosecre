@@ -7,6 +7,7 @@ import { BrowserWindow, app, ipcMain, nativeTheme, shell } from 'electron'
 import { IPC } from '../shared/ipc.js'
 import type { Bootstrap } from '../shared/types.js'
 import { buildMenu } from './menu.js'
+import { startPrinting, type PrintService } from './print/index.js'
 import { DesktopStore } from './store.js'
 import { Updater } from './updater.js'
 
@@ -15,6 +16,7 @@ const dirname = fileURLToPath(new URL('.', import.meta.url))
 let mainWindow: BrowserWindow | null = null
 let store: DesktopStore | null = null
 let updater: Updater | null = null
+let printing: PrintService | null = null
 
 function loadRenderer(window: BrowserWindow): void {
   const devServerUrl = process.env['ELECTRON_RENDERER_URL']
@@ -34,8 +36,8 @@ function createWindow(): BrowserWindow {
     show: false,
     title: 'Cosecre',
     // Matches --surface-1 in the shared theme, so the first paint is not a
-    // white flash against a warm UI.
-    backgroundColor: '#fbf5ea',
+    // white flash against the blue-tinted UI.
+    backgroundColor: '#f5f9fe',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(dirname, '../preload/index.mjs'),
@@ -98,6 +100,7 @@ app.whenReady().then(async () => {
   await updater.init()
 
   registerIpc()
+  printing = await startPrinting(app.getPath('userData'), () => mainWindow)
   buildMenu({
     onCheckForUpdates: () => void updater?.check(),
     onReload: () => mainWindow && loadRenderer(mainWindow),
@@ -114,7 +117,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => updater?.dispose())
+app.on('before-quit', () => {
+  updater?.dispose()
+  void printing?.dispose()
+})
 
 function registerIpc(): void {
   // Synchronous: the renderer has to attach a token to its very first request,

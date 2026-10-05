@@ -1,7 +1,16 @@
 {
-  "include": ["electron.vite.config.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"],
+  "include": [
+    "electron.vite.config.ts",
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/shared/**/*",
+    "../frontend/src/print/contract.ts"
+  ],
   "compilerOptions": {
     "composite": true,
+    // Widened to the repository root for the one file it borrows from the web
+    // app, the print contract.
+    "rootDir": "..",
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
@@ -18,7 +27,8 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["src/shared/*"]
+      "@shared/*": ["src/shared/*"],
+      "@print/*": ["../frontend/src/print/*"]
     }
   }
 }
