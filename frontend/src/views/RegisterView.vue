@@ -98,7 +98,7 @@ function closeMovement(card: MovementCardState) {
 }
 
 function paymentLabel(payment: PaidBy) {
-  return [payment.compte, formatDate(payment.data)].filter(Boolean).join(' · ')
+  return [payment.codi || payment.compte, formatDate(payment.data)].filter(Boolean).join(' · ')
 }
 
 // ── Filtering ────────────────────────────────────────────────────────────────
@@ -487,7 +487,7 @@ const showUpload = ref(true)
                   class="bank-chip"
                   :class="{ on: movementOpen(payment.movement_id) }"
                   type="button"
-                  :title="`${payment.concepte} · ${formatAmount(payment.import_value)} — mostra el moviment`"
+                  :title="`${payment.compte} · ${payment.concepte} · ${formatAmount(payment.import_value)} — mostra el moviment`"
                   @click="toggleMovement(payment, $event)"
                 >
                   <AppIcon name="bank" :size="12" />

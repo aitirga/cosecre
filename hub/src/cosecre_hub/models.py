@@ -392,6 +392,9 @@ class BankMovement(Base):
     iban_hint: Mapped[str] = mapped_column(String(64), default="")
     #: The source's own key for the line, when it has one (``Cix_012``).
     external_ref: Mapped[str] = mapped_column(String(64), default="")
+    #: Our own key for the line, one series per account (``TP_007``, ``MEN_112``);
+    #: the caixeta keeps its sheet's ``Cix_NNN``. See ``statements.store.assign_codes``.
+    codi: Mapped[str] = mapped_column(String(20), default="", server_default="", index=True)
     raw: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     #: ``unmatched``, ``proposed``, ``confirmed``, ``rejected`` or ``not_applicable``.
     match_status: Mapped[str] = mapped_column(String(20), default="unmatched", index=True)

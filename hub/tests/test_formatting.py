@@ -12,6 +12,7 @@ from cosecre_hub.services.sheets import (
     GoogleSheetsService,
     cell_to_value,
     drive_file_id_from_link,
+    row_colour,
     value_to_cell,
 )
 from cosecre_hub.services.text_format import (
@@ -170,6 +171,27 @@ def test_writes_skip_columns_the_register_does_not_own(tmp_path):
         written.update(range(start, start + len(cells["rows"][0]["values"])))
     assert 3 not in written
     assert written == set(range(len(REGISTER_COLUMNS) + 1)) - {3}
+
+
+def test_a_justified_row_is_green_even_before_it_is_validated():
+    pending, done, justified = (
+        row_colour({"validat": False}),
+        row_colour({"validat": True}),
+        row_colour({"validat": False, "justificat": True}),
+    )
+    assert len({str(pending), str(done), str(justified)}) == 3
+    assert justified["green"] > justified["red"] and justified["green"] > justified["blue"]
+    assert row_colour({"validat": True, "justificat": True}) == justified
+
+    layout = RegisterLayout("s", 7, "Registre", {"validat": 0}, 1, 1000)
+    requests = GoogleSheetsService.__new__(GoogleSheetsService)._row_requests(
+        layout, 5, {"validat": True, "justificat": True}, colour=True
+    )
+    # The flag colours the row; it is never written as a cell.
+    assert [r["updateCells"]["rows"][0]["values"] for r in requests if "updateCells" in r] == [
+        [{"userEnteredValue": {"boolValue": True}}]
+    ]
+    assert requests[-1]["repeatCell"]["cell"]["userEnteredFormat"]["backgroundColor"] == justified
 
 
 def test_drive_ids_are_recovered_from_formulas_and_links():

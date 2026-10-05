@@ -514,7 +514,7 @@ def _draw_sheet(pages: _Pages, line: Line, sheet: Sheet, total_lines: int) -> No
     c.drawString(MARGIN, TOP - 32, _fit(movement.concepte or "Moviment sense concepte", BOLD, 13, title_w))
     c.setFont(SANS, 8.5)
     c.setFillColor(INK_500)
-    c.drawString(MARGIN, TOP - 45, _fit(f"{format_date(movement.data)} · {movement.compte}", SANS, 8.5, title_w))
+    c.drawString(MARGIN, TOP - 45, _fit(" · ".join(filter(None, [movement.codi, format_date(movement.data), movement.compte])), SANS, 8.5, title_w))
 
     # The bank's side and the register's, side by side.
     bank = [
@@ -526,7 +526,8 @@ def _draw_sheet(pages: _Pages, line: Line, sheet: Sheet, total_lines: int) -> No
         ("Saldo", _money(movement.saldo) if movement.saldo is not None else ""),
         ("Tipus", movement.tipus),
         ("Compte", movement.compte),
-        ("Referència", movement.external_ref),
+        ("Codi", movement.codi),
+        ("Referència", movement.external_ref if movement.external_ref != movement.codi else ""),
     ]
     register = [
         ("Núm. factura", document.num_factura),

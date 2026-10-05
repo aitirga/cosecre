@@ -390,7 +390,7 @@ function amountClass(m: Movement) {
                         <td class="mono">{{ formatDate(m.data) }}</td>
                         <td class="concept">
                           <span class="truncate">{{ m.concepte }}</span>
-                          <span v-if="m.external_ref" class="muted ref-tag">{{ m.external_ref }}</span>
+                          <span v-if="m.codi || m.external_ref" class="muted ref-tag">{{ m.codi || m.external_ref }}</span>
                         </td>
                         <td class="truncate extra">{{ m.mes_dades || '—' }}</td>
                         <td class="num" :class="amountClass(m)">{{ formatAmount(m.import_value) }}</td>

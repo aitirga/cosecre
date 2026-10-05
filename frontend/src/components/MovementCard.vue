@@ -31,7 +31,8 @@ const facts = computed(() =>
       ['Tipus', m.value.tipus, false],
       ['Categoria', CATEGORIA_LABEL[m.value.categoria] ?? m.value.categoria, false],
       ['Font', SOURCE_LABEL[m.value.source] ?? m.value.source, false],
-      ['Ref.', m.value.external_ref, true],
+      ['Codi', m.value.codi, true],
+      ['Ref. extracte', m.value.external_ref !== m.value.codi ? m.value.external_ref : '', true],
       ['Més dades', m.value.mes_dades, false],
       ['Núm. factura', m.value.num_factura_hint, true],
       ['CIF', m.value.cif_hint, true],
@@ -92,6 +93,7 @@ function onPointerUp() {
         @pointercancel="onPointerUp"
       >
         <span class="mcard-title">
+          <span v-if="m.codi" class="code mono">{{ m.codi }}</span>
           <strong class="truncate">{{ m.concepte || 'Sense concepte' }}</strong>
           <span class="num" :class="{ in: m.import_value > 0 }">{{ formatAmount(m.import_value) }}</span>
         </span>
@@ -181,6 +183,12 @@ function onPointerUp() {
 .mcard-title strong {
   flex: 1;
   min-width: 0;
+}
+
+.mcard-title .code {
+  flex: none;
+  font-size: 12px;
+  color: var(--ink-500);
 }
 
 .mcard-title .num {

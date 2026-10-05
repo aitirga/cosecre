@@ -113,8 +113,13 @@ SCOPES = [
 
 _PENDING_COLOUR = {"red": 1.0, "green": 0.95, "blue": 0.8}
 _DONE_COLOUR = {"red": 1.0, "green": 1.0, "blue": 1.0}
+#: A row a confirmed statement movement pays: justified, whatever else it says.
+_JUSTIFIED_COLOUR = {"red": 0.85, "green": 0.94, "blue": 0.83}
 _HEADER_COLOUR = {"red": 0.95, "green": 0.94, "blue": 0.92}
 _LAYOUT_TTL_SECONDS = 60
+
+#: Not a column: a flag in a row's values that only picks its colour.
+JUSTIFIED_KEY = "justificat"
 
 
 class SheetDocumentNotFound(RuntimeError):
@@ -247,6 +252,13 @@ def value_to_cell(kind: ColumnKind, value: Any) -> dict[str, Any]:
         "userEnteredValue": {"stringValue": text},
         "userEnteredFormat": {"numberFormat": {"type": "TEXT"}},
     }
+
+
+def row_colour(values: dict[str, Any]) -> dict[str, float]:
+    """Green once justified by a statement, white once validated, else pending."""
+    if values.get(JUSTIFIED_KEY):
+        return _JUSTIFIED_COLOUR
+    return _DONE_COLOUR if values.get("validat") else _PENDING_COLOUR
 
 
 def serialized(method):
@@ -781,13 +793,7 @@ class GoogleSheetsService:
                             "startColumnIndex": 0,
                             "endColumnIndex": layout.width,
                         },
-                        "cell": {
-                            "userEnteredFormat": {
-                                "backgroundColor": _DONE_COLOUR
-                                if values.get("validat")
-                                else _PENDING_COLOUR
-                            }
-                        },
+                        "cell": {"userEnteredFormat": {"backgroundColor": row_colour(values)}},
                         "fields": "userEnteredFormat.backgroundColor",
                     }
                 }

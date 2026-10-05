@@ -23,6 +23,7 @@ from ...schemas import AiHint, DocumentRecord, SyncResult
 from ...schemas.documents import PaidBy
 from ...services.extraction import DocumentExtractionService, ExtractedDocument
 from ...services.sheets import (
+    JUSTIFIED_KEY,
     REGISTER_COLUMNS,
     GoogleSheetsService,
     drive_file_id_from_link,
@@ -52,9 +53,24 @@ def generate_reference() -> str:
 # ── Conversions ──────────────────────────────────────────────────────────────
 
 
+def is_justified(document: Document) -> bool:
+    """A confirmed statement movement pays this entry."""
+    session = Session.object_session(document)
+    if session is None or document.id is None:
+        return False
+    return (
+        session.query(PaymentMatch.id)
+        .filter(PaymentMatch.document_id == document.id, PaymentMatch.status == "confirmed")
+        .first()
+        is not None
+    )
+
+
 def sheet_values(document: Document) -> dict[str, Any]:
     values = {name: getattr(document, name, "") for name in REGISTER_FIELDS if name != "num_doc_intern"}
     values["num_doc_intern"] = document.internal_doc_number
+    # Only colours the row green; it is no column and never compared.
+    values[JUSTIFIED_KEY] = is_justified(document)
     return values
 
 
@@ -97,7 +113,7 @@ def paid_by(session: Session, document_ids: list[int]) -> dict[int, list[PaidBy]
         found.setdefault(document_id, []).append(PaidBy(
             movement_id=movement.id, compte=movement.compte, data=movement.data,
             concepte=movement.concepte, import_value=movement.import_value,
-            external_ref=movement.external_ref,
+            external_ref=movement.external_ref, codi=movement.codi,
         ))
     return found
 
@@ -120,6 +136,8 @@ def to_record(document: Document, payments: list[PaidBy] | None = None) -> Docum
         file_size = stored.stat().st_size
     return DocumentRecord(
         num_doc_intern=document.internal_doc_number,
+        matched_movements=len(payments),
+        paid_by=payments,
         **{name: getattr(document, name) for name in REGISTER_FIELDS if name != "num_doc_intern"},
         transcripcio=document.transcripcio or "",
         file_url=file_url,
@@ -136,8 +154,6 @@ def to_record(document: Document, payments: list[PaidBy] | None = None) -> Docum
         sheet_state=document.sheet_state,  # type: ignore[arg-type]
         sheet_row_ref=document.sheet_row_ref,
         legacy_type=document.legacy_type,
-        matched_movements=len(payments),
-        paid_by=payments,
         ai_hints={name: AiHint.model_validate(hint) for name, hint in (document.ai_hints or {}).items()},
         ai_trace=document.ai_trace,
         iban_valid=iban_is_valid(document.compte_corrent) if document.compte_corrent else None,

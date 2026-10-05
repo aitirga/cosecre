@@ -18,6 +18,7 @@ from statement_fakes import LONG_XLS, SAMPLE_XLS, RoutingProvider, jev_classifie
 from cosecre_hub.models import BankMovement, Document, PaymentMatch
 from cosecre_hub.services.matching import confidence as conf
 from cosecre_hub.services.matching import signals as sig
+from cosecre_hub.services.sheets import row_colour
 
 INVOICES = [
     # num, supplier, CIF, date, amount, method
@@ -219,6 +220,24 @@ def test_confirming_fills_in_the_invoice_and_frees_nobody_else(reconciled):
         json={"document_refs": [document.internal_doc_number]},
     )
     assert clash.status_code == 409
+
+
+def test_a_justified_invoice_turns_its_row_green_until_undone(reconciled):
+    client, headers, _, ids, *_ = reconciled
+    sheets: FakeSheets = client.app.state.sheet_service
+    body = detail(client, headers, "FAC:PRF26-00001")
+    reference = proposal(body)[0]["document"]["num_doc_intern"]
+    client.post(
+        f"/api/v1/reconciliation/movements/{body['id']}/confirm",
+        headers=headers,
+        json={"document_refs": [reference]},
+    )
+    row = sheets.row_for(reference)
+    assert row_colour(row) == row_colour({"justificat": True})
+
+    client.post(f"/api/v1/reconciliation/movements/{body['id']}/undo", headers=headers)
+    assert sheets.row_for(reference)["justificat"] is False
+    assert row_colour(sheets.row_for(reference)) != row_colour({"justificat": True})
 
 
 def test_not_this_one_puts_the_next_candidate_forward(reconciled):

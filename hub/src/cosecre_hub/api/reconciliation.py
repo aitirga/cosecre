@@ -462,9 +462,15 @@ def reject_match(match_id: int, session: Session = Depends(get_db), _: User = De
 
 
 @router.post("/movements/{movement_id}/undo", response_model=MovementDetail)
-def undo(movement_id: int, session: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def undo(
+    movement_id: int,
+    request: Request,
+    session: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
     """Take back a confirmation or a "Cap factura". Invoice fields already written stay as they are."""
     movement = _movement(session, movement_id)
+    unjustified = [m.document for m in movement.matches if m.status == "confirmed" and m.document]
     for match in list(movement.matches):
         if match.status == "confirmed" and match.decided_by == "person":
             session.delete(match)
@@ -472,6 +478,16 @@ def undo(movement_id: int, session: Session = Depends(get_db), _: User = Depends
             match.status = "alternative"
     movement.match_status = "unmatched"
     session.commit()
+
+    # Only their row colour changes: no longer green.
+    for document in unjustified:
+        try:
+            push_document(request.app, session, document)
+            session.commit()
+        except Exception:  # noqa: BLE001 — the database has it; the sheet catches up on the next sync
+            logger.warning("Could not push %s to the sheet", document.internal_doc_number, exc_info=True)
+            session.rollback()
+    session.expire_all()
     return _detail(session, _movement(session, movement_id))
 
 

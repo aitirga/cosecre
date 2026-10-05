@@ -252,6 +252,7 @@ class PaidBy(BaseModel):
     concepte: str = ""
     import_value: float = 0.0
     external_ref: str = ""
+    codi: str = ""
 
 
 class DocumentRecord(DocumentFields):

@@ -30,6 +30,58 @@ _MOVEMENT_FIELDS = (
 )
 
 
+#: ``COMPTES`` label → the prefix of its movements' internal codes.
+CODE_PREFIXES = {
+    "Caixeta": "CIX",
+    "Targeta Prepagament": "TP",
+    "Material i Sortides": "M",
+    "Menjador": "MEN",
+    "General": "G",
+}
+
+
+def _code_number(codi: str) -> int:
+    match = re.search(r"_(\d+)$", codi)
+    return int(match.group(1)) if match else 0
+
+
+def assign_codes(session: Session) -> int:
+    """Give every movement without one its internal code; returns how many changed.
+
+    Each account counts on from its highest code, oldest line first, so a code
+    never changes once given — a later statement for an earlier month simply
+    gets the next numbers. A caixeta line is the exception: its code *is* the
+    sheet's ``Cix_NNN``, and follows it if the sheet renumbers.
+    """
+    session.flush()
+    changed = 0
+    for movement in session.query(BankMovement).filter(
+        BankMovement.compte == "Caixeta", BankMovement.external_ref != ""
+    ):
+        if movement.codi != movement.external_ref:
+            movement.codi = movement.external_ref
+            changed += 1
+    session.flush()
+    pending = (
+        session.query(BankMovement)
+        .filter(BankMovement.codi == "")
+        .order_by(BankMovement.data.is_(None), BankMovement.data, BankMovement.id)
+        .all()
+    )
+    if not pending:
+        return changed
+    last: dict[str, int] = {}
+    for compte, codi in session.query(BankMovement.compte, BankMovement.codi).filter(BankMovement.codi != ""):
+        last[compte] = max(last.get(compte, 0), _code_number(codi))
+    for movement in pending:
+        prefix = CODE_PREFIXES.get(movement.compte) or (movement.compte[:3].upper() or "MOV")
+        last[movement.compte] = last.get(movement.compte, 0) + 1
+        movement.codi = f"{prefix}_{last[movement.compte]:03d}"
+        changed += 1
+    session.flush()
+    return changed
+
+
 def _compact(iban: str) -> str:
     return re.sub(r"\s", "", iban or "").upper()
 
@@ -125,6 +177,7 @@ def save(
     statement.rows_new = new
     statement.rows_duplicate = duplicate
     session.flush()
+    assign_codes(session)
     link_internal_transfers(session)
     session.commit()
     session.refresh(statement)

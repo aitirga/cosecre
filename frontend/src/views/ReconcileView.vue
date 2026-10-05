@@ -720,7 +720,7 @@ function showOriginal(doc: DocumentBrief) {
             >
               <span class="m-date">
                 <span class="mono">{{ formatDate(m.data) }}</span>
-                <span v-if="m.external_ref" class="m-ref mono muted">{{ m.external_ref }}</span>
+                <span v-if="m.codi || m.external_ref" class="m-ref mono muted">{{ m.codi || m.external_ref }}</span>
               </span>
               <span class="m-text">
                 <span class="truncate">{{ m.concepte }}</span>
@@ -792,7 +792,7 @@ function showOriginal(doc: DocumentBrief) {
           <template v-else>
             <div class="mv side-bank">
               <div class="side-label">
-                <AppIcon name="bank" :size="13" /> Extracte <span class="side-sub">· {{ detail.compte }}</span>
+                <AppIcon name="bank" :size="13" /> Extracte <span class="side-sub">· {{ detail.compte }}<template v-if="detail.codi"> · <span class="mono">{{ detail.codi }}</span></template></span>
               </div>
               <div class="mv-top">
                 <span class="mv-amount" :class="{ in: detail.import_value > 0 }">{{ formatAmount(detail.import_value) }}</span>
@@ -818,8 +818,8 @@ function showOriginal(doc: DocumentBrief) {
                 <span v-if="detail.num_factura_hint" class="muted">· núm. {{ detail.num_factura_hint }}</span>
                 <span v-if="detail.cif_hint" class="muted">· CIF {{ detail.cif_hint }}</span>
               </div>
-              <div v-if="detail.external_ref || detail.saldo != null || (detail.data_valor && detail.data_valor !== detail.data)" class="mv-facts">
-                <span v-if="detail.external_ref"><span class="muted">Ref.</span> <span class="mono">{{ detail.external_ref }}</span></span>
+              <div v-if="(detail.external_ref && detail.external_ref !== detail.codi) || detail.saldo != null || (detail.data_valor && detail.data_valor !== detail.data)" class="mv-facts">
+                <span v-if="detail.external_ref && detail.external_ref !== detail.codi"><span class="muted">Ref. extracte</span> <span class="mono">{{ detail.external_ref }}</span></span>
                 <span v-if="detail.data_valor && detail.data_valor !== detail.data">
                   <span class="muted">Data valor</span> <span class="mono">{{ formatDate(detail.data_valor) }}</span>
                 </span>
@@ -830,7 +830,7 @@ function showOriginal(doc: DocumentBrief) {
             <p v-if="detail.categoria !== 'pagament'" class="notice">
               {{ CATEGORIA_LABEL[detail.categoria] }}: no cal justificar-lo amb una factura.
               <template v-if="detail.linked_movement">
-                És l'altra cara de «{{ detail.linked_movement.concepte }}» ({{ detail.linked_movement.compte }},
+                És l'altra cara de «{{ detail.linked_movement.concepte }}» ({{ detail.linked_movement.codi || detail.linked_movement.compte }},
                 {{ formatDate(detail.linked_movement.data) }}).
               </template>
             </p>

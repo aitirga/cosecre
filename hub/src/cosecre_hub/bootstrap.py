@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from .config import Settings
 from .models import Document, ExtractionJob, MatchRun, User, WorkspaceSetting
 from .security import hash_password
+from .services.statements.store import assign_codes
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("workspace_settings", "caixeta_spreadsheet_url", "TEXT DEFAULT '' NOT NULL"),
     ("workspace_settings", "caixeta_synced_at", "DATETIME"),
     ("workspace_settings", "caixeta_fingerprint", "VARCHAR(64) DEFAULT '' NOT NULL"),
+    ("bank_movements", "codi", "VARCHAR(20) DEFAULT '' NOT NULL"),
 ]
 
 #: Models that were once the default and should follow the configured one,
@@ -221,6 +223,8 @@ def recover_interrupted_jobs(session: Session) -> int:
 
 def run_startup_tasks(session: Session, settings: Settings) -> None:
     apply_compat_migrations(session)
+    if assign_codes(session):
+        session.commit()
     ensure_workspace_settings(session, settings)
     bootstrap_admin(session, settings)
     seed_users(session, settings)

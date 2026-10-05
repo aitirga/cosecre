@@ -125,6 +125,7 @@ def to_movement_read(movement: BankMovement) -> MovementRead:
         cif_hint=movement.cif_hint,
         iban_hint=movement.iban_hint,
         external_ref=movement.external_ref,
+        codi=movement.codi,
         raw=movement.raw or {},
         match_status=movement.match_status,
         linked_movement_id=movement.linked_movement_id,

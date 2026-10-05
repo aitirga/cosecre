@@ -48,6 +48,8 @@ class MovementRead(BaseModel):
     cif_hint: str = ""
     iban_hint: str = ""
     external_ref: str = ""
+    #: Our own key for the line (``TP_007``, ``Cix_013``).
+    codi: str = ""
     #: The line as the source gave it, for the review screen's detail card.
     raw: dict[str, Any] = Field(default_factory=dict)
     match_status: MatchStatus

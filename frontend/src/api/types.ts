@@ -145,6 +145,8 @@ export interface PaidBy {
   concepte: string
   import_value: number
   external_ref: string
+  /** Our own key for the line: ``Cix_013``, ``TP_007``, ``MEN_112``… */
+  codi: string
 }
 
 export interface DocumentRecord extends DocumentFields {
@@ -391,6 +393,8 @@ export interface Movement {
   cif_hint: string
   iban_hint: string
   external_ref: string
+  /** Our own key for the line: ``Cix_013``, ``TP_007``, ``MEN_112``… */
+  codi: string
   /** The line as the source gave it. */
   raw: Record<string, unknown>
   match_status: MatchStatus
