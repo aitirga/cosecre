@@ -116,9 +116,17 @@ class MirrorTab:
         return tab_title(self.compte)
 
 
+def _order_key(movement: BankMovement) -> tuple:
+    # The caixeta reads in its own Cix_NNN order (its sheet's); the rest by date.
+    if movement.compte == "Caixeta":
+        match = re.search(r"(\d+)$", movement.codi or "")
+        return (movement.compte, int(match.group(1)) if match else 10**9, movement.id)
+    return (movement.compte, movement.data or date.max, movement.id)
+
+
 def order(movements: list[BankMovement]) -> list[BankMovement]:
-    """Oldest first, like reading the statement; undated lines last."""
-    return sorted(movements, key=lambda m: (m.data or date.max, m.id))
+    """As a statement reads: the caixeta by its code, every other account oldest first."""
+    return sorted(movements, key=_order_key)
 
 
 def confirmed_documents(movement: BankMovement) -> list[Document]:

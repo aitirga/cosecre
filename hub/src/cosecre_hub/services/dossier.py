@@ -1,24 +1,18 @@
-"""The statement dossier: the statement itself, then the paper behind each payment.
+"""The statement dossier: the statement itself, then the original invoices behind it.
 
 Two parts, in one PDF:
 
 1. **The statement**, laid out like the bank's own export — date, value date,
-   movement, more details, amount, balance — with our code for each line in
-   front and, after it, the number and internal code of the invoice that line
-   paid. Only confirmed links fill those two cells; anything less certain
-   leaves them empty, with room to write the invoice in by hand.
-2. **The justificants**, in the statement's order. For each payment:
-   * an invoice whose original is a PDF: that PDF, whole;
-   * an invoice that is a photo (a ticket): a page with the line's code, date,
-     concept and amount, and the photo printed below;
-   * no invoice at all: the same page with nothing below, ready for the paper
-     to be stapled on.
+   movement, more details, amount, balance — then two yellow cells: the line's
+   internal code (``G_014``, ``Cix_013``…) and the number of the invoice it
+   paid. The code is always there; the number only when an invoice is
+   confirmed, otherwise the cell is left to be written in by hand.
+2. **The originals**, in the statement's order: every confirmed invoice whose
+   original is a document (a PDF, not a photo), each page shrunk just enough
+   to carry the line's code centred on top. Photos, and lines without an
+   invoice, add no pages.
 
-Lines that are not payments (fees, income, internal transfers) appear in the
-statement but need no page of their own.
-
-Drawn straight on a reportlab canvas: every page has a fixed layout, so the
-page count — and each footer's "page n of N" — is known before drawing starts.
+The caixeta reads in its own ``Cix_NNN`` order; every other account by date.
 """
 
 from __future__ import annotations
@@ -31,24 +25,23 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from PIL import Image, ImageOps
-from pypdf import PdfReader, PdfWriter
+from pypdf import PageObject, PdfReader, PdfWriter, Transformation
+from pypdf.generic import RectangleObject
 from reportlab.lib.colors import HexColor
 from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.utils import ImageReader, simpleSplit
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen.canvas import Canvas
 from sqlalchemy.orm import Session, selectinload
 
 from ..models import BankMovement, Document, PaymentMatch, StatementImport
 from .statements import PAYMENT
+from .statements.mirror import order
 from .text_format import format_date
 
 logger = logging.getLogger(__name__)
 
 # ── Geometry and palette (the web app's tokens) ──────────────────────────────
 
-PORTRAIT = A4
 LANDSCAPE = landscape(A4)
 MARGIN = 36
 
@@ -58,33 +51,31 @@ INK_400 = HexColor("#566b8c")
 LINE = HexColor("#dbe5f3")
 LINE_STRONG = HexColor("#c2d2ea")
 HEADER_FILL = HexColor("#edf3fc")
-ACCENT = HexColor("#2f5aa8")
-WRITE_IN = HexColor("#fdf1de")
+WRITE_IN = HexColor("#fff2a8")
 
 SANS = "Helvetica"
 BOLD = "Helvetica-Bold"
 
 #: The statement table: (heading, width, right-aligned). Widths add up to the
-#: landscape content width, 770pt.
+#: landscape content width, 770pt. The last two are the yellow cells.
 COLUMNS = (
-    ("Codi", 50, False),
-    ("Data", 48, False),
-    ("Data valor", 48, False),
-    ("Moviment", 160, False),
-    ("Més dades", 160, False),
-    ("Import", 62, True),
-    ("Saldo", 62, True),
-    ("Núm. factura", 76, False),
-    ("Codi intern factura", 104, False),
+    ("Data", 50, False),
+    ("Data valor", 50, False),
+    ("Moviment", 190, False),
+    ("Més dades", 190, False),
+    ("Import", 68, True),
+    ("Saldo", 68, True),
+    ("Codi", 70, False),
+    ("Núm. factura", 84, False),
 )
+CODE_COLUMN = len(COLUMNS) - 2
 ROW_H = 16
 FIRST_TABLE_Y = LANDSCAPE[1] - MARGIN - 70
 NEXT_TABLE_Y = LANDSCAPE[1] - MARGIN - 18
 BOTTOM = MARGIN + 6
 
-#: The longest side a photo keeps. Enough to read a ticket at A4, small enough
-#: that a dossier of a hundred photos stays a file people can email.
-IMAGE_MAX_PX = 1800
+#: An original's page keeps this much of itself (by side), so the code fits above it.
+ORIGINAL_SCALE = 0.93
 
 
 # ── What goes in ─────────────────────────────────────────────────────────────
@@ -111,30 +102,13 @@ class Line:
     invoices: list[Invoice] = field(default_factory=list)
 
     @property
-    def needs_paper(self) -> bool:
-        """A payment, or anything someone linked an invoice to."""
-        return bool(self.invoices) or self.movement.categoria == PAYMENT
-
-    @property
     def numbers(self) -> str:
         return ", ".join(i.document.num_factura or "?" for i in self.invoices)
 
     @property
-    def refs(self) -> str:
-        return ", ".join(i.document.internal_doc_number for i in self.invoices)
-
-    def pages(self) -> list[tuple[str, Invoice | None]]:
-        """What this line contributes after the statement, in order.
-
-        ``("pdf", invoice)`` is the original appended whole; ``("ticket",
-        invoice)`` a drawn page with the photo; ``("blank", None)`` a drawn page
-        with only the line's details.
-        """
-        if not self.needs_paper:
-            return []
-        if not self.invoices:
-            return [("blank", None)]
-        return [("pdf" if i.original.kind == "pdf" else "ticket", i) for i in self.invoices]
+    def originals(self) -> list[Invoice]:
+        """The invoices that go in after the statement: documents, not photos."""
+        return [i for i in self.invoices if i.original.kind == "pdf"]
 
 
 def _original(document: Document) -> Original:
@@ -174,11 +148,8 @@ def _lines(
         query = query.filter(BankMovement.data >= date_from)
     if date_to:
         query = query.filter(BankMovement.data <= date_to)
-    movements = query.all()
-    # A statement reads oldest first; undated lines (rare) go last.
-    movements.sort(key=lambda m: (m.data or date.max, m.id))
     lines = []
-    for movement in movements:
+    for movement in order(query.all()):
         # Confirmed only: a proposal is a guess, and the dossier is what gets handed in.
         documents = sorted(
             (m.document for m in movement.matches if m.status == "confirmed" and m.document),
@@ -214,14 +185,6 @@ def _fit(text: str, font: str, size: float, width: float) -> str:
     return text.rstrip() + "…"
 
 
-def _wrap(text: str, font: str, size: float, width: float, max_lines: int) -> list[str]:
-    lines = simpleSplit(_clean(text), font, size, width) or [""]
-    if len(lines) > max_lines:
-        lines = lines[:max_lines]
-        lines[-1] = _fit(lines[-1] + " …", font, size, width)
-    return lines
-
-
 def _period(statement: StatementImport, lines: list[Line], date_from: date | None = None, date_to: date | None = None) -> str:
     dates = [line.movement.data for line in lines if line.movement.data]
     start = date_from or statement.period_from or (min(dates) if dates else None)
@@ -248,8 +211,7 @@ def file_name(statement: StatementImport, date_from: date | None = None, date_to
 class _Pages:
     """The canvas, plus the footer every drawn page shares and its numbering.
 
-    Appended PDF originals are not drawn here, but they count: ``skip`` moves
-    the numbering past them so the next drawn page reads the right number.
+    Only the statement is drawn; the originals after it still count in "n / N".
     """
 
     def __init__(self, target, statement: StatementImport, period: str, total: int):
@@ -275,9 +237,6 @@ class _Pages:
         c.drawRightString(width - MARGIN, MARGIN - 18, f"{self.page} / {self.total}")
         c.showPage()
         self.page += 1
-
-    def skip(self, pages: int) -> None:
-        self.page += pages
 
 
 def _rows_per_page(first: bool) -> int:
@@ -315,7 +274,7 @@ def _draw_statement(pages: _Pages, statement: StatementImport, lines: list[Line]
     justified = [line for line in payments if line.invoices]
     note = (
         f"{len(lines)} moviments, {len(payments)} pagaments, {len(justified)} amb factura. "
-        "Les caselles de factura en groc no tenen cap factura confirmada: es poden omplir a mà. "
+        "Núm. factura en blanc: cap factura confirmada, es pot omplir a mà. "
         f"Generat el {format_date(today)}."
     )
     if ranged:
@@ -369,26 +328,24 @@ def _table_header(c: Canvas, y: float) -> None:
 def _table_row(c: Canvas, line: Line, y: float) -> None:
     movement = line.movement
     values = (
-        movement.codi,
         format_date(movement.data),
         format_date(movement.data_valor),
         movement.concepte,
         movement.mes_dades,
         _money(movement.import_value),
         _money(movement.saldo),
+        movement.codi,
         line.numbers,
-        line.refs,
     )
     x = MARGIN
     for index, ((_, width, right), value) in enumerate(zip(COLUMNS, values, strict=True)):
-        invoice_cell = index >= len(COLUMNS) - 2
-        if invoice_cell and line.needs_paper and not line.invoices:
-            # Room to write the invoice in by hand.
+        yellow = index >= CODE_COLUMN
+        if yellow:
             c.setFillColor(WRITE_IN)
             c.rect(x + 1.5, y - 3.5, width - 3, ROW_H - 3, stroke=0, fill=1)
-        font = BOLD if index == 0 else SANS
-        c.setFillColor(INK_500 if index == 4 else INK_900)
-        if invoice_cell and _two_lines(c, value or "", x + 4, y, width - 8):
+        font = BOLD if index == CODE_COLUMN else SANS
+        c.setFillColor(INK_500 if index == 3 else INK_900)
+        if index == len(COLUMNS) - 1 and _two_lines(c, value or "", x + 4, y, width - 8):
             x += width
             continue
         c.setFont(font, 7)
@@ -420,101 +377,35 @@ def _two_lines(c: Canvas, text: str, x: float, y: float, width: float) -> bool:
     return True
 
 
-def _draw_details(pages: _Pages, line: Line, invoice: Invoice | None) -> float:
-    """The head every drawn justificant page shares; returns where the body starts."""
-    c = pages.c
-    width, height = PORTRAIT
-    top = height - MARGIN
-    content_w = width - 2 * MARGIN
-    movement = line.movement
-
-    c.setFont(BOLD, 7)
-    c.setFillColor(ACCENT)
-    c.drawString(MARGIN, top - 8, "CODI INTERN", charSpace=0.6)
-    c.setFont(BOLD, 22)
+def _code_overlay(width: float, height: float, band: float, codi: str) -> PageObject:
+    buffer = io.BytesIO()
+    c = Canvas(buffer, pagesize=(width, height))
+    size = 15 if width < 700 else 18
+    c.setFont(BOLD, size)
     c.setFillColor(INK_900)
-    c.drawString(MARGIN, top - 32, _clean(movement.codi or "—"))
-
-    rows = [
-        ("Data de pagament", format_date(movement.data)),
-        ("Concepte / empresa", movement.concepte or "—"),
-        ("Import", _money(movement.import_value)),
-    ]
-    if invoice is not None:
-        document = invoice.document
-        rows.append(
-            ("Factura", " · ".join(filter(None, [document.num_factura or "sense número", document.internal_doc_number, document.proveidor])))
-        )
-    y = top - 54
-    for label, value in rows:
-        c.setFont(BOLD, 7)
-        c.setFillColor(INK_400)
-        c.drawString(MARGIN, y + 1, label.upper(), charSpace=0.4)
-        c.setFont(SANS, 10.5)
-        c.setFillColor(INK_900)
-        for text in _wrap(value, SANS, 10.5, content_w - 120, 2):
-            c.drawString(MARGIN + 120, y, text)
-            y -= 13
-        y -= 5
-    c.setStrokeColor(LINE_STRONG)
-    c.setLineWidth(0.6)
-    c.line(MARGIN, y + 6, width - MARGIN, y + 6)
-    return y - 6
-
-
-def _draw_blank(pages: _Pages, line: Line) -> None:
-    pages.start(PORTRAIT)
-    _draw_details(pages, line, None)
-    pages.finish_page(PORTRAIT)
-
-
-def _draw_ticket(pages: _Pages, line: Line, invoice: Invoice) -> None:
-    c = pages.c
-    pages.start(PORTRAIT)
-    body_top = _draw_details(pages, line, invoice)
-    width = PORTRAIT[0] - 2 * MARGIN
-    height = body_top - BOTTOM
-    original = invoice.original
-
-    message = ""
-    if original.kind == "image":
-        try:
-            reader, (px_w, px_h) = _image(original.path)
-        except Exception:  # noqa: BLE001 — a photo that will not open is said so on its page
-            logger.warning("Unreadable image original %s", original.path, exc_info=True)
-            message = "No s'ha pogut llegir la foto original."
-        else:
-            scale = min(width / px_w, height / px_h)
-            draw_w, draw_h = px_w * scale, px_h * scale
-            c.drawImage(reader, MARGIN + (width - draw_w) / 2, body_top - draw_h, draw_w, draw_h)
-    elif original.kind == "unreadable":
-        message = "L'original és un PDF que no s'ha pogut llegir; descarrega'l del registre."
-    else:
-        message = "Aquesta factura no té cap original al servidor."
-    if message:
-        c.setFont(SANS, 9)
-        c.setFillColor(INK_500)
-        c.drawString(MARGIN, body_top - 14, _fit(message, SANS, 9, width))
-    pages.finish_page(PORTRAIT)
-
-
-def _image(path: Path) -> tuple[ImageReader, tuple[int, int]]:
-    """The photo upright, flattened on white and shrunk to a sensible size."""
-    with Image.open(path) as source:
-        source.draft("RGB", (IMAGE_MAX_PX, IMAGE_MAX_PX))  # JPEG decodes small; others ignore it
-        image = ImageOps.exif_transpose(source)
-        if image.mode in {"RGBA", "LA", "P"}:
-            image = image.convert("RGBA")
-            flat = Image.new("RGB", image.size, "white")
-            flat.paste(image, mask=image.getchannel("A"))
-            image = flat
-        else:
-            image = image.convert("RGB")
-        image.thumbnail((IMAGE_MAX_PX, IMAGE_MAX_PX))
-        buffer = io.BytesIO()
-        image.save(buffer, "JPEG", quality=82, optimize=True)
+    c.drawCentredString(width / 2, height - band / 2 - size / 3, _clean(codi or "—"))
+    c.showPage()
+    c.save()
     buffer.seek(0)
-    return ImageReader(buffer), image.size
+    return PdfReader(buffer).pages[0]
+
+
+def _add_with_code(writer: PdfWriter, source: PageObject, codi: str) -> None:
+    """An original's page, nearly full size, with the line's code centred on top."""
+    page = writer.add_page(source)
+    page.transfer_rotation_to_content()
+    box = page.mediabox
+    width, height = float(box.width), float(box.height)
+    edge = width * (1 - ORIGINAL_SCALE) / 2  # the sides' margin, and the bottom's
+    band = height * (1 - ORIGINAL_SCALE) - edge  # what is left above, for the code
+    page.add_transformation(
+        Transformation()
+        .translate(-float(box.left), -float(box.bottom))
+        .scale(ORIGINAL_SCALE)
+        .translate(edge, edge)
+    )
+    page.mediabox = page.cropbox = RectangleObject((0, 0, width, height))
+    page.merge_page(_code_overlay(width, height, band, codi))
 
 
 # ── Putting it together ──────────────────────────────────────────────────────
@@ -537,49 +428,33 @@ def build(
     lines = _lines(session, statement, date_from, date_to)
     period = _period(statement, lines, date_from, date_to)
 
-    plan = [(line, kind, invoice) for line in lines for kind, invoice in line.pages()]
+    plan = [(line, invoice) for line in lines for invoice in line.originals]
     statement_pages = _statement_pages(len(lines))
-    total = statement_pages + sum(invoice.original.pages if kind == "pdf" else 1 for _, kind, invoice in plan)
+    total = statement_pages + sum(invoice.original.pages for _, invoice in plan)
 
     handle, out_path = tempfile.mkstemp(prefix="cosecre-dossier-", suffix=".pdf")
     os.close(handle)
     try:
-        # Every drawn page, in order, numbered as it will be in the final file.
         drawn = io.BytesIO()
         pages = _Pages(drawn, statement, period, total)
         _draw_statement(pages, statement, lines, period, today, ranged=bool(date_from or date_to))
-        for line, kind, invoice in plan:
-            if kind == "pdf":
-                pages.skip(invoice.original.pages)
-            elif kind == "ticket":
-                _draw_ticket(pages, line, invoice)
-            else:
-                _draw_blank(pages, line)
         pages.c.save()
         drawn.seek(0)
 
-        # Then the drawn pages and the PDF originals, interleaved.
-        own = PdfReader(drawn)
         writer = PdfWriter()
-        cursor = 0
-        for _ in range(statement_pages):
-            writer.add_page(own.pages[cursor])
-            cursor += 1
+        for page in PdfReader(drawn).pages:
+            writer.add_page(page)
         writer.add_outline_item("Extracte", 0)
         current: BankMovement | None = None
-        for line, kind, invoice in plan:
+        for line, invoice in plan:
             if line.movement is not current:
                 current = line.movement
                 title = " · ".join(
                     filter(None, [current.codi, format_date(current.data), _money(current.import_value), current.concepte])
                 )
                 writer.add_outline_item(_clean(title)[:90], len(writer.pages))
-            if kind == "pdf":
-                for original_page in PdfReader(invoice.original.path).pages:
-                    writer.add_page(original_page)
-            else:
-                writer.add_page(own.pages[cursor])
-                cursor += 1
+            for original_page in PdfReader(invoice.original.path).pages:
+                _add_with_code(writer, original_page, current.codi)
         writer.add_metadata({"/Title": _clean(f"Dossier d'extracte — {statement.compte} ({period})"), "/Author": "Cosecre"})
         with open(out_path, "wb") as sink:
             writer.write(sink)

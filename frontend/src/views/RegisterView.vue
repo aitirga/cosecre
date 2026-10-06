@@ -175,6 +175,8 @@ const syncStatus = useQuery({
   refetchInterval: 60000,
 })
 const showSync = ref(false)
+/** The accounting spreadsheet, for the "Obre l'Excel" link. */
+const sheetLink = useQuery({ queryKey: ['statements-mirror'], queryFn: api.mirrorStatus })
 
 const syncSummary = computed(() => {
   const result = syncStatus.data.value
@@ -307,6 +309,16 @@ const showUpload = ref(true)
         </p>
       </div>
       <div class="head-actions">
+        <a
+          v-if="sheetLink.data.value?.spreadsheet_url"
+          class="btn btn-ghost"
+          :href="sheetLink.data.value.spreadsheet_url"
+          target="_blank"
+          rel="noopener"
+        >
+          <AppIcon name="external" />
+          Obre l'Excel
+        </a>
         <button
           class="btn btn-outline sync-button"
           type="button"

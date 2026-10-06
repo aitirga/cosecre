@@ -230,7 +230,7 @@ function amountClass(m: Movement) {
           rel="noopener"
         >
           <AppIcon name="external" />
-          Obre el full
+          Obre l'Excel
         </a>
         <button
           class="btn btn-outline"
