@@ -88,6 +88,24 @@ REGISTER_COLUMNS: tuple[Column, ...] = (
 )
 COLUMNS_BY_FIELD = {column.field: column for column in REGISTER_COLUMNS}
 
+#: What makes a row a document: someone wrote at least one of these. Dropdowns,
+#: checkboxes, our own CIF, who is responsible — a sheet table can pre-fill all
+#: of those on every empty row, so on their own they say nothing.
+SUBSTANCE_FIELDS = (
+    "num_factura",
+    "data_factura",
+    "proveidor",
+    "cif_proveidor",
+    "import_value",
+    "descripcio",
+    "descripcio_compra",
+    "file_link",
+)
+
+
+def has_substance(values: dict[str, Any]) -> bool:
+    return any(values.get(name) not in ("", None) for name in SUBSTANCE_FIELDS)
+
 #: Headers of the two tabs the register replaced, for the migration.
 LEGACY_HEADERS = {
     "num_factura": "Núm. de la factura",
@@ -874,16 +892,12 @@ class GoogleSheetsService:
         rows: list[SheetRow] = []
         for row_number, cells in enumerate(grid[1:], start=2):
             values: dict[str, Any] = {}
-            meaningful = False
             for field_name, index in layout.columns.items():
                 raw = cells[index] if index < len(cells) else None
-                column = COLUMNS_BY_FIELD[field_name]
-                value = cell_to_value(column.kind, field_name, raw)
-                values[field_name] = value
-                # A pre-ticked checkbox column alone is not a document.
-                if column.kind != "bool" and value not in ("", None):
-                    meaningful = True
-            if meaningful:
+                values[field_name] = cell_to_value(COLUMNS_BY_FIELD[field_name].kind, field_name, raw)
+            # A row is read when it says something, or when it is one of ours
+            # (its code is there) — so an entry emptied in the sheet still shows.
+            if has_substance(values) or values.get("num_doc_intern"):
                 rows.append(SheetRow(row_number=row_number, values=values))
         return rows
 

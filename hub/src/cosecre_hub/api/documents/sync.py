@@ -32,7 +32,7 @@ from typing import Any, Literal
 from sqlalchemy.orm import Session
 
 from ...deps import get_workspace_setting
-from ...models import Document
+from ...models import Document, PaymentMatch
 from ...schemas import SyncResult
 from ...services import history, people
 from ...services.sheets import (
@@ -40,6 +40,7 @@ from ...services.sheets import (
     GoogleSheetsService,
     SheetRow,
     changed_fields,
+    has_substance,
     snapshot_values,
 )
 from .duplicates import remove_duplicates
@@ -223,7 +224,7 @@ def _clean_pull(entry: DiffEntry) -> bool:
     so their entry was taken out here (a restore, say), not typed in there.
     """
     if entry.status == "new_in_sheet":
-        return not entry.reference
+        return not entry.reference and has_substance(entry._row.values)
     document = entry._document
     return (
         entry.status == "sheet_changed"
@@ -231,6 +232,44 @@ def _clean_pull(entry: DiffEntry) -> bool:
         and document.sheet_snapshot is not None
         and document.status not in IN_FLIGHT
     )
+
+
+def _is_empty(session: Session, document: Document) -> bool:
+    """An entry with nothing in it: no invoice data, no file, no payment."""
+    return (
+        not has_substance(document_snapshot(document))
+        and document.upload_id is None
+        and not document.drive_file_id
+        and document.status not in IN_FLIGHT
+        and session.query(PaymentMatch).filter_by(document_id=document.id).first() is None
+    )
+
+
+def remove_empty(service, workspace, session: Session, rows: list[SheetRow], documents: list[Document]) -> int:
+    """Take out entries that say nothing, and their codes from the sheet's rows.
+
+    Blank rows of a sheet table once came in as entries; nothing was in them,
+    so nothing is lost. One undoable action. Returns how many went.
+    """
+    empty = [d for d in documents if _is_empty(session, d)]
+    if not empty:
+        return 0
+    references = {d.internal_doc_number for d in empty}
+    with history.action("Entrades buides retirades"):
+        for document in empty:
+            session.delete(document)
+        session.flush()
+    # The row stays (it belongs to the table); only our code goes, so it is blank again.
+    clears = [
+        (row.row_number, {"num_doc_intern": ""})
+        for row in rows
+        if row.values.get("num_doc_intern") in references and not has_substance(row.values)
+    ]
+    if clears:
+        service.write_cells(workspace, clears)
+    session.commit()
+    logger.info("Register: %d empty entries removed", len(empty))
+    return len(empty)
 
 
 def trust_database(session: Session) -> None:
@@ -260,6 +299,8 @@ def auto_sync(app, session: Session, *, force: bool = False) -> SyncResult:
         app.state.register_synced_at = now
         remove_duplicates(app, session, sheet_ready=True)
         _, _, rows, documents = _read(app, session)
+        if remove_empty(service, workspace, session, rows, documents):
+            _, _, rows, documents = _read(app, session)
         _baseline_agreeing(rows, documents)
         entries = compute_diff(rows, documents)
         pushed = 0

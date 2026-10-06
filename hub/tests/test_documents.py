@@ -203,6 +203,45 @@ def test_the_same_person_on_several_new_rows_is_remembered_once(register):
         session.close()
 
 
+# What an empty row of a sheet table holds: dropdowns, checkboxes, our own CIF.
+BLANK_TABLE_ROW = {"num_doc_intern": "", "tipus_document": "Factura", "origen": "Original",
+                   "cif_proveit": "G12345678", "pagament": "Pendent", "responsable_nom": "",
+                   "validat": False}
+
+
+def test_blank_rows_of_a_sheet_table_never_become_entries(register):
+    client, headers, sheet, _ = register
+    for row in range(2, 40):
+        sheet.rows[row] = dict(BLANK_TABLE_ROW)
+    status = client.post(f"{RECORDS}/sync", headers=headers).json()
+    assert status["pulled"] == 0 and status["waiting"] == 0
+    assert client.get(RECORDS, headers=headers).json() == []
+    assert all(not values["num_doc_intern"] for values in sheet.rows.values())
+
+
+def test_entries_that_came_in_empty_are_taken_out_and_their_rows_blanked(register):
+    client, headers, sheet, _ = register
+    kept = upload(client, headers)
+    session = client.app.state.session_factory()
+    try:
+        for index, row in enumerate(range(10, 15)):
+            reference = f"DOC-EMPTY{index}"
+            session.add(Document(internal_doc_number=reference, tipus_document="Factura",
+                                 status="needs_validation", sheet_state="synced"))
+            sheet.rows[row] = {**BLANK_TABLE_ROW, "num_doc_intern": reference}
+        session.commit()
+    finally:
+        session.close()
+
+    client.post(f"{RECORDS}/sync", headers=headers)
+    records = client.get(RECORDS, headers=headers).json()
+    assert len(records) == 1 and kept in str(records[0])
+    assert all(not sheet.rows[row]["num_doc_intern"] for row in range(10, 15))
+    assert sheet.rows[10]["tipus_document"] == "Factura"  # the table's row stays as it was
+    action = client.get("/api/v1/history", headers=headers).json()["actions"][0]
+    assert action["label"] == "Entrades buides retirades"
+
+
 def test_app_edits_reach_the_sheet_on_their_own_even_after_an_outage(register):
     client, headers, sheet, _ = register
     reference = upload(client, headers)

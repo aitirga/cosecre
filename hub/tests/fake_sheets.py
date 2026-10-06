@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from cosecre_hub.services.sheets import (
+    has_substance,
     REGISTER_COLUMNS,
     GoogleSheetsService,
     LegacyTab,
@@ -58,7 +59,11 @@ class FakeSheets(GoogleSheetsService):
         return RegisterLayout("fake", 1, "Registre", {c.field: i for i, c in enumerate(REGISTER_COLUMNS)}, len(REGISTER_COLUMNS), 1000)
 
     def read_register(self, workspace) -> list[SheetRow]:
-        return [SheetRow(n, dict(values)) for n, values in sorted(self.rows.items())]
+        # Like the real sheet: a row is read when it says something, or carries a code.
+        return [
+            SheetRow(n, dict(values)) for n, values in sorted(self.rows.items())
+            if has_substance(values) or values.get("num_doc_intern")
+        ]
 
     def write_row(self, workspace, row_number: int, values: dict[str, Any]) -> int:
         if self.fail_writes:
