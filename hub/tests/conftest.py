@@ -169,6 +169,8 @@ def build_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "backup_enabled": False,
         # Mirror the statements inline, so a test sees the sheet right away.
         "statement_mirror_delay_seconds": 0,
+        # Tests sync when they say so, not on a clock.
+        "sheet_sync_interval_seconds": 0,
     }
     defaults.update(overrides)
     # `_env_file=None` keeps a developer's real hub/.env out of the test run.

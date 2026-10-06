@@ -10,15 +10,16 @@ status             meaning                                       done by
 =================  ============================================  ===============
 ``db_changed``     edited in the app, the sheet is behind         automatically
 ``not_in_sheet``   never written to the sheet yet                 automatically
-``sheet_changed``  edited in the sheet, the database is behind    a person: pull
-``new_in_sheet``   a row typed into the sheet                     a person: pull
+``sheet_changed``  edited in the sheet, the database is behind    automatically
+``new_in_sheet``   a row typed into the sheet                     automatically
 ``missing``        the row was deleted from the sheet             a person: pull
 ``conflict``       edited on both sides                           a person
 =================  ============================================  ===============
 
-Sending app edits on is safe, so it happens on its own. Anything that would
-change the database from the sheet waits for a person to look at it, and is
-preceded by a backup — as is anything that overwrites the sheet in bulk.
+Whatever only one side changed travels on its own, both ways: the sheet's
+edits come in as one undoable action. What both sides changed, and rows
+deleted from the sheet, wait for a person; a pull or push they ask for is
+preceded by a backup.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from sqlalchemy.orm import Session
 from ...deps import get_workspace_setting
 from ...models import Document
 from ...schemas import SyncResult
-from ...services import people
+from ...services import history, people
 from ...services.sheets import (
     COLUMNS_BY_FIELD,
     GoogleSheetsService,
@@ -183,8 +184,66 @@ def _write(service, workspace, document: Document, entry: DiffEntry) -> None:
     document.sheet_snapshot = document_snapshot(document)
 
 
+def _pull_entry(session: Session, entry: DiffEntry, reference_writes: list[tuple[int, dict[str, Any]]]) -> None:
+    """Bring one sheet row into the database, as its status says."""
+    row = entry._row
+    if entry.status == "missing":
+        document = entry._document
+        document.sheet_state = "removed"
+        document.sheet_row_ref = None
+        document.sheet_snapshot = None
+        return
+    if entry.status == "new_in_sheet":
+        reference = entry.reference
+        if not reference or session.query(Document).filter_by(internal_doc_number=reference).first():
+            reference = generate_reference()
+            reference_writes.append((row.row_number, {"num_doc_intern": reference}))
+        document = Document(internal_doc_number=reference, sheet_state="synced")
+        session.add(document)
+    else:
+        document = entry._document
+    changed = apply_values(document, row.values)
+    if {"responsable_nom", "responsable_email"} & set(changed):
+        people.remember(session, document.responsable_nom, document.responsable_email)
+    confirm_hints(document, changed)
+    if document.status not in IN_FLIGHT:
+        document.status = status_after_review(document)
+    document.sheet_state = "synced"
+    document.sheet_row_ref = row.row_number
+    document.sheet_snapshot = snapshot_values(row.values)
+
+
+def _clean_pull(entry: DiffEntry) -> bool:
+    """A sheet edit nothing else contradicts, so it can come in on its own.
+
+    A row typed into the sheet, or one edited there while the app left it
+    alone since they last agreed. Conflicts and deleted rows wait for a person,
+    as do entries from before versioning (no common ancestor to tell who moved)
+    and rows carrying a code the database no longer has — the app wrote those,
+    so their entry was taken out here (a restore, say), not typed in there.
+    """
+    if entry.status == "new_in_sheet":
+        return not entry.reference
+    document = entry._document
+    return (
+        entry.status == "sheet_changed"
+        and document is not None
+        and document.sheet_snapshot is not None
+        and document.status not in IN_FLIGHT
+    )
+
+
+def trust_database(session: Session) -> None:
+    """After a restore the database is the truth: every entry the sheet disagrees
+    with is sent there on the next sync, rather than pulled back from it."""
+    session.query(Document).filter(Document.sheet_state != "removed").update(
+        {Document.sheet_snapshot: None, Document.sheet_state: "pending"}, synchronize_session=False
+    )
+    session.commit()
+
+
 def auto_sync(app, session: Session, *, force: bool = False) -> SyncResult:
-    """Send app edits on, and count what is waiting for a person. Throttled."""
+    """Send app edits on, bring clean sheet edits in, count what is left. Throttled."""
     service: GoogleSheetsService = app.state.sheet_service
     workspace = get_workspace_setting(session)
     if not service.is_ready(workspace):
@@ -209,11 +268,24 @@ def auto_sync(app, session: Session, *, force: bool = False) -> SyncResult:
                 _write(service, workspace, entry._document, entry)
                 pushed += 1
         session.commit()
-        waiting = [e for e in entries if e.status in PULLABLE]
+        incoming = [e for e in entries if _clean_pull(e)]
+        if incoming:
+            # Undoable as one action, like a pull a person asked for.
+            with history.action("Canvis del full integrats"):
+                reference_writes: list[tuple[int, dict[str, Any]]] = []
+                for entry in incoming:
+                    _pull_entry(session, entry, reference_writes)
+                if reference_writes:
+                    service.write_cells(workspace, reference_writes)
+                session.commit()
+            logger.info("Register: %d sheet edits brought in", len(incoming))
+        pulled_ids = {id(e) for e in incoming}
+        waiting = [e for e in entries if e.status in PULLABLE and id(e) not in pulled_ids]
         counts = summarize(waiting)
         result = SyncResult(
             refreshed=len(rows),
             pushed=pushed,
+            pulled=len(incoming),
             waiting=len(waiting),
             conflicts=counts.get("conflict", 0),
         )
@@ -261,31 +333,7 @@ def pull(app, session: Session, *, references: list[str] | None, author: str) ->
         )
         reference_writes: list[tuple[int, dict[str, Any]]] = []
         for entry in chosen:
-            row = entry._row
-            if entry.status == "missing":
-                document = entry._document
-                document.sheet_state = "removed"
-                document.sheet_row_ref = None
-                document.sheet_snapshot = None
-                continue
-            if entry.status == "new_in_sheet":
-                reference = entry.reference
-                if not reference or session.query(Document).filter_by(internal_doc_number=reference).first():
-                    reference = generate_reference()
-                    reference_writes.append((row.row_number, {"num_doc_intern": reference}))
-                document = Document(internal_doc_number=reference, sheet_state="synced")
-                session.add(document)
-            else:
-                document = entry._document
-            changed = apply_values(document, row.values)
-            if {"responsable_nom", "responsable_email"} & set(changed):
-                people.remember(session, document.responsable_nom, document.responsable_email)
-            confirm_hints(document, changed)
-            if document.status not in IN_FLIGHT:
-                document.status = status_after_review(document)
-            document.sheet_state = "synced"
-            document.sheet_row_ref = row.row_number
-            document.sheet_snapshot = snapshot_values(row.values)
+            _pull_entry(session, entry, reference_writes)
         if reference_writes:
             service.write_cells(workspace, reference_writes)
         session.commit()

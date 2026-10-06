@@ -9,9 +9,9 @@ import pytest
 from conftest import FakeProvider, build_client, register_admin
 from fake_sheets import FakeSheets
 
-from cosecre_hub.models import Document
+from cosecre_hub.models import Document, Responsable
 from cosecre_hub.services.classification import DocumentClassifier, JevAnswer, JevClient
-from cosecre_hub.services.sheets import LegacyTab, SheetRow
+from cosecre_hub.services.sheets import LegacyTab, SheetRow, cell_to_value
 
 RECORDS = "/api/v1/documents/records"
 JPEG = b"\xff\xd8\xff\xe0fake-jpeg"
@@ -146,28 +146,61 @@ def diff_of(client, headers):
     return client.get(f"{RECORDS}/sync/diff", headers=headers).json()
 
 
-def test_sheet_edits_wait_for_a_person_and_a_backup_precedes_them(register):
+def test_a_sheet_edit_the_app_did_not_touch_comes_in_on_its_own_and_can_be_undone(register):
     client, headers, sheet, _ = register
     reference = upload(client, headers)
     sheet.row_for(reference).update({"proveidor": "Edited in sheet", "validat": True})
 
     status = client.post(f"{RECORDS}/sync", headers=headers).json()
-    assert status["waiting"] == 1 and status["updated"] == 0
-    # Not integrated on its own.
+    assert status["pulled"] == 1 and status["waiting"] == 0
+    record = client.get(f"{RECORDS}/{reference}", headers=headers).json()
+    assert record["proveidor"] == "Edited in sheet"
+    assert record["extraction_status"] == "validated"
+    assert diff_of(client, headers)["entries"] == []
+
+    # The hub's own action: listed in Configuració's history, undone from there.
+    action = client.get("/api/v1/history", headers=headers).json()["actions"][0]
+    assert (action["label"], action["kind"]) == ("Canvis del full integrats", "auto")
+    assert client.post(f"/api/v1/history/{action['id']}/undo", headers=headers).status_code == 200
     assert client.get(f"{RECORDS}/{reference}", headers=headers).json()["proveidor"] == "Initial document"
 
-    entry = diff_of(client, headers)["entries"][0]
-    assert entry["status"] == "sheet_changed"
-    assert {c["field"] for c in entry["changes"]} == {"proveidor", "validat"}
+
+def test_a_pull_a_person_asks_for_is_preceded_by_a_backup(register):
+    client, headers, sheet, _ = register
+    reference = upload(client, headers)
+    sheet.row_for(reference).update({"proveidor": "From the sheet"})
+    client.patch(f"{RECORDS}/{reference}", headers=headers, json={"proveidor": "From the app"})
+
+    status = client.post(f"{RECORDS}/sync", headers=headers).json()
+    assert status["pulled"] == 0 and status["waiting"] == 1 and status["conflicts"] == 1
 
     applied = client.post(f"{RECORDS}/sync/pull", headers=headers, json={}).json()
     assert applied["applied"] == 1 and applied["backup"]
     backups = client.get("/api/v1/backups", headers=headers).json()["backups"]
     assert backups[0]["kind"] == "pre-pull" and backups[0]["has_sheet"] is True
-    record = client.get(f"{RECORDS}/{reference}", headers=headers).json()
-    assert record["proveidor"] == "Edited in sheet"
-    assert record["extraction_status"] == "validated"
-    assert diff_of(client, headers)["entries"] == []
+    assert client.get(f"{RECORDS}/{reference}", headers=headers).json()["proveidor"] == "From the sheet"
+
+
+def test_unticked_checkboxes_in_text_columns_are_empty_cells():
+    # A sheet table can type a whole column as checkboxes; FALSE is not a name, nor 0 €.
+    assert cell_to_value("text", "responsable_nom", False) == ""
+    assert cell_to_value("text", "responsable_email", True) == ""
+    assert cell_to_value("amount", "import_value", False) is None
+    assert cell_to_value("bool", "validat", False) is False
+
+
+def test_the_same_person_on_several_new_rows_is_remembered_once(register):
+    client, headers, sheet, _ = register
+    for row in (50, 51):
+        sheet.rows[row] = {"num_doc_intern": "", "proveidor": f"Typed {row}", "responsable_nom": "Anna",
+                           "responsable_email": "anna@example.org", "validat": False}
+    assert client.post(f"{RECORDS}/sync", headers=headers).json()["pulled"] == 2
+    session = client.app.state.session_factory()
+    try:
+        person = session.query(Responsable).one()
+        assert (person.nom, person.uses) == ("Anna", 2)
+    finally:
+        session.close()
 
 
 def test_app_edits_reach_the_sheet_on_their_own_even_after_an_outage(register):
@@ -201,13 +234,10 @@ def test_an_edit_on_both_sides_is_a_conflict_and_never_silently_overwritten(regi
     assert diff_of(client, headers)["entries"] == []
 
 
-def test_rows_typed_into_the_sheet_are_integrated_on_request(register):
+def test_rows_typed_into_the_sheet_are_integrated_on_their_own(register):
     client, headers, sheet, _ = register
     sheet.rows[2] = {"num_doc_intern": "", "proveidor": "Typed by hand", "import_value": 12.5, "validat": False}
-    entry = diff_of(client, headers)["entries"][0]
-    assert entry["status"] == "new_in_sheet" and entry["row"] == 2
-
-    client.post(f"{RECORDS}/sync/pull", headers=headers, json={"references": ["row:2"]})
+    assert client.post(f"{RECORDS}/sync", headers=headers).json()["pulled"] == 1
     reference = sheet.rows[2]["num_doc_intern"]
     assert reference.startswith("DOC-")
     assert client.get(f"{RECORDS}/{reference}", headers=headers).json()["proveidor"] == "Typed by hand"
@@ -245,7 +275,7 @@ def test_a_cleared_tab_is_refilled_from_the_database(register):
 
 
 def test_a_version_can_be_compared_and_restored_and_the_present_is_kept(register):
-    client, headers, _, _ = register
+    client, headers, sheet, _ = register
     reference = upload(client, headers)
     first = client.post("/api/v1/backups", headers=headers).json()["backups"][0]["name"]
     client.patch(f"{RECORDS}/{reference}", headers=headers, json={"proveidor": "Changed later"})
@@ -260,6 +290,11 @@ def test_a_version_can_be_compared_and_restored_and_the_present_is_kept(register
     result = client.post(f"/api/v1/backups/{first}/restore", headers=headers).json()
     assert result["restored"] == 1
     assert client.get(f"{RECORDS}/{reference}", headers=headers).json()["proveidor"] == "Initial document"
+    assert client.get(f"{RECORDS}/{second}", headers=headers).status_code == 404
+    # The sheet follows the restore; nothing newer is pulled back from it.
+    status = client.post(f"{RECORDS}/sync", headers=headers).json()
+    assert status["pulled"] == 0 and status["waiting"] == 1  # the second entry's row, for a person
+    assert sheet.row_for(reference)["proveidor"] == "Initial document"
     assert client.get(f"{RECORDS}/{second}", headers=headers).status_code == 404
     # The present was saved first, and restoring it undoes the restore.
     safety = result["safety_backup"]

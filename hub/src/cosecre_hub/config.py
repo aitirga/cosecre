@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     #: in the request — what the tests use.
     statement_mirror_delay_seconds: float = Field(default=5.0, ge=0)
 
+    #: While the hub is awake, how often the register and the statement tabs
+    #: are synced with the sheet on their own — the first time right at start,
+    #: so a deploy or a wake-up brings both up to date. ``0`` turns it off.
+    sheet_sync_interval_seconds: float = Field(default=60.0, ge=0)
+
     #: How many documents the models read at once. Reading is almost all
     #: waiting on the model API, so this is about API rate limits and memory
     #: (each in-flight photo is held base64-encoded), not CPU.

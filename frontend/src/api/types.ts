@@ -211,6 +211,7 @@ export interface SyncResult {
   imported: number
   updated: number
   pushed: number
+  pulled: number
   removed: number
   waiting: number
   conflicts: number

@@ -145,7 +145,15 @@ async def restore_backup(name: str, request: Request, admin: User = Depends(requ
     def run() -> dict:
         # Taken in the worker thread: no sheet sync may interleave with a restore.
         with app.state.register_lock:
-            return service.restore(name, author=admin.email, busy=is_busy)
+            result = service.restore(name, author=admin.email, busy=is_busy)
+            from .documents.sync import trust_database
+
+            session = app.state.session_factory()
+            try:
+                trust_database(session)
+            finally:
+                session.close()
+            return result
 
     try:
         result = await run_in_threadpool(run)

@@ -33,7 +33,11 @@ def remember(session: Session, nom: str, email: str) -> None:
     if not nom and not email:
         return
     key = fold(nom)
-    row = (
+    # One pull can name the same person on many rows before anything is flushed.
+    row = next(
+        (r for r in session.new if isinstance(r, Responsable) and r.nom_key == key and r.email == email),
+        None,
+    ) or (
         session.query(Responsable)
         .filter(Responsable.nom_key == key, Responsable.email == email)
         .first()

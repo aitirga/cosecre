@@ -224,12 +224,16 @@ def file_cell(drive_file_id: str, mime_type: str | None) -> str:
 
 def cell_to_value(kind: ColumnKind, field_name: str, raw: Any) -> Any:
     """A cell as read with ``FORMULA`` + ``SERIAL_NUMBER`` → the stored value."""
+    if kind == "bool":
+        return parse_bool(raw) if raw not in (None, "") else False
+    # A checkbox in a column that is not one (a table can type a whole column
+    # that way) says nothing: unticked, it would read as "False" — or as 0 €.
+    if isinstance(raw, bool):
+        raw = None
     if kind == "date":
         return parse_date(raw)
     if kind == "amount":
         return parse_amount(raw)
-    if kind == "bool":
-        return parse_bool(raw) if raw not in (None, "") else False
     if raw is None:
         return ""
     if isinstance(raw, float) and raw.is_integer():

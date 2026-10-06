@@ -187,3 +187,38 @@ def test_the_real_service_writes_typed_cells_and_creates_a_tab_once():
     assert "backgroundColor" not in line[0]["userEnteredFormat"]
     assert "backgroundColor" in line[mirror.REFS_COLUMN]["userEnteredFormat"]
     assert rows[2] == {"values": [{} for _ in mirror.HEADERS]}
+
+
+def test_a_sync_with_nothing_new_reads_but_does_not_rewrite(reconciled):
+    client, headers, *_ = reconciled
+    from cosecre_hub.main import sync_sheets_once
+
+    sync_sheets_once(client.app)
+    writes = sheets(client).mirror_writes
+    sync_sheets_once(client.app)
+    assert sheets(client).mirror_writes == writes
+    # The button always rewrites: that is what pressing it is for.
+    client.post(SYNC, headers=headers)
+    assert sheets(client).mirror_writes == writes + 1
+
+
+def test_a_deleted_tab_is_written_again_on_the_next_sync(reconciled):
+    client, headers, *_ = reconciled
+    from cosecre_hub.main import sync_sheets_once
+
+    sync_sheets_once(client.app)
+    del sheets(client).mirror[TAB]
+    sync_sheets_once(client.app)
+    assert sheets(client).mirror[TAB][0] == mirror.HEADERS
+
+
+def test_an_edit_in_the_sheet_comes_in_on_the_background_sync(reconciled):
+    client, headers, *_ = reconciled
+    from cosecre_hub.main import sync_sheets_once
+
+    codi = code(client, "FAC:0397")
+    sync_sheets_once(client.app)
+    sheets(client).set_mirror_cell(TAB, codi, REF, "DOC-001")
+    sync_sheets_once(client.app)
+    assert movement(client, "FAC:0397").match_status == "confirmed"
+    assert sheets(client).mirror_cell(TAB, codi, NUM) == "0397"

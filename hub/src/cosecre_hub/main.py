@@ -54,6 +54,29 @@ async def backup_schedule(service: BackupService, interval_seconds: float = 600)
 
 
 
+def sync_sheets_once(app) -> None:
+    """Register first (its pulls change invoice numbers), then the statement tabs. Never raises."""
+    from .api import statements_mirror
+    from .api.documents.sync import auto_sync
+
+    session = app.state.session_factory()
+    try:
+        auto_sync(app, session, force=True)
+        statements_mirror.sync(app, session)
+    except Exception:  # noqa: BLE001
+        logger.exception("Background sheet sync failed")
+        session.rollback()
+    finally:
+        session.close()
+
+
+async def sheet_schedule(app, interval_seconds: float) -> None:
+    """Keep both ends in step without anyone pressing a button, while awake."""
+    while True:
+        await asyncio.to_thread(sync_sheets_once, app)
+        await asyncio.sleep(interval_seconds)
+
+
 class HistoryMiddleware:
     """Every request that changes something becomes one undoable action."""
 
@@ -148,6 +171,8 @@ def create_app(
         tasks.append(asyncio.create_task(asyncio.to_thread(caixeta_sync.sync_if_due, app)))
         if settings.backup_enabled:
             tasks.append(asyncio.create_task(backup_schedule(backup_service)))
+        if settings.sheet_sync_interval_seconds:
+            tasks.append(asyncio.create_task(sheet_schedule(app, settings.sheet_sync_interval_seconds)))
         if idle is not None:
             idle.last_activity = idle.clock()
             tasks.append(asyncio.create_task(idle.watch()))

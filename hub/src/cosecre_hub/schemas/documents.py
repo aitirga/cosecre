@@ -389,6 +389,8 @@ class SyncResult(BaseModel):
     imported: int = 0
     updated: int = 0
     pushed: int = 0
+    #: Sheet edits brought in on their own (only that side had changed).
+    pulled: int = 0
     removed: int = 0
     #: Sheet-side changes (and conflicts among them) waiting for a person.
     waiting: int = 0

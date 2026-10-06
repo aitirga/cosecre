@@ -15,11 +15,17 @@ last write still shows its old, empty cell in the sheet, and that is not a
 person clearing it.
 
 A change in the app schedules a sync a few seconds later, so a run of
-confirmations costs one write. "Sincronitza" in Extractes runs one at once.
+confirmations costs one write; while the hub is awake it also syncs once a
+minute (see ``main.sheet_schedule``), and "Sincronitza" in Extractes runs one
+at once. The tabs are only rewritten when what they should say has changed,
+an edit was read from them, or one is missing — so the minute's check is
+usually a single read.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -75,6 +81,8 @@ class _Outcome:
     applied: list[MirrorChange] = field(default_factory=list)
     issues: list[MirrorIssue] = field(default_factory=list)
     tabs: list[str] = field(default_factory=list)
+    #: A tab the sheet should have is not there (deleted, or never written).
+    tab_missing: bool = False
 
 
 # ── Sync ─────────────────────────────────────────────────────────────────────
@@ -128,6 +136,7 @@ def _apply(app, session: Session, outcome: _Outcome, user_id: int | None) -> Non
     movements = _movements(session)
     titles = sorted({mirror.tab_title(m.compte) for m in movements})
     grids = app.state.sheet_service.read_mirror(workspace, titles)
+    outcome.tab_missing = any(title not in grids for title in titles)
     by_code = {(m.compte, m.codi.upper()): m for m in movements if m.codi}
 
     for title, grid in grids.items():
@@ -164,8 +173,17 @@ def _apply(app, session: Session, outcome: _Outcome, user_id: int | None) -> Non
             session.expire_all()
 
 
-def _write(app, session: Session, outcome: _Outcome) -> None:
-    """Rewrite every tab from the database and record the new baselines."""
+def _fingerprint(data: list[MirrorTabData]) -> str:
+    payload = [[tab.title, tab.rows, tab.tones] for tab in data]
+    return hashlib.sha256(json.dumps(payload, default=str).encode()).hexdigest()
+
+
+def _write(app, session: Session, outcome: _Outcome, *, force: bool = False) -> None:
+    """Rewrite every tab from the database and record the new baselines.
+
+    Skipped when the tabs would come out exactly as last written and nothing
+    was read from them: nobody needs the same grid twice.
+    """
     workspace = get_workspace_setting(session)
     tabs = mirror.build_tabs(_movements(session))
     data = [
@@ -180,17 +198,26 @@ def _write(app, session: Session, outcome: _Outcome) -> None:
         )
         for tab in tabs
     ]
+    outcome.tabs = [tab.title for tab in tabs]
+    fingerprint = _fingerprint(data)
+    unchanged = fingerprint == getattr(app.state, "mirror_fingerprint", None)
+    if unchanged and not (force or outcome.applied or outcome.issues or outcome.tab_missing):
+        return
     app.state.sheet_service.write_mirror(workspace, data)
+    app.state.mirror_fingerprint = fingerprint
     for tab in tabs:
         for line in tab.lines:
             line.movement.mirror_refs = line.refs
             line.movement.mirror_numbers = line.numbers
     session.commit()
-    outcome.tabs = [tab.title for tab in tabs]
 
 
-def sync(app, session: Session, *, user_id: int | None = None) -> MirrorStatus:
-    """Apply the sheet's edits, then rewrite it. Serialised; never raises for Google's sake."""
+def sync(app, session: Session, *, user_id: int | None = None, force: bool = False) -> MirrorStatus:
+    """Apply the sheet's edits, then rewrite it if needed. Serialised; never raises for Google's sake.
+
+    ``force`` rewrites the tabs even when nothing seems to have changed — what
+    a person pressing the button expects.
+    """
     workspace = get_workspace_setting(session)
     if not configured(app, session):
         return MirrorStatus(configured=False)
@@ -199,7 +226,7 @@ def sync(app, session: Session, *, user_id: int | None = None) -> MirrorStatus:
         app.state.mirror_error = None
         try:
             _apply(app, session, outcome, user_id)
-            _write(app, session, outcome)
+            _write(app, session, outcome, force=force)
             app.state.mirror_synced_at = datetime.now(UTC)
         except Exception as exc:  # noqa: BLE001 — Google errors become a status line
             logger.warning("Statements mirror failed", exc_info=True)
@@ -269,4 +296,4 @@ def mirror_sync(request: Request, session: Session = Depends(get_db), user: User
     """Bring the sheet's edits in now, then write it back from the database."""
     if not configured(request.app, session):
         raise HTTPException(status_code=409, detail="El full de càlcul de comptabilitat no està configurat.")
-    return sync(request.app, session, user_id=user.id)
+    return sync(request.app, session, user_id=user.id, force=True)
