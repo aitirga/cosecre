@@ -282,18 +282,36 @@ def test_rows_typed_into_the_sheet_are_integrated_on_their_own(register):
     assert client.get(f"{RECORDS}/{reference}", headers=headers).json()["proveidor"] == "Typed by hand"
 
 
-def test_a_row_deleted_in_the_sheet_is_kept_and_comes_back_when_saved(register):
+def test_a_row_deleted_in_the_sheet_takes_its_entry_out_when_pulled(register):
     client, headers, sheet, _ = register
     keep = [upload(client, headers) for _ in range(3)]
     sheet.delete_row(None, sheet.find_row(None, keep[0]))
     assert diff_of(client, headers)["counts"] == {"missing": 1}
 
-    client.post(f"{RECORDS}/sync/pull", headers=headers, json={})
-    record = client.get(f"{RECORDS}/{keep[0]}", headers=headers).json()
-    assert record["sheet_state"] == "removed"
+    assert client.post(f"{RECORDS}/sync/pull", headers=headers, json={}).json()["applied"] == 1
+    assert client.get(f"{RECORDS}/{keep[0]}", headers=headers).status_code == 404
+    assert diff_of(client, headers)["entries"] == []
+    assert client.get(f"{RECORDS}/{keep[1]}", headers=headers).status_code == 200
 
-    client.patch(f"{RECORDS}/{keep[0]}", headers=headers, json={"descripcio_compra": "Per al taller"})
-    assert sheet.row_for(keep[0])["descripcio_compra"] == "Per al taller"
+    # Undone, it is back and written to the sheet again.
+    actions = client.get("/api/v1/history", headers=headers).json()["actions"]
+    action = next(a for a in actions if a["label"] == "Canvis del full integrats")
+    assert client.post(f"/api/v1/history/{action['id']}/undo", headers=headers).status_code == 200
+    client.post(f"{RECORDS}/sync", headers=headers)
+    assert client.get(f"{RECORDS}/{keep[0]}", headers=headers).status_code == 200
+    assert sheet.row_for(keep[0]) is not None
+
+
+def test_entries_once_kept_after_their_row_was_deleted_go_on_the_next_sync(register):
+    client, headers, sheet, _ = register
+    reference = upload(client, headers)
+    sheet.delete_row(None, sheet.find_row(None, reference))
+    with client.app.state.session_factory() as session:
+        session.query(Document).filter_by(internal_doc_number=reference).update({"sheet_state": "removed"})
+        session.commit()
+
+    client.post(f"{RECORDS}/sync", headers=headers)
+    assert client.get(f"{RECORDS}/{reference}", headers=headers).status_code == 404
 
 
 def test_a_cleared_tab_is_refilled_from_the_database(register):

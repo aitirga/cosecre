@@ -204,7 +204,7 @@ class Document(Base):
 
     The spreadsheet is where people work, but it is a mirror: every field lives
     here first, edits made in the sheet are pulled back on each sync, and a row
-    deleted there is kept here (``sheet_state = "removed"``) rather than lost.
+    deleted there takes its entry out when that deletion is pulled (undoable).
     """
 
     __tablename__ = "documents"

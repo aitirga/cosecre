@@ -21,7 +21,7 @@ const entries = computed(() => diffQuery.data.value?.entries ?? [])
 const STATUS: Record<DiffStatus, { label: string; tone: string; help: string }> = {
   sheet_changed: { label: 'Canviat al full', tone: 'badge-gold', help: "Algú l'ha editat al full de càlcul." },
   new_in_sheet: { label: 'Fila nova al full', tone: 'badge-gold', help: 'Una fila escrita a mà al full, que no és al registre.' },
-  missing: { label: 'Esborrat del full', tone: 'badge-danger', help: "La fila ha desaparegut del full; el registre encara el té." },
+  missing: { label: 'Esborrat del full', tone: 'badge-danger', help: "La fila ha desaparegut del full; en integrar-ho, el document sortirà del registre." },
   conflict: { label: 'Conflicte', tone: 'badge-danger', help: 'Editat al full i aquí alhora: tria quina versió es queda.' },
   db_changed: { label: 'Canviat aquí', tone: 'badge-accent', help: "Editat a l'app; normalment s'envia sol al full." },
   not_in_sheet: { label: 'No és al full', tone: 'badge-neutral', help: "Encara no s'ha escrit mai al full." },
@@ -219,7 +219,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           <p class="subtle">
             <template v-if="confirming === 'pull'">
               Els valors del full substituiran els del registre en aquests documents. Les files noves
-              s'hi afegiran i les esborrades del full es marcaran com a tals.
+              s'hi afegiran i les esborrades del full se'n retiraran (es pot desfer des de l'historial).
             </template>
             <template v-else>
               La versió del registre substituirà la del full en aquests documents, i els que no hi

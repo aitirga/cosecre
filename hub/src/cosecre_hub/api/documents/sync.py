@@ -189,10 +189,7 @@ def _pull_entry(session: Session, entry: DiffEntry, reference_writes: list[tuple
     """Bring one sheet row into the database, as its status says."""
     row = entry._row
     if entry.status == "missing":
-        document = entry._document
-        document.sheet_state = "removed"
-        document.sheet_row_ref = None
-        document.sheet_snapshot = None
+        _drop(session, entry._document)
         return
     if entry.status == "new_in_sheet":
         reference = entry.reference
@@ -212,6 +209,35 @@ def _pull_entry(session: Session, entry: DiffEntry, reference_writes: list[tuple
     document.sheet_state = "synced"
     document.sheet_row_ref = row.row_number
     document.sheet_snapshot = snapshot_values(row.values)
+
+
+def _drop(session: Session, document: Document) -> None:
+    """Take an entry out because its row was deleted from the sheet.
+
+    Its payment links go with it; the upload (and its file) stays. Undoing the
+    action brings it back as an entry the sheet lacks, so it is written there again.
+    """
+    for match in session.query(PaymentMatch).filter_by(document_id=document.id).all():
+        session.delete(match)
+    document.sheet_state = "pending"
+    document.sheet_row_ref = None
+    document.sheet_snapshot = None
+    session.flush()
+    session.delete(document)
+    session.flush()
+
+
+def remove_unlisted(session: Session) -> int:
+    """Entries a pull once kept after their row was deleted from the sheet go now."""
+    kept = session.query(Document).filter(Document.sheet_state == "removed").all()
+    if not kept:
+        return 0
+    with history.action("Files esborrades del full retirades"):
+        for document in kept:
+            _drop(session, document)
+        session.commit()
+    logger.info("Register: %d entries deleted from the sheet removed", len(kept))
+    return len(kept)
 
 
 def _clean_pull(entry: DiffEntry) -> bool:
@@ -298,6 +324,7 @@ def auto_sync(app, session: Session, *, force: bool = False) -> SyncResult:
     try:
         app.state.register_synced_at = now
         remove_duplicates(app, session, sheet_ready=True)
+        remove_unlisted(session)
         _, _, rows, documents = _read(app, session)
         if remove_empty(service, workspace, session, rows, documents):
             _, _, rows, documents = _read(app, session)
