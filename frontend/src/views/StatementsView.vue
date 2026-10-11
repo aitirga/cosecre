@@ -4,15 +4,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { RouterLink } from 'vue-router'
 
 import { api, ApiError } from '../api/client'
-import type { Categoria, MirrorStatus, Movement, Statement } from '../api/types'
+import type { AiTableSpec, Categoria, MirrorStatus, Movement, Statement } from '../api/types'
 import { METODES_PAGAMENT, formatAmount, formatDate } from '../document-fields'
 import { CATEGORIA_LABEL, SOURCE_LABEL } from '../matching'
 import AppIcon from '../components/AppIcon.vue'
 import DocumentCard from '../components/DocumentCard.vue'
 import { useDocumentCards } from '../composables/useDocumentCards'
+import { choiceFilter, useAiFilters } from '../composables/useAiFilters'
 import { useTableQuery } from '../composables/useTableQuery'
+import AiSearchInput from '../components/AiSearchInput.vue'
 import FilterChip from '../components/FilterChip.vue'
-import SearchInput from '../components/SearchInput.vue'
+import RangeChip from '../components/RangeChip.vue'
 import SortTh from '../components/SortTh.vue'
 
 /**
@@ -214,6 +216,12 @@ const movementTable = useTableQuery({
     justificat: (m, value) =>
       m.categoria === 'pagament' && (value === 'si' ? m.matched.length > 0 : m.matched.length === 0),
     categoria: (m, value) => m.categoria === value,
+    // ISO dates compare as text.
+    des: (m, value) => !!m.data && m.data >= value,
+    fins: (m, value) => !!m.data && m.data <= value,
+    // An amount is a size, whichever way the money went.
+    min: (m, value) => Math.abs(m.import_value) >= Number(value),
+    max: (m, value) => Math.abs(m.import_value) <= Number(value),
   },
   urlPrefix: 'mov_',
 })
@@ -251,6 +259,20 @@ const JUSTIFIED_OPTIONS = [
   { value: 'no', label: 'Sense factura', hint: 'Pagaments que encara cal justificar' },
   { value: 'si', label: 'Amb factura' },
 ]
+
+// ── Asking the AI ───────────────────────────────────────────────────────────
+const MOVEMENT_AI: AiTableSpec = {
+  subject: "moviments d'un extracte bancari",
+  search_hint: 'concepte, més dades, import, número i proveïdor de la factura lligada',
+  filters: [choiceFilter('justificat', 'Factura', JUSTIFIED_OPTIONS), choiceFilter('categoria', 'Categoria', CATEGORY_OPTIONS)],
+  ranges: [
+    { kind: 'date', label: 'Data', from_name: 'des', to_name: 'fins' },
+    { kind: 'amount', label: 'Import', from_name: 'min', to_name: 'max' },
+  ],
+}
+const MOVEMENT_AI_EXAMPLES = ['Pagaments sense factura', 'Comissions del mes passat', 'Més de 500 € al març']
+const movementAi = useAiFilters(movementTable, ['justificat', 'categoria', 'des', 'fins', 'min', 'max'])
+const askMovements = (question: string) => api.aiSearch(MOVEMENT_AI, question)
 
 function amountClass(m: Movement) {
   return m.import_value > 0 ? 'in' : ''
@@ -496,11 +518,17 @@ function amountClass(m: Movement) {
                 <td colspan="8">
                   <p v-if="movementsQuery.isLoading.value" class="empty">Carregant moviments…</p>
                   <div v-else class="movement-tools">
-                    <SearchInput
+                    <AiSearchInput
                       v-model="movementTable.search.value"
                       class="movement-search"
+                      :ask="askMovements"
                       placeholder="Cerca concepte, import, factura…"
                       label="Cerca moviments"
+                      ai-placeholder="«Pagaments sense factura del març»…"
+                      :examples="MOVEMENT_AI_EXAMPLES"
+                      storage-key="movements"
+                      @apply="movementAi.apply"
+                      @undo="movementAi.undo"
                     />
                     <FilterChip
                       v-model="movementTable.filters.justificat"
@@ -516,6 +544,8 @@ function amountClass(m: Movement) {
                       :options="CATEGORY_OPTIONS"
                       :count="(v) => movementTable.countFor('categoria', v)"
                     />
+                    <RangeChip v-model:from="movementTable.filters.des" v-model:to="movementTable.filters.fins" label="Data" kind="date" icon="history" />
+                    <RangeChip v-model:from="movementTable.filters.min" v-model:to="movementTable.filters.max" label="Import" kind="amount" icon="sliders" />
                     <span class="muted count">
                       {{ movementTable.visible.value.length }}<template v-if="movementTable.visible.value.length !== movements.length"> de {{ movements.length }}</template>
                     </span>
@@ -922,7 +952,7 @@ function amountClass(m: Movement) {
 }
 
 .movement-search {
-  flex: 0 1 260px;
+  flex: 0 1 320px;
 }
 
 .movements-row > td {

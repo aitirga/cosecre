@@ -9,6 +9,7 @@ import { trackedFetch } from './loading'
  */
 import type {
   AiFilterResult,
+  AiTableSpec,
   AssistantConversation,
   AssistantConversationSummary,
   AssistantFrame,
@@ -554,6 +555,13 @@ export const api = {
     return request<AiFilterResult>(`${RECORDS}/ai-filter`, {
       method: 'POST',
       body: JSON.stringify({ query }),
+    })
+  },
+  /** Any list's search in plain words: the list describes its filters, the hub reads the question. */
+  aiSearch(spec: AiTableSpec, query: string) {
+    return request<AiFilterResult>('/ai-search', {
+      method: 'POST',
+      body: JSON.stringify({ ...spec, query }),
     })
   },
   uploadDocument(file: File, source: CaptureSource) {

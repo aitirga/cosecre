@@ -15,7 +15,7 @@ import {
   formatAmount,
   formatDate,
 } from '../document-fields'
-import AiFilterBar from '../components/AiFilterBar.vue'
+import AiSearchInput from '../components/AiSearchInput.vue'
 import AppIcon from '../components/AppIcon.vue'
 import DocumentIntake from '../components/DocumentIntake.vue'
 import DocumentWindow from '../components/DocumentWindow.vue'
@@ -23,7 +23,6 @@ import FilterChip from '../components/FilterChip.vue'
 import ImageViewer from '../components/ImageViewer.vue'
 import MovementCard from '../components/MovementCard.vue'
 import RangeChip from '../components/RangeChip.vue'
-import SearchInput from '../components/SearchInput.vue'
 import SortTh from '../components/SortTh.vue'
 import SyncPanel from '../components/SyncPanel.vue'
 import StatusPill from '../components/StatusPill.vue'
@@ -494,14 +493,19 @@ const showUpload = ref(true)
 
     <section class="card">
       <div class="toolbar">
-        <AiFilterBar :examples="AI_EXAMPLES" @apply="applyAi" @undo="undoAi" />
-
         <div class="filters-top">
-          <SearchInput
+          <AiSearchInput
             v-model="table.search.value"
             class="search"
+            :ask="api.aiFilter"
             placeholder="Cerca per proveïdor, número, import…"
             label="Cerca documents"
+            ai-placeholder="Pregunta al registre: «pendents de pagament d'aquest curs»…"
+            :examples="AI_EXAMPLES"
+            storage-key="register"
+            default-ai
+            @apply="applyAi"
+            @undo="undoAi"
           />
           <span class="count">
             <strong>{{ visible.length }}</strong>
@@ -882,7 +886,7 @@ const showUpload = ref(true)
 }
 
 .search {
-  flex: 0 1 340px;
+  flex: 0 1 460px;
   min-width: 0;
 }
 

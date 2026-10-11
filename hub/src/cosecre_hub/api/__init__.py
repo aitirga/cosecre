@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 
 from ..deps import require_staff
 
+from .ai_search import router as ai_search_router
 from .app_settings import router as app_settings_router
 from .assistant import router as assistant_router
 from .auth import router as auth_router
@@ -35,6 +36,8 @@ api_router.include_router(users_router, prefix="/users", tags=["users"])
 api_router.include_router(requests_router, prefix="/requests", tags=["requests"])
 api_router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(submissions_router, prefix="/submissions", tags=["submissions"])
+# Reads no data — it turns a question into filters for a list the caller already has.
+api_router.include_router(ai_search_router, prefix="/ai-search", tags=["ai"])
 
 staff = [Depends(require_staff)]
 api_router.include_router(app_settings_router, prefix="/apps", tags=["apps"], dependencies=staff)

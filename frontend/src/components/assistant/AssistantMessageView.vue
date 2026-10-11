@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 import type { AssistantBlock, AssistantMessage, AssistantProposal } from '../../api/types'
 import AppIcon from '../AppIcon.vue'
@@ -54,14 +54,35 @@ function stepsSummary(steps: Step[]) {
   if (!parts.length) parts.push(`${steps.length} ${steps.length === 1 ? 'pas' : 'passos'}`)
   return `${parts.join(' · ')}${failed ? ` · ${failed} amb error` : ''}`
 }
+
+/** The answer's prose, for the copy button. */
+const plainText = computed(() =>
+  props.message.blocks
+    .filter((block): block is Extract<AssistantBlock, { type: 'text' }> => block.type === 'text')
+    .map((block) => block.text.trim())
+    .filter(Boolean)
+    .join('\n\n'),
+)
+
+const copied = ref(false)
+
+async function copy() {
+  try {
+    await navigator.clipboard.writeText(plainText.value)
+    copied.value = true
+    setTimeout(() => (copied.value = false), 1500)
+  } catch {
+    /* no clipboard permission: nothing to do */
+  }
+}
 </script>
 
 <template>
-  <article v-if="message.role === 'user'" class="msg user">
+  <article v-if="message.role === 'user'" class="msg msg-user">
     <p class="bubble">{{ message.content }}</p>
   </article>
 
-  <article v-else class="msg assistant">
+  <article v-else class="msg msg-ai">
     <div class="avatar" aria-hidden="true"><AppIcon name="sparkle" :size="14" /></div>
     <div class="body">
       <template v-for="(piece, index) in pieces" :key="index">
@@ -118,6 +139,12 @@ function stepsSummary(steps: Step[]) {
         <AppIcon name="alert" :size="13" />
         {{ message.detail }}
       </p>
+      <div v-if="!working && message.id !== -1 && plainText" class="actions">
+        <button class="action" type="button" :title="copied ? 'Copiat' : 'Copia la resposta'" @click="copy">
+          <AppIcon :name="copied ? 'check' : 'copy'" :size="13" />
+          <span>{{ copied ? 'Copiat' : 'Copia' }}</span>
+        </button>
+      </div>
     </div>
   </article>
 </template>
@@ -128,17 +155,19 @@ function stepsSummary(steps: Step[]) {
   gap: 10px;
 }
 
-.user {
+.msg-user {
   justify-content: flex-end;
 }
 
 .bubble {
-  max-width: min(640px, 85%);
-  padding: 8px 12px;
-  border-radius: var(--r-lg);
+  max-width: min(620px, 85%);
+  padding: 9px 14px;
+  border-radius: var(--r-xl) var(--r-xl) var(--r-sm) var(--r-xl);
   background: var(--accent-50);
   border: 1px solid var(--accent-100);
   font-size: var(--text-md);
+  line-height: 1.5;
+  color: var(--ink-900);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -149,8 +178,9 @@ function stepsSummary(steps: Step[]) {
   place-items: center;
   width: 26px;
   height: 26px;
+  border: 1px solid var(--ai-200);
   border-radius: var(--r-md);
-  background: var(--ai-100);
+  background: var(--ai-50);
   color: var(--ai-600);
 }
 
@@ -364,6 +394,46 @@ function stepsSummary(steps: Step[]) {
 .tile-hint {
   font-size: var(--text-xs);
   color: var(--ink-400);
+}
+
+/* ── Actions ──────────────────────────────────────────────────────────── */
+
+.actions {
+  display: flex;
+  gap: 2px;
+  margin-top: -4px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.msg-ai:hover .actions,
+.actions:focus-within {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .actions {
+    opacity: 1;
+  }
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+  margin-left: -6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  font-size: var(--text-xs);
+  color: var(--ink-400);
+}
+
+.action:hover {
+  background: var(--surface-2);
+  color: var(--ink-900);
 }
 
 /* ── State ────────────────────────────────────────────────────────────── */

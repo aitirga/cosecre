@@ -8,14 +8,15 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '../api/client'
-import type { RequestDetail, RequestKind, RequestSummary } from '../api/types'
+import type { AiFilterResult, AiTableSpec, RequestDetail, RequestKind, RequestSummary } from '../api/types'
+import AiSearchInput from '../components/AiSearchInput.vue'
 import AppIcon from '../components/AppIcon.vue'
 import FilterChip from '../components/FilterChip.vue'
 import NewRequestDialog from '../components/NewRequestDialog.vue'
 import RequestStatusPill from '../components/RequestStatusPill.vue'
 import RequestWindow from '../components/RequestWindow.vue'
-import SearchInput from '../components/SearchInput.vue'
 import SortTh from '../components/SortTh.vue'
+import { choiceFilter, useAiFilters } from '../composables/useAiFilters'
 import { useAuth } from '../composables/useAuth'
 import { useTableQuery } from '../composables/useTableQuery'
 import { formatAmount, formatDate } from '../document-fields'
@@ -96,6 +97,22 @@ const view = computed<View>({
   get: () => (table.filters.vista || '') as View,
   set: (value) => (table.filters.vista = value),
 })
+
+// ── Asking the AI ───────────────────────────────────────────────────────────
+const REQUEST_AI: AiTableSpec = {
+  subject: "sol·licituds de compra, pagament i consulta a la secretaria",
+  search_hint: 'codi, títol, qui la demana, proveïdor, compte, qui la porta',
+  filters: [choiceFilter('tipus', 'Tipus', KIND_OPTIONS), choiceFilter('estat', 'Estat', STATUS_OPTIONS)],
+}
+const REQUEST_AI_EXAMPLES = ['Compres pendents', 'Les rebutjades', 'Sol·licituds de la Marta']
+const requestAi = useAiFilters(table, ['tipus', 'estat'])
+const askRequests = (question: string) => api.aiSearch(REQUEST_AI, question)
+
+function applyAi(result: AiFilterResult) {
+  requestAi.apply(result)
+  // A status is only offered, and only shows, across every request.
+  if (table.filters.estat) table.filters.vista = 'totes'
+}
 
 // ── The window ──────────────────────────────────────────────────────────────
 const openId = computed(() => {
@@ -195,7 +212,17 @@ function ago(iso: string) {
       <section class="card">
         <div class="card-head list-head">
           <div class="filters">
-            <SearchInput v-model="table.search.value" class="search" placeholder="Cerca per títol, persona, proveïdor…" />
+            <AiSearchInput
+              v-model="table.search.value"
+              class="search"
+              :ask="askRequests"
+              placeholder="Cerca per títol, persona, proveïdor…"
+              ai-placeholder="«Compres pendents de la Marta»…"
+              :examples="REQUEST_AI_EXAMPLES"
+              storage-key="requests"
+              @apply="applyAi"
+              @undo="requestAi.undo"
+            />
             <FilterChip
               v-model="table.filters.tipus"
               label="Tipus"
@@ -391,7 +418,7 @@ function ago(iso: string) {
 
 .search {
   flex: 1 1 220px;
-  max-width: 320px;
+  max-width: 360px;
 }
 
 .count {

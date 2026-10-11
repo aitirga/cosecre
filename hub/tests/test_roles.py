@@ -18,6 +18,8 @@ OPEN_TO_EVERYONE = (
     f"{API}/requests",
     f"{API}/notifications",
     f"{API}/submissions",
+    # Reads none of the hub's data: it turns a question into the caller's own filters.
+    f"{API}/ai-search",
 )
 
 

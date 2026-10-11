@@ -798,7 +798,14 @@ export interface Submission {
   updated_at: string | null
 }
 
-/** A plain-words question read as register filters. */
+/** How a list describes itself to the AI search: what it holds and how it filters. */
+export interface AiTableSpec {
+  subject: string
+  search_hint?: string
+  filters?: { name: string; label: string; options: { value: string; label: string; hint?: string }[] }[]
+  ranges?: { kind: 'date' | 'amount'; label: string; from_name: string; to_name: string }[]
+}
+
 export interface AiAnswer {
   sql: string
   columns: string[]
@@ -807,6 +814,7 @@ export interface AiAnswer {
   error: string | null
 }
 
+/** A plain-words question read as filters. */
 export interface AiFilterResult {
   /** Register filter name → value; only what the question asked for. */
   filters: Record<string, string>
@@ -818,7 +826,7 @@ export interface AiFilterResult {
   /** `skipped`: Jev settled it alone, so the language model was never asked. */
   models: Record<'jev' | 'openai', 'ok' | 'off' | 'error' | 'skipped'>
   /** For a question asking for a figure: the read-only query and what it returned. */
-  answer: AiAnswer | null
+  answer?: AiAnswer | null
 }
 
 
