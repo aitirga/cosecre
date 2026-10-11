@@ -952,7 +952,8 @@ function amountClass(m: Movement) {
 }
 
 .movement-search {
-  flex: 0 1 320px;
+  flex: 1 1 380px;
+  max-width: 560px;
 }
 
 .movements-row > td {

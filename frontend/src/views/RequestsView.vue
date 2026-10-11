@@ -417,8 +417,8 @@ function ago(iso: string) {
 }
 
 .search {
-  flex: 1 1 220px;
-  max-width: 360px;
+  flex: 1 1 300px;
+  max-width: 520px;
 }
 
 .count {

@@ -3,7 +3,10 @@
  * A list's search box, with the option to ask in plain words.
  *
  * Plain mode filters as you type, like any search. The "IA" switch turns it
- * into a question: Enter sends it, and the answer comes back as the list's own
+ * into a question — and so does typing one: a sentence, a question mark, or
+ * words like "del mes passat" or "sense factura" switch the box over on their
+ * own (switching back by hand keeps it plain for that search). Enter sends the
+ * question, and the answer comes back as the list's own
  * chips and search words — set as a person would set them, so they stay
  * visible, editable and undoable. What the AI understood floats under the box
  * (never pushing the list down), with "Desfés", and — when the question asked
@@ -11,7 +14,7 @@
  *
  * Violet, because it is the AI acting.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useMutation } from '@tanstack/vue-query'
 
 import { ApiError } from '../api/client'
@@ -54,24 +57,110 @@ function storedMode(): boolean {
 }
 
 const aiMode = ref(storedMode())
-watch(aiMode, (on) => {
+
+/** Only a choice made by hand is remembered; one made by the box is not. */
+function rememberMode(on: boolean) {
   if (!props.storageKey) return
   try {
     window.localStorage.setItem(`cosecre.aiSearch.${props.storageKey}`, on ? 'ai' : 'text')
   } catch {
     // Remembered for this visit only.
   }
-})
+}
 
 const root = ref<HTMLElement | null>(null)
 const input = ref<HTMLInputElement | null>(null)
 const focused = ref(false)
 const question = ref('')
+/** The box switched itself to AI: emptying it switches back. */
+const autoAi = ref(false)
+/** The person switched back to text by hand: don't switch again for this search. */
+const stayPlain = ref(false)
 
 function toggleMode() {
-  aiMode.value = !aiMode.value
+  const on = !aiMode.value
+  // The words travel with the switch.
+  if (on) {
+    question.value = model.value
+    model.value = ''
+  } else {
+    model.value = question.value
+    question.value = ''
+    stayPlain.value = Boolean(model.value)
+  }
+  aiMode.value = on
+  autoAi.value = false
+  rememberMode(on)
   input.value?.focus()
 }
+
+// ── Telling a question from a search ────────────────────────────────────────
+/** Words that only make sense asked of the list, in Catalan, Spanish or English. */
+const CUES = new Set(
+  (
+    'quant quanta quants quantes quin quina quins quines que com on qui quan ' +
+    'cuanto cuanta cuantos cuantas cual cuales donde quien cuando ' +
+    'how what which who when where ' +
+    'mostra mostrem ensenya troba busca cerca llista dona dame muestra encuentra lista ensename show find list ' +
+    'sense sin without amb con with entre between mes menys mas menos more less than major menor mayor ' +
+    'pendent pendents pendiente pendientes pagat pagats pagada pagades pagado pagados ' +
+    'aquest aquesta aquests este esta estos passat passada pasado pasada ultim ultima ultims ultimo ultimos last ' +
+    'avui ahir hoy ayer setmana semana mes any ano curs curso trimestre ' +
+    'negatiu negatius negativa negatives negativo negativos positiu positius positivo positivos ' +
+    'ingres ingressos ingreso ingresos cobrament cobraments cobro cobros gast gastos despesa despeses ' +
+    'gener febrer marc abril maig juny juliol agost setembre octubre novembre desembre ' +
+    'enero febrero marzo mayo junio julio agosto septiembre noviembre diciembre'
+  ).split(' '),
+)
+
+function words(text: string) {
+  return text
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+}
+
+/**
+ * Whether the text reads as a question rather than something to find. A name
+ * or a number stays a search ("Amazon", "F-2024-118", "El Corte Inglés"); a
+ * sentence, a question mark or a word only a question would use is asked.
+ */
+function looksLikeQuestion(text: string) {
+  const trimmed = text.trim()
+  if (trimmed.length < 6) return false
+  if (/[?¿]/.test(trimmed)) return true
+  const all = words(trimmed)
+  const real = all.filter((word) => word.length > 1 && !/^\d+$/.test(word))
+  if (real.length >= 4) return true
+  return all.length >= 2 && real.some((word) => CUES.has(word))
+}
+
+/** One box for both: what it shows depends on the mode, and typing may switch it. */
+const text = computed({
+  get: () => (aiMode.value ? question.value : model.value),
+  set: (value: string) => {
+    if (aiMode.value) {
+      question.value = value
+      if (!value && autoAi.value) {
+        aiMode.value = false
+        autoAi.value = false
+      }
+      return
+    }
+    if (!value) stayPlain.value = false
+    if (!stayPlain.value && looksLikeQuestion(value)) {
+      // The half-typed words were filtering the list; let it go until the answer.
+      model.value = ''
+      question.value = value
+      aiMode.value = true
+      autoAi.value = true
+      return
+    }
+    model.value = value
+  },
+})
 
 // ── Asking ──────────────────────────────────────────────────────────────────
 const understood = ref<AiFilterResult | null>(null)
@@ -103,14 +192,15 @@ function undo() {
   emit('undo')
   understood.value = null
   showResult.value = false
-  question.value = ''
+  text.value = ''
   input.value?.focus()
 }
 
 function onEscape() {
-  if (aiMode.value && question.value) question.value = ''
-  else if (!aiMode.value) model.value = ''
+  text.value = ''
 }
+
+const canSend = computed(() => aiMode.value && question.value.trim().length >= 2 && !askMutation.isPending.value)
 
 const showExamples = computed(
   () => aiMode.value && focused.value && !question.value && !showResult.value && props.examples.length > 0,
@@ -140,30 +230,30 @@ function usedJev(result: AiFilterResult) {
   <span ref="root" class="ai-search" :class="{ ai: aiMode, busy: askMutation.isPending.value }">
     <AppIcon :name="aiMode ? 'sparkles' : 'search'" :size="14" class="lead" />
     <input
-      v-if="aiMode"
       ref="input"
-      v-model="question"
+      v-model="text"
       class="input"
       type="search"
       maxlength="500"
-      :placeholder="aiPlaceholder"
-      :aria-label="`${label ?? placeholder} amb IA`"
-      @keydown.enter.prevent="submit()"
+      enterkeyhint="search"
+      :placeholder="aiMode ? aiPlaceholder : placeholder"
+      :aria-label="aiMode ? `${label ?? placeholder} amb IA` : (label ?? placeholder)"
+      @keydown.enter.prevent="aiMode && submit()"
       @keydown.esc="onEscape"
       @focus="focused = true"
       @blur="focused = false"
     />
-    <input
-      v-else
-      ref="input"
-      v-model="model"
-      class="input"
-      type="search"
-      :placeholder="placeholder"
-      :aria-label="label ?? placeholder"
-      @keydown.esc="onEscape"
-    />
     <span class="trail">
+      <button
+        v-if="canSend"
+        class="send"
+        type="button"
+        title="Pregunta (Enter)"
+        @mousedown.prevent
+        @click="submit()"
+      >
+        <kbd>↵</kbd>
+      </button>
       <button
         v-if="understood && !showResult"
         class="said-pill"
@@ -175,11 +265,11 @@ function usedJev(result: AiFilterResult) {
         Entès
       </button>
       <button
-        v-if="!aiMode && model"
+        v-if="text"
         class="clear"
         type="button"
         aria-label="Esborra la cerca"
-        @click="model = ''"
+        @click="onEscape(); input?.focus()"
       >
         <AppIcon name="close" :size="12" />
       </button>
@@ -299,7 +389,11 @@ function usedJev(result: AiFilterResult) {
 .input {
   width: 100%;
   padding-left: 29px;
-  padding-right: 64px;
+  padding-right: 72px;
+}
+
+.ai .input {
+  padding-right: 96px;
 }
 
 .ai .input {
@@ -335,6 +429,28 @@ function usedJev(result: AiFilterResult) {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+}
+
+.send {
+  display: grid;
+  place-items: center;
+  height: 20px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--ai-600);
+  cursor: pointer;
+}
+
+.send kbd {
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.send:hover {
+  background: var(--ai-100);
 }
 
 .clear {

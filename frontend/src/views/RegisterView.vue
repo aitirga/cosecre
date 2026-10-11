@@ -886,7 +886,8 @@ const showUpload = ref(true)
 }
 
 .search {
-  flex: 0 1 460px;
+  flex: 1 1 460px;
+  max-width: 640px;
   min-width: 0;
 }
 
