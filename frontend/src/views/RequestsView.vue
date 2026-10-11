@@ -104,7 +104,6 @@ const REQUEST_AI: AiTableSpec = {
   search_hint: 'codi, títol, qui la demana, proveïdor, compte, qui la porta',
   filters: [choiceFilter('tipus', 'Tipus', KIND_OPTIONS), choiceFilter('estat', 'Estat', STATUS_OPTIONS)],
 }
-const REQUEST_AI_EXAMPLES = ['Compres pendents', 'Les rebutjades', 'Sol·licituds de la Marta']
 const requestAi = useAiFilters(table, ['tipus', 'estat'])
 const askRequests = (question: string) => api.aiSearch(REQUEST_AI, question)
 
@@ -216,10 +215,7 @@ function ago(iso: string) {
               v-model="table.search.value"
               class="search"
               :ask="askRequests"
-              placeholder="Cerca per títol, persona, proveïdor…"
-              ai-placeholder="«Compres pendents de la Marta»…"
-              :examples="REQUEST_AI_EXAMPLES"
-              storage-key="requests"
+              placeholder="Cerca per títol, persona, proveïdor… o pregunta: «compres pendents»"
               @apply="applyAi"
               @undo="requestAi.undo"
             />
@@ -417,8 +413,7 @@ function ago(iso: string) {
 }
 
 .search {
-  flex: 1 1 300px;
-  max-width: 520px;
+  flex: 1 1 100%;
 }
 
 .count {

@@ -216,14 +216,6 @@ function clearChips() {
 }
 
 // ── Asking the AI ───────────────────────────────────────────────────────────
-const AI_EXAMPLES = [
-  'Pendents de pagament d\'aquest curs',
-  'Menjador del mes passat',
-  'Per revisar enviades pel professorat',
-  'Més de 500 € sense extracte',
-  'Quant hem gastat per compte aquest curs?',
-  'Quins proveïdors ens han facturat més?',
-]
 /** What the filters were before the AI touched them, for "Desfés". */
 let beforeAi: { filters: Record<string, string>; search: string } | null = null
 
@@ -498,12 +490,8 @@ const showUpload = ref(true)
             v-model="table.search.value"
             class="search"
             :ask="api.aiFilter"
-            placeholder="Cerca per proveïdor, número, import…"
+            placeholder="Cerca per proveïdor, número, import… o pregunta: «pendents de pagament d'aquest curs»"
             label="Cerca documents"
-            ai-placeholder="Pregunta al registre: «pendents de pagament d'aquest curs»…"
-            :examples="AI_EXAMPLES"
-            storage-key="register"
-            default-ai
             @apply="applyAi"
             @undo="undoAi"
           />
@@ -886,8 +874,7 @@ const showUpload = ref(true)
 }
 
 .search {
-  flex: 1 1 460px;
-  max-width: 640px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 

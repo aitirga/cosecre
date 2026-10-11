@@ -270,7 +270,6 @@ const MOVEMENT_AI: AiTableSpec = {
     { kind: 'amount', label: 'Import', from_name: 'min', to_name: 'max' },
   ],
 }
-const MOVEMENT_AI_EXAMPLES = ['Pagaments sense factura', 'Comissions del mes passat', 'Més de 500 € al març']
 const movementAi = useAiFilters(movementTable, ['justificat', 'categoria', 'des', 'fins', 'min', 'max'])
 const askMovements = (question: string) => api.aiSearch(MOVEMENT_AI, question)
 
@@ -522,11 +521,8 @@ function amountClass(m: Movement) {
                       v-model="movementTable.search.value"
                       class="movement-search"
                       :ask="askMovements"
-                      placeholder="Cerca concepte, import, factura…"
+                      placeholder="Cerca concepte, import, factura… o pregunta: «pagaments sense factura del març»"
                       label="Cerca moviments"
-                      ai-placeholder="«Pagaments sense factura del març»…"
-                      :examples="MOVEMENT_AI_EXAMPLES"
-                      storage-key="movements"
                       @apply="movementAi.apply"
                       @undo="movementAi.undo"
                     />
@@ -952,8 +948,8 @@ function amountClass(m: Movement) {
 }
 
 .movement-search {
-  flex: 1 1 380px;
-  max-width: 560px;
+  /* A row of its own; the chips wrap beneath it. */
+  flex: 1 1 100%;
 }
 
 .movements-row > td {

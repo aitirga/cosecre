@@ -1,13 +1,12 @@
 <script setup lang="ts">
 /**
- * A list's search box, with the option to ask in plain words.
+ * A list's search box that also takes questions in plain words.
  *
- * Plain mode filters as you type, like any search. The "IA" switch turns it
- * into a question — and so does typing one: a sentence, a question mark, or
- * words like "del mes passat" or "sense factura" switch the box over on their
- * own (switching back by hand keeps it plain for that search). Enter sends the
- * question, and the answer comes back as the list's own
- * chips and search words — set as a person would set them, so they stay
+ * It filters as you type, like any search, until what is typed reads as a
+ * question — a sentence, a question mark, or words like "del mes passat" or
+ * "sense factura". Then it turns violet on its own, with an "IA" badge (click
+ * it to keep it a plain search), and Enter asks. The answer comes back as the
+ * list's own chips and search words — set as a person would set them, so they stay
  * visible, editable and undoable. What the AI understood floats under the box
  * (never pushing the list down), with "Desfés", and — when the question asked
  * for a figure — the figure or a small table and the query behind it.
@@ -28,69 +27,29 @@ const props = withDefaults(
     ask: (question: string) => Promise<AiFilterResult>
     placeholder?: string
     label?: string
-    aiPlaceholder?: string
-    examples?: string[]
-    /** Remembers the chosen mode in this browser, per list. */
-    storageKey?: string
-    defaultAi?: boolean
   }>(),
-  {
-    placeholder: 'Cerca…',
-    label: undefined,
-    aiPlaceholder: 'Pregunta-ho amb les teves paraules…',
-    examples: () => [],
-    storageKey: undefined,
-    defaultAi: false,
-  },
+  { placeholder: 'Cerca o pregunta…', label: undefined },
 )
 const emit = defineEmits<{ apply: [result: AiFilterResult]; undo: [] }>()
 
 // ── Mode ────────────────────────────────────────────────────────────────────
-function storedMode(): boolean {
-  if (!props.storageKey) return props.defaultAi
-  try {
-    const raw = window.localStorage.getItem(`cosecre.aiSearch.${props.storageKey}`)
-    return raw === null ? props.defaultAi : raw === 'ai'
-  } catch {
-    return props.defaultAi
-  }
-}
-
-const aiMode = ref(storedMode())
-
-/** Only a choice made by hand is remembered; one made by the box is not. */
-function rememberMode(on: boolean) {
-  if (!props.storageKey) return
-  try {
-    window.localStorage.setItem(`cosecre.aiSearch.${props.storageKey}`, on ? 'ai' : 'text')
-  } catch {
-    // Remembered for this visit only.
-  }
-}
+const aiMode = ref(false)
 
 const root = ref<HTMLElement | null>(null)
 const input = ref<HTMLInputElement | null>(null)
-const focused = ref(false)
 const question = ref('')
-/** The box switched itself to AI: emptying it switches back. */
+/** The box is a question: emptying it makes it a search again. */
 const autoAi = ref(false)
 /** The person switched back to text by hand: don't switch again for this search. */
 const stayPlain = ref(false)
 
-function toggleMode() {
-  const on = !aiMode.value
-  // The words travel with the switch.
-  if (on) {
-    question.value = model.value
-    model.value = ''
-  } else {
-    model.value = question.value
-    question.value = ''
-    stayPlain.value = Boolean(model.value)
-  }
-  aiMode.value = on
+/** The badge: this one is a plain search after all, and stays so until emptied. */
+function backToText() {
+  model.value = question.value
+  question.value = ''
+  aiMode.value = false
   autoAi.value = false
-  rememberMode(on)
+  stayPlain.value = Boolean(model.value)
   input.value?.focus()
 }
 
@@ -202,10 +161,7 @@ function onEscape() {
 
 const canSend = computed(() => aiMode.value && question.value.trim().length >= 2 && !askMutation.isPending.value)
 
-const showExamples = computed(
-  () => aiMode.value && focused.value && !question.value && !showResult.value && props.examples.length > 0,
-)
-const popoverOpen = computed(() => (showResult.value && (understood.value || error.value)) || showExamples.value)
+const popoverOpen = computed(() => Boolean(showResult.value && (understood.value || error.value)))
 const wide = computed(() => Boolean(understood.value?.answer?.rows?.length && (understood.value.answer.columns.length ?? 0) > 1))
 
 // ── The answer to a question for a figure ───────────────────────────────────
@@ -227,7 +183,7 @@ function usedJev(result: AiFilterResult) {
 </script>
 
 <template>
-  <span ref="root" class="ai-search" :class="{ ai: aiMode, busy: askMutation.isPending.value }">
+  <span ref="root" class="ai-search" :class="{ ai: aiMode, busy: askMutation.isPending.value, pill: understood && !showResult }">
     <AppIcon :name="aiMode ? 'sparkles' : 'search'" :size="14" class="lead" />
     <input
       ref="input"
@@ -236,12 +192,10 @@ function usedJev(result: AiFilterResult) {
       type="search"
       maxlength="500"
       enterkeyhint="search"
-      :placeholder="aiMode ? aiPlaceholder : placeholder"
+      :placeholder="placeholder"
       :aria-label="aiMode ? `${label ?? placeholder} amb IA` : (label ?? placeholder)"
       @keydown.enter.prevent="aiMode && submit()"
       @keydown.esc="onEscape"
-      @focus="focused = true"
-      @blur="focused = false"
     />
     <span class="trail">
       <button
@@ -274,12 +228,11 @@ function usedJev(result: AiFilterResult) {
         <AppIcon name="close" :size="12" />
       </button>
       <button
+        v-if="aiMode"
         class="mode"
-        :class="{ on: aiMode }"
         type="button"
-        :aria-pressed="aiMode"
-        :title="aiMode ? 'Torna a la cerca de text' : 'Pregunta-ho amb IA'"
-        @click="toggleMode"
+        title="Es preguntarà a la IA. Clica per fer-ne una cerca de text."
+        @click="backToText"
       >
         <span v-if="askMutation.isPending.value" class="dots" aria-label="Pensant"><i /><i /><i /></span>
         <template v-else>
@@ -295,16 +248,9 @@ function usedJev(result: AiFilterResult) {
     :anchor="root"
     :width="wide ? 520 : 380"
     label="Cerca amb IA"
-    @close="showResult = false; focused = false"
+    @close="showResult = false"
   >
-    <div v-if="showExamples" class="examples" @mousedown.prevent>
-      <span class="examples-label">Prova:</span>
-      <button v-for="example in examples" :key="example" class="example" type="button" @click="submit(example)">
-        {{ example }}
-      </button>
-    </div>
-
-    <div v-else class="result">
+    <div class="result">
       <p v-if="error" class="said error">
         <AppIcon name="alert" :size="13" />
         <span>{{ error }}</span>
@@ -389,10 +335,11 @@ function usedJev(result: AiFilterResult) {
 .input {
   width: 100%;
   padding-left: 29px;
-  padding-right: 72px;
+  padding-right: 30px;
 }
 
-.ai .input {
+.ai .input,
+.pill .input {
   padding-right: 96px;
 }
 
@@ -490,14 +437,15 @@ function usedJev(result: AiFilterResult) {
   cursor: pointer;
 }
 
-.mode:hover {
-  background: var(--ai-50);
-}
-
-.mode.on {
+.mode {
   border-color: var(--ai-600);
   background: var(--ai-600);
   color: #fff;
+}
+
+.mode:hover {
+  border-color: var(--ai-700);
+  background: var(--ai-700);
 }
 
 .said-pill {
@@ -543,35 +491,6 @@ function usedJev(result: AiFilterResult) {
 }
 
 /* ── The floating panel ──────────────────────────────────────────────── */
-.examples {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: 8px;
-  font-size: var(--text-sm);
-}
-
-.examples-label {
-  color: var(--ink-400);
-}
-
-.example {
-  padding: 2px 9px;
-  border: 1px solid var(--ai-100);
-  border-radius: var(--r-full);
-  background: var(--ai-50);
-  font: inherit;
-  font-size: var(--text-sm);
-  color: var(--ai-700);
-  cursor: pointer;
-}
-
-.example:hover {
-  border-color: var(--ai-200);
-  background: var(--ai-100);
-}
-
 .result {
   display: grid;
   gap: 8px;
