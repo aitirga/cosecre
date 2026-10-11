@@ -68,6 +68,16 @@ class Settings(BaseSettings):
     #: which is what non-reasoning models need.
     openai_reasoning_effort: str = "medium"
 
+    #: The Assistent (beta): a chat over the hub's data that can query, chart
+    #: and propose changes. Its own model and effort, apart from the reading
+    #: pipeline's, because a conversation weighs speed and depth differently.
+    assistant_enabled: bool = True
+    assistant_model: str = "gpt-6.1-sol"
+    #: Sent as ``reasoning.effort``; empty disables the field.
+    assistant_reasoning_effort: str = "medium"
+    #: Model calls one question may make before the assistant has to answer.
+    assistant_max_rounds: int = Field(default=12, ge=1, le=40)
+
     #: TypeSafe's Jev, the second opinion on every closed-list field. Optional:
     #: without it the vision model decides alone.
     typesafe_api_key: str | None = None

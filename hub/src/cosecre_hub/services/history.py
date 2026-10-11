@@ -104,6 +104,9 @@ UNTRACKED_PREFIXES = (
     "/meta",
     "/requests",
     "/notifications",
+    # The chat itself; what it changes goes through the routes below, applied
+    # as one action of its own (see ``services.assistant.proposals``).
+    "/assistant",
 )
 
 
@@ -151,6 +154,10 @@ def action(label: str, *, kind: str = "auto", user_id: int | None = None) -> Ite
 
 def begin_request(scope: dict[str, Any], api_prefix: str) -> contextvars.Token | None:
     if scope.get("type") != "http" or scope.get("method") not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return None
+    # A request the hub makes to itself inside an action — the Assistent
+    # applying a proposal — joins that action, so all of it undoes at once.
+    if _current.get() is not None:
         return None
     path = scope.get("path", "")
     if path.startswith(api_prefix):

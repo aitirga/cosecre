@@ -654,3 +654,82 @@ class Notification(Base):
 
     actor: Mapped["User | None"] = relationship(foreign_keys=[actor_id])
 
+
+
+class AssistantConversation(Base):
+    """One person's chat with the Assistent. Nobody else sees it."""
+
+    __tablename__ = "assistant_conversations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    #: The last message — what the list of chats sorts by.
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    # ORM cascades rather than the database's: SQLite only honours ON DELETE
+    # with a pragma the hub does not set.
+    messages: Mapped[list["AssistantMessage"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="AssistantMessage.id",
+    )
+    proposals: Mapped[list["AssistantProposal"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="AssistantProposal.id",
+    )
+
+
+class AssistantMessage(Base):
+    __tablename__ = "assistant_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_conversations.id", ondelete="CASCADE"), index=True
+    )
+    #: ``user`` or ``assistant``.
+    role: Mapped[str] = mapped_column(String(16))
+    content: Mapped[str] = mapped_column(Text, default="")
+    #: What the answer showed besides text — tables, charts, proposals — and the
+    #: steps it took to get there, in order. See ``services.assistant.blocks``.
+    blocks: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    #: ``done``, or ``error`` when the turn failed partway; ``detail`` says why.
+    status: Mapped[str] = mapped_column(String(16), default="done")
+    detail: Mapped[str] = mapped_column(Text, default="")
+    model: Mapped[str] = mapped_column(String(120), default="")
+    usage: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    conversation: Mapped[AssistantConversation] = relationship(back_populates="messages")
+
+
+class AssistantProposal(Base):
+    """Changes the Assistent wants to make, waiting on a person to say yes.
+
+    The model never writes. It writes *this*: a list of API calls with a preview
+    of what each would change. Applying replays them as the person who
+    confirmed, through the same routes the app uses, as one undoable action.
+    """
+
+    __tablename__ = "assistant_proposals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_conversations.id", ondelete="CASCADE"), index=True
+    )
+    summary: Mapped[str] = mapped_column(Text, default="")
+    #: ``[{method, path, body, label, before, changes}]``.
+    actions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    #: ``pending``, ``applied``, ``partial``, ``failed``, ``stale`` or ``discarded``.
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    #: One entry per action tried: ``{ok, status_code, detail}``.
+    results: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    detail: Mapped[str] = mapped_column(Text, default="")
+    #: The history action applying it became — what "undo" replays.
+    history_action_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    conversation: Mapped[AssistantConversation] = relationship(back_populates="proposals")

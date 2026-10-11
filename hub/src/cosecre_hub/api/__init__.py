@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from ..deps import require_staff
 
 from .app_settings import router as app_settings_router
+from .assistant import router as assistant_router
 from .auth import router as auth_router
 from .backups import router as backups_router
 from .documents import router as documents_router
@@ -54,5 +55,8 @@ api_router.include_router(status_router, prefix="/status", tags=["status"], depe
 api_router.include_router(tools_router, prefix="/tools", tags=["tools"], dependencies=staff)
 api_router.include_router(backups_router, prefix="/backups", tags=["backups"], dependencies=staff)
 api_router.include_router(history_router, prefix="/history", tags=["history"], dependencies=staff)
+api_router.include_router(
+    assistant_router, prefix="/assistant", tags=["assistant"], dependencies=staff
+)
 
 __all__ = ["api_router"]

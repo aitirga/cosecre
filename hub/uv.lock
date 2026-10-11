@@ -295,7 +295,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.135.3" },
     { name = "google-api-python-client", specifier = ">=2.193.0" },
     { name = "google-auth", specifier = ">=2.49.1" },
-    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "openai", specifier = ">=2.30.0" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "pillow", specifier = ">=12.3.0" },

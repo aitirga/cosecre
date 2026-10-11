@@ -28,6 +28,7 @@ const route = useRoute()
       >
         <AppIcon :name="node.icon" :size="15" />
         <span class="truncate">{{ node.label }}</span>
+        <span v-if="node.badge" class="nav-badge">{{ node.badge }}</span>
       </RouterLink>
 
       <template v-else>
@@ -62,6 +63,19 @@ const route = useRoute()
 </template>
 
 <style scoped>
+.nav-badge {
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: var(--r-xs);
+  background: var(--ai-100);
+  color: var(--ai-700);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .tree {
   display: grid;
   gap: 2px;

@@ -15,6 +15,7 @@ export interface NavLink {
   name: string
   label: string
   icon: IconName
+  badge?: string
   /** Detail routes that should keep this link lit. */
   childRoutes?: string[]
 }

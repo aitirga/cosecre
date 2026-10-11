@@ -9,6 +9,11 @@ import { trackedFetch } from './loading'
  */
 import type {
   AiFilterResult,
+  AssistantConversation,
+  AssistantConversationSummary,
+  AssistantFrame,
+  AssistantProposal,
+  AssistantStatus,
   AppNotification,
   AuthTokens,
   BackupComparison,
@@ -829,6 +834,89 @@ export const api = {
   },
   readAllNotifications() {
     return request<{ message: string }>('/notifications/read-all', { method: 'POST' })
+  },
+
+  // ── Assistent (beta) ────────────────────────────────────────────────────
+  assistantStatus() {
+    return request<AssistantStatus>('/assistant/status')
+  },
+  assistantConversations() {
+    return request<AssistantConversationSummary[]>('/assistant/conversations')
+  },
+  assistantConversation(id: number) {
+    return request<AssistantConversation>(`/assistant/conversations/${id}`)
+  },
+  createAssistantConversation() {
+    return request<AssistantConversation>('/assistant/conversations', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+  },
+  renameAssistantConversation(id: number, title: string) {
+    return request<AssistantConversationSummary>(`/assistant/conversations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    })
+  },
+  deleteAssistantConversation(id: number) {
+    return request<void>(`/assistant/conversations/${id}`, { method: 'DELETE' })
+  },
+  /**
+   * Ask, and receive the answer frame by frame (NDJSON). Resolves when the
+   * stream ends; a stream that closes without `done` or `error` is reported as
+   * an error frame, so the caller always sees exactly one ending.
+   */
+  async askAssistant(
+    id: number,
+    text: string,
+    onFrame: (frame: AssistantFrame) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    // A 401 is refused before anything is saved, so the one retry
+    // `authorizedFetch` makes cannot ask the question twice.
+    const response = await authorizedFetch(`/assistant/conversations/${id}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal,
+    })
+    if (!response.ok || !response.body) {
+      await parseResponse(response)
+      throw new ApiError(response.status, "L'assistent no ha respost.")
+    }
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let ended = false
+    const emit = (line: string) => {
+      if (!line.trim()) return
+      const frame = JSON.parse(line) as AssistantFrame
+      if (frame.type === 'done' || frame.type === 'error') ended = true
+      onFrame(frame)
+    }
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let newline = buffer.indexOf('\n')
+      while (newline >= 0) {
+        emit(buffer.slice(0, newline))
+        buffer = buffer.slice(newline + 1)
+        newline = buffer.indexOf('\n')
+      }
+    }
+    emit(buffer + decoder.decode())
+    if (!ended) onFrame({ type: 'error', detail: "La connexió s'ha tallat abans que l'assistent acabés." })
+    if (typeof window !== 'undefined') {
+      // A turn can create proposals; nothing else changes until one is applied.
+      window.dispatchEvent(new CustomEvent(CHANGED_EVENT, { detail: { path: '/assistant' } }))
+    }
+  },
+  applyAssistantProposal(id: number) {
+    return request<AssistantProposal>(`/assistant/proposals/${id}/apply`, { method: 'POST' })
+  },
+  discardAssistantProposal(id: number) {
+    return request<AssistantProposal>(`/assistant/proposals/${id}/discard`, { method: 'POST' })
   },
 
   // ── Documents app settings ──────────────────────────────────────────────

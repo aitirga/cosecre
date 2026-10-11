@@ -120,6 +120,67 @@ class StreamEvent:
     provider: str = ""
 
 
+@dataclass(slots=True)
+class ToolSpec:
+    """A function the model may call. ``parameters`` is a JSON Schema object."""
+
+    name: str
+    description: str
+    parameters: dict[str, Any]
+
+
+@dataclass(slots=True)
+class ToolCall:
+    call_id: str
+    name: str
+    #: The raw JSON the model wrote; parsing it is the caller's job, because a
+    #: malformed call is something to tell the model about, not to crash on.
+    arguments: str
+
+
+@dataclass(slots=True)
+class ToolTurnRequest:
+    messages: list[Message]
+    tools: list[ToolSpec]
+    instructions: str | None = None
+    model: str | None = None
+    #: Overrides the provider's own default effort for this conversation.
+    reasoning_effort: str | None = None
+    max_output_tokens: int | None = None
+
+
+@dataclass(slots=True)
+class ToolEvent:
+    """One frame of a tool-calling step.
+
+    ``delta`` carries answer text as it arrives. Exactly one ``completed`` ends
+    every step, with the text in full and the calls the model wants run — an
+    empty list means it has answered.
+    """
+
+    type: Literal["delta", "completed"]
+    text: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    usage: Usage = field(default_factory=Usage)
+    model: str = ""
+
+
+class ToolSession(ABC):
+    """A conversation in which the model may call tools before it answers.
+
+    The provider keeps its own transcript (reasoning, calls, outputs) between
+    steps, in whatever shape its API wants — callers only see text and calls.
+    """
+
+    @abstractmethod
+    def step(self) -> Iterator[ToolEvent]:
+        """Ask the model to go on. Raises :class:`LLMError` on failure."""
+
+    @abstractmethod
+    def add_results(self, results: list[tuple[str, str]]) -> None:
+        """Hand back ``(call_id, output)`` for every call of the last step."""
+
+
 class LLMProvider(ABC):
     """One model vendor."""
 
@@ -157,6 +218,10 @@ class LLMProvider(ABC):
             model=result.model,
             provider=result.provider,
         )
+
+    def start_tools(self, request: ToolTurnRequest) -> ToolSession:
+        """Open a tool-calling session. Not every vendor offers one."""
+        raise LLMError(f"{self.label} no permet que el model faci servir eines.")
 
     @abstractmethod
     def structured(self, request: StructuredRequest) -> StructuredResult: ...

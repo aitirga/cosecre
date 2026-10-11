@@ -169,6 +169,7 @@ function buildNavTree(items: CosecreNavItem[], groups: CosecreNavGroup[]): NavNo
       name: item.name,
       label: item.label,
       icon: item.icon,
+      badge: item.badge,
       childRoutes: item.childRoutes,
     })
   }

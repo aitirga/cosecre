@@ -19,6 +19,8 @@ export interface CosecreNavItem {
   name: string
   label: string
   icon: IconName
+  /** A short tag after the label, such as `beta`. */
+  badge?: string
   adminOnly?: boolean
   /** Narrows the entry to some roles, on top of its module's own `roles`. */
   roles?: readonly Role[]

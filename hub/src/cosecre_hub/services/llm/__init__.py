@@ -10,6 +10,11 @@ from .base import (
     StreamEvent,
     StructuredRequest,
     StructuredResult,
+    ToolCall,
+    ToolEvent,
+    ToolSession,
+    ToolSpec,
+    ToolTurnRequest,
     Usage,
     to_strict_json_schema,
 )
@@ -31,6 +36,11 @@ __all__ = [
     "StreamEvent",
     "StructuredRequest",
     "StructuredResult",
+    "ToolCall",
+    "ToolEvent",
+    "ToolSession",
+    "ToolSpec",
+    "ToolTurnRequest",
     "Usage",
     "to_strict_json_schema",
 ]

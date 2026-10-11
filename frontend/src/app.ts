@@ -11,6 +11,7 @@ import { createApp, type App as VueApp, type Component } from 'vue'
 
 import { configureApi, type TokenStorage } from './api/client'
 import App from './App.vue'
+import { assistantModule } from './modules/assistant'
 import { documentsModule } from './modules/documents'
 import { hubModule } from './modules/hub'
 import { printModule } from './modules/print'
@@ -41,6 +42,7 @@ export type { PlatformIntegration } from './platform'
  */
 const DEFAULT_MODULES: CosecreModule[] = [
   documentsModule,
+  assistantModule,
   printModule,
   teacherModule,
   requestsModule,

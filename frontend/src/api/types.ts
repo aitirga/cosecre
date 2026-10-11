@@ -821,3 +821,112 @@ export interface AiFilterResult {
   answer: AiAnswer | null
 }
 
+
+// ── Assistent (beta) ─────────────────────────────────────────────────────────
+
+export interface AssistantStatus {
+  enabled: boolean
+  ready: boolean
+  detail: string
+  model: string
+  reasoning_effort: string
+  beta: boolean
+}
+
+export interface AssistantConversationSummary {
+  id: number
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AssistantConversation extends AssistantConversationSummary {
+  messages: AssistantMessage[]
+}
+
+export type AssistantProposalStatus = 'pending' | 'applied' | 'partial' | 'failed' | 'stale' | 'discarded'
+
+export interface AssistantChange {
+  field: string
+  before: unknown
+  after: unknown
+}
+
+export interface AssistantAction {
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  path: string
+  label: string
+  body: unknown
+  before: Record<string, unknown> | null
+  changes: AssistantChange[]
+}
+
+export interface AssistantProposal {
+  id: number
+  summary: string
+  status: AssistantProposalStatus
+  detail: string
+  actions: AssistantAction[]
+  results: { ok: boolean; status_code: number; detail: string }[]
+  history_action_id: number | null
+  created_at: string
+  decided_at: string | null
+}
+
+export type AssistantBlock =
+  | { type: 'text'; text: string }
+  | {
+      type: 'step'
+      tool: string
+      ok: boolean
+      detail: string
+      purpose?: string
+      sql?: string
+      path?: string
+      search?: string
+    }
+  | {
+      type: 'table'
+      title: string
+      columns: string[]
+      rows: unknown[][]
+      truncated: boolean
+      note: string
+      sql: string
+    }
+  | {
+      type: 'chart'
+      kind: 'bar' | 'line' | 'area' | 'pie' | 'scatter'
+      title: string
+      labels: string[]
+      series: { name: string; values: (number | null)[] }[]
+      unit: string
+      stacked: boolean
+      horizontal: boolean
+      x_label: string
+      y_label: string
+      note: string
+      truncated: boolean
+      sql: string
+    }
+  | { type: 'metrics'; title: string; items: { label: string; value: string; hint: string }[] }
+  | { type: 'proposal'; proposal_id: number; proposal: AssistantProposal | null }
+
+export interface AssistantMessage {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  blocks: AssistantBlock[]
+  status: 'done' | 'error'
+  detail: string
+  model: string
+  created_at: string
+}
+
+export type AssistantFrame =
+  | { type: 'user'; message: AssistantMessage }
+  | { type: 'status'; text: string }
+  | { type: 'delta'; text: string }
+  | { type: 'block'; block: AssistantBlock }
+  | { type: 'done'; message: AssistantMessage }
+  | { type: 'error'; detail: string; message?: AssistantMessage }

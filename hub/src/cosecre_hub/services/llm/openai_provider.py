@@ -18,13 +18,17 @@ from .base import (
     StreamEvent,
     StructuredRequest,
     StructuredResult,
+    ToolCall,
+    ToolEvent,
+    ToolSession,
+    ToolTurnRequest,
     Usage,
     to_strict_json_schema,
 )
 
 #: Models the UI offers by default. Any other id can still be passed through —
 #: this list exists so a settings screen has something to populate a select with.
-KNOWN_MODELS = ["gpt-6-luna", "gpt-6-sol", "gpt-5.4", "gpt-5.4-mini", "gpt-5.1", "gpt-4.1", "gpt-4.1-mini"]
+KNOWN_MODELS = ["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-5.4", "gpt-5.4-mini", "gpt-5.1", "gpt-4.1", "gpt-4.1-mini"]
 
 _INLINE_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"}
 
@@ -62,9 +66,9 @@ class OpenAIProvider(LLMProvider):
             self._client = OpenAI(api_key=self._settings.openai_api_key)
         return self._client
 
-    def _extra_args(self, temperature: float | None) -> dict[str, Any]:
+    def _extra_args(self, temperature: float | None, effort: str | None = None) -> dict[str, Any]:
         args: dict[str, Any] = {}
-        effort = self._settings.openai_reasoning_effort
+        effort = self._settings.openai_reasoning_effort if effort is None else effort
         if effort:
             args["reasoning"] = {"effort": effort}
         # Reasoning models reject `temperature` outright, so it is only sent when
@@ -147,6 +151,9 @@ class OpenAIProvider(LLMProvider):
             type="completed", text="".join(chunks), usage=Usage(), model=model, provider=self.id
         )
 
+    def start_tools(self, request: ToolTurnRequest) -> ToolSession:
+        return _OpenAIToolSession(self, request)
+
     def structured(self, request: StructuredRequest) -> StructuredResult:
         client = self._openai()
         model = request.model or self.default_model()
@@ -202,6 +209,99 @@ class OpenAIProvider(LLMProvider):
             model=model,
             provider=self.id,
             usage=_usage(response),
+        )
+
+
+class _OpenAIToolSession(ToolSession):
+    """Function calling over the Responses API, stateless.
+
+    ``store=False`` with the reasoning carried along encrypted: nothing of the
+    conversation is kept on OpenAI's side, so deleting a chat here deletes it.
+    The transcript is the list of input items, grown with every output item
+    the model produces and every result handed back — the documented way to
+    keep a reasoning model's thread across calls without stored responses.
+    """
+
+    def __init__(self, provider: OpenAIProvider, request: ToolTurnRequest):
+        self._provider = provider
+        self._request = request
+        self._model = request.model or provider.default_model()
+        self._items: list[dict[str, Any]] = _as_input(request.messages)
+        self._tools = [
+            {
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+                # Optional arguments are the norm here; strict mode would make
+                # every one of them required.
+                "strict": False,
+            }
+            for tool in request.tools
+        ]
+
+    def step(self) -> Iterator[ToolEvent]:
+        client = self._provider._openai()
+        chunks: list[str] = []
+        try:
+            stream = client.responses.create(
+                model=self._model,
+                instructions=self._request.instructions or None,
+                input=self._items,
+                tools=self._tools or None,
+                max_output_tokens=self._request.max_output_tokens,
+                store=False,
+                include=["reasoning.encrypted_content"],
+                stream=True,
+                **self._provider._extra_args(None, self._request.reasoning_effort),
+            )
+            for event in stream:
+                kind = getattr(event, "type", "")
+                if kind == "response.output_text.delta":
+                    delta = getattr(event, "delta", "") or ""
+                    if delta:
+                        chunks.append(delta)
+                        yield ToolEvent(type="delta", text=delta)
+                elif kind == "error":
+                    raise LLMError(getattr(event, "message", "") or "El model ha fallat.")
+                elif kind == "response.failed":
+                    error = getattr(getattr(event, "response", None), "error", None)
+                    raise LLMError(getattr(error, "message", "") or "El model ha fallat.")
+                elif kind in {"response.completed", "response.incomplete"}:
+                    response = getattr(event, "response", None)
+                    yield self._finish(response, "".join(chunks))
+                    return
+        except LLMError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — SDK raises a wide family
+            raise LLMError(_describe(exc)) from exc
+        raise LLMError("El model ha tancat la resposta sense acabar-la.")
+
+    def _finish(self, response: Any, streamed: str) -> ToolEvent:
+        calls: list[ToolCall] = []
+        for item in getattr(response, "output", None) or []:
+            payload = item.model_dump(exclude_none=True) if hasattr(item, "model_dump") else dict(item)
+            self._items.append(payload)
+            if payload.get("type") == "function_call":
+                calls.append(
+                    ToolCall(
+                        call_id=payload.get("call_id", ""),
+                        name=payload.get("name", ""),
+                        arguments=payload.get("arguments", "") or "{}",
+                    )
+                )
+        return ToolEvent(
+            type="completed",
+            text=getattr(response, "output_text", None) or streamed,
+            tool_calls=calls,
+            usage=_usage(response),
+            model=self._model,
+        )
+
+    def add_results(self, results: list[tuple[str, str]]) -> None:
+        self._items.extend(
+            {"type": "function_call_output", "call_id": call_id, "output": output}
+            for call_id, output in results
         )
 
 
