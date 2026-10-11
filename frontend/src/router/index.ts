@@ -17,6 +17,9 @@ export interface RouterOptions {
   withHubPicker?: boolean
 }
 
+/** Stands in for routes the guard always sends somewhere else. */
+const Placeholder = { render: () => null }
+
 export function createAppRouter(options: RouterOptions = {}): Router {
   const withHubPicker = options.withHubPicker ?? false
   const { homeRoute } = useModules()
@@ -39,11 +42,13 @@ export function createAppRouter(options: RouterOptions = {}): Router {
         path: '/',
         component: AppShell,
         meta: { requiresAuth: true },
-        children: [{ path: '', redirect: () => homeRoute.value }, ...routes.shell],
+        // Not a `redirect`: those resolve before the guard below has asked who
+        // is signed in, and home depends on the role. The guard sends it on.
+        children: [{ path: '', name: 'home', component: Placeholder }, ...routes.shell],
       },
       // Anything unrecognised belongs on the default page rather than a blank
       // router view — a stale desktop deep link should not dead-end.
-      { path: '/:pathMatch(.*)*', redirect: () => homeRoute.value },
+      { path: '/:pathMatch(.*)*', name: 'not-found', component: Placeholder },
     ],
   })
 
@@ -81,6 +86,10 @@ export function createAppRouter(options: RouterOptions = {}): Router {
 
     if ((to.name === 'login' || to.name === 'activate') && auth.isAuthenticated.value) {
       return homeRoute.value
+    }
+
+    if (to.name === 'home' || to.name === 'not-found') {
+      return auth.isAuthenticated.value ? homeRoute.value : { name: 'login' }
     }
 
     return moduleGuard(to) ?? true
