@@ -14,6 +14,7 @@ import { useAuth } from '../composables/useAuth'
 import { useTableQuery } from '../composables/useTableQuery'
 import { ROLE_HINTS, ROLE_LABELS, ROLES } from '../roles'
 import AppIcon from './AppIcon.vue'
+import FilterChip from './FilterChip.vue'
 import RoleBadge from './RoleBadge.vue'
 import SearchInput from './SearchInput.vue'
 import SortTh from './SortTh.vue'
@@ -177,10 +178,13 @@ function formatDate(value: string | null) {
 
     <div v-if="users.length > 6" class="team-tools">
       <SearchInput v-model="table.search.value" class="team-search" placeholder="Cerca per nom o correu" />
-      <select v-model="table.filters.rol" class="select role-filter" aria-label="Filtra per rol">
-        <option value="">Tots els rols</option>
-        <option v-for="role in ROLES" :key="role" :value="role">{{ ROLE_LABELS[role] }}</option>
-      </select>
+      <FilterChip
+        v-model="table.filters.rol"
+        label="Rol"
+        icon="users"
+        :options="ROLES.map((role) => ({ value: role, label: ROLE_LABELS[role] }))"
+        :count="(v) => table.countFor('rol', v)"
+      />
     </div>
 
     <p v-if="usersQuery.isLoading.value" class="empty">Carregant comptes…</p>
@@ -410,10 +414,6 @@ function formatDate(value: string | null) {
 
 .team-search {
   flex: 0 1 260px;
-}
-
-.role-filter {
-  width: auto;
 }
 
 .account-cell {

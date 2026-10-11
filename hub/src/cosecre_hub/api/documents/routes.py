@@ -12,7 +12,8 @@ import os
 import tempfile
 import uuid
 import zipfile
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pathlib import Path
 
 from fastapi import (
@@ -26,6 +27,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -37,6 +39,7 @@ from ...schemas.documents import DiffEntryRead, FieldChangeRead, SyncApplied, Sy
 from ...schemas.documents import CaptureSource
 from ...services.sheets import GoogleSheetsService, SheetDocumentNotFound
 from ...services import notifications, people
+from ...services.ai_filter import AiFilterUnavailable, read_filter
 from ...services.storage import save_upload_file
 from .register import (
     confirm_hints,
@@ -135,6 +138,60 @@ async def upload_document(
 ):
     """Queue one file. Several can be in flight at once; they are read in order."""
     return await queue_upload(request, background_tasks, session, user, settings, file, source)
+
+
+def _today() -> date:
+    """The school's today — "aquest mes" turns over at midnight in Catalonia, not UTC."""
+    try:
+        return datetime.now(ZoneInfo("Europe/Madrid")).date()
+    except ZoneInfoNotFoundError:  # an image without tzdata
+        return date.today()
+
+
+class AiFilterRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=500)
+
+
+class AiFieldRead(BaseModel):
+    source: str
+    confidence: float | None = None
+
+
+class AiFilterRead(BaseModel):
+    filters: dict[str, str]
+    search: str
+    explanation: str
+    sources: dict[str, AiFieldRead]
+    models: dict[str, str]
+
+
+@router.post("/ai-filter", response_model=AiFilterRead)
+def ai_filter(
+    payload: AiFilterRequest,
+    request: Request,
+    _: User = Depends(get_current_user),
+):
+    """Read a question in plain words as the register's own filters."""
+    jev = getattr(request.app.state.classifier, "jev", None)
+    try:
+        result = read_filter(
+            payload.query.strip(),
+            request.app.state.llm_registry,
+            jev,
+            _today(),
+        )
+    except AiFilterUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return AiFilterRead(
+        filters=result.filters,
+        search=result.search,
+        explanation=result.explanation,
+        sources={
+            name: AiFieldRead(source=reading.source, confidence=reading.confidence)
+            for name, reading in result.sources.items()
+        },
+        models=result.models,
+    )
 
 
 @router.post("/sync", response_model=SyncResult)

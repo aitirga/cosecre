@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '../api/client'
-import type { DocumentRecord, ExtractionStatus, Movement, PaidBy } from '../api/types'
+import type { AiFilterResult, DocumentRecord, ExtractionStatus, Movement, PaidBy } from '../api/types'
 import { useExtractionTracker } from '../composables/useExtractionTracker'
 import { useTableQuery } from '../composables/useTableQuery'
 import {
@@ -14,11 +14,14 @@ import {
   formatAmount,
   formatDate,
 } from '../document-fields'
+import AiFilterBar from '../components/AiFilterBar.vue'
 import AppIcon from '../components/AppIcon.vue'
 import DocumentIntake from '../components/DocumentIntake.vue'
 import DocumentWindow from '../components/DocumentWindow.vue'
+import FilterChip from '../components/FilterChip.vue'
 import ImageViewer from '../components/ImageViewer.vue'
 import MovementCard from '../components/MovementCard.vue'
+import RangeChip from '../components/RangeChip.vue'
 import SearchInput from '../components/SearchInput.vue'
 import SortTh from '../components/SortTh.vue'
 import SyncPanel from '../components/SyncPanel.vue'
@@ -176,6 +179,8 @@ const table = useTableQuery({
     // ISO dates compare as text.
     des: (item, value) => !!item.data_factura && item.data_factura >= value,
     fins: (item, value) => !!item.data_factura && item.data_factura <= value,
+    min: (item, value) => item.import != null && item.import >= Number(value),
+    max: (item, value) => item.import != null && item.import <= Number(value),
   },
 })
 
@@ -186,15 +191,56 @@ const filter = computed<Filter>({
 })
 const visible = table.visible
 
-/** Filters beyond the stat cards and the search, shown in the "more" row. */
-const showMoreFilters = ref(
-  Boolean(table.filters.compte || table.filters.des || table.filters.fins || table.filters.enviat),
-)
-const extraFilterCount = computed(
-  () =>
-    [table.filters.compte, table.filters.des, table.filters.fins, table.filters.enviat].filter(Boolean)
-      .length,
-)
+// ── Filter chips ────────────────────────────────────────────────────────────
+type FilterName = keyof typeof table.filters
+
+const TIPUS_OPTIONS = TIPUS_DOCUMENT.map((value) => ({ value, label: value }))
+const PAGAMENT_OPTIONS = [
+  ...ESTATS_PAGAMENT.map((value) => ({ value, label: value })),
+  { value: '—', label: 'Sense indicar' },
+]
+const COMPTE_OPTIONS = [
+  ...COMPTES.map((value) => ({ value, label: value })),
+  { value: '—', label: 'Sense compte' },
+]
+const ENVIAT_OPTIONS = [
+  { value: 'professorat', label: 'El professorat', hint: 'Factures i tiquets que han enviat els professors' },
+]
+
+/** The chips' own filters — the stat cards keep the status. */
+const CHIP_FILTERS: FilterName[] = ['tipus', 'pagament', 'compte', 'enviat', 'des', 'fins', 'min', 'max']
+const chipsSet = computed(() => CHIP_FILTERS.filter((name) => table.filters[name]).length)
+function clearChips() {
+  table.reset(CHIP_FILTERS)
+  table.search.value = ''
+}
+
+// ── Asking the AI ───────────────────────────────────────────────────────────
+const AI_EXAMPLES = [
+  'Pendents de pagament d\'aquest curs',
+  'Menjador del mes passat',
+  'Per revisar enviades pel professorat',
+  'Més de 500 € sense extracte',
+]
+/** What the filters were before the AI touched them, for "Desfés". */
+let beforeAi: { filters: Record<string, string>; search: string } | null = null
+
+function applyAi(result: AiFilterResult) {
+  beforeAi ??= { filters: { ...table.filters }, search: table.search.value }
+  // A question replaces the previous filters rather than piling onto them.
+  table.reset()
+  for (const [name, value] of Object.entries(result.filters)) {
+    if (name in table.filters) table.filters[name as FilterName] = value
+  }
+  table.search.value = result.search
+}
+
+function undoAi() {
+  if (!beforeAi) return
+  for (const name of Object.keys(table.filters) as FilterName[]) table.filters[name] = beforeAi.filters[name] ?? ''
+  table.search.value = beforeAi.search
+  beforeAi = null
+}
 
 const visibleTotal = computed(() =>
   visible.value.reduce((sum, item) => sum + (item.import ?? 0), 0),
@@ -427,72 +473,35 @@ const showUpload = ref(true)
     <DocumentIntake v-if="showUpload" @uploaded="invalidate" />
 
     <section class="card">
-      <div class="card-head list-head">
-        <div class="filters">
+      <div class="toolbar">
+        <AiFilterBar :examples="AI_EXAMPLES" @apply="applyAi" @undo="undoAi" />
+
+        <div class="filters-top">
           <SearchInput
             v-model="table.search.value"
             class="search"
             placeholder="Cerca per proveïdor, número, import…"
             label="Cerca documents"
           />
-          <select v-model="table.filters.tipus" class="select" aria-label="Filtra per tipus">
-            <option value="">Tots els tipus</option>
-            <option v-for="option in TIPUS_DOCUMENT" :key="option" :value="option">{{ option }}</option>
-          </select>
-          <select v-model="table.filters.pagament" class="select" aria-label="Filtra per pagament">
-            <option value="">Qualsevol pagament</option>
-            <option v-for="option in ESTATS_PAGAMENT" :key="option" :value="option">{{ option }}</option>
-            <option value="—">Sense indicar</option>
-          </select>
-          <button
-            class="btn btn-ghost btn-sm more-filters"
-            :class="{ on: showMoreFilters || extraFilterCount }"
-            type="button"
-            :aria-expanded="showMoreFilters"
-            @click="showMoreFilters = !showMoreFilters"
-          >
-            <AppIcon name="filter" :size="13" />
-            Més filtres
-            <span v-if="extraFilterCount" class="filter-count">{{ extraFilterCount }}</span>
-          </button>
-          <button
-            v-if="table.isFiltered.value"
-            class="btn btn-ghost btn-sm"
-            type="button"
-            @click="table.reset()"
-          >
-            Neteja
-          </button>
+          <span class="count">
+            <strong>{{ visible.length }}</strong>
+            <template v-if="visible.length !== stats.total"> de {{ stats.total }}</template>
+            documents
+            <span class="count-sep">·</span>
+            <span class="mono">{{ formatAmount(visibleTotal) }}</span>
+          </span>
         </div>
-        <span class="count muted">
-          {{ visible.length }}<template v-if="visible.length !== stats.total"> de {{ stats.total }}</template>
-          · {{ formatAmount(visibleTotal) }}
-        </span>
-      </div>
-      <div v-if="showMoreFilters" class="more-row">
-        <label class="inline-field">
-          <span class="label">Compte</span>
-          <select v-model="table.filters.compte" class="select">
-            <option value="">Tots</option>
-            <option v-for="option in COMPTES" :key="option" :value="option">{{ option }}</option>
-            <option value="—">Sense compte</option>
-          </select>
-        </label>
-        <label class="inline-field">
-          <span class="label">Enviat per</span>
-          <select v-model="table.filters.enviat" class="select">
-            <option value="">Tothom</option>
-            <option value="professorat">El professorat</option>
-          </select>
-        </label>
-        <label class="inline-field">
-          <span class="label">Data des de</span>
-          <input v-model="table.filters.des" class="input" type="date" :max="table.filters.fins || undefined" />
-        </label>
-        <label class="inline-field">
-          <span class="label">fins a</span>
-          <input v-model="table.filters.fins" class="input" type="date" :min="table.filters.des || undefined" />
-        </label>
+        <div class="chips" role="group" aria-label="Filtres">
+            <FilterChip v-model="table.filters.tipus" label="Tipus" icon="invoice" :options="TIPUS_OPTIONS" :count="(v) => table.countFor('tipus', v)" />
+            <FilterChip v-model="table.filters.pagament" label="Pagament" icon="check" :options="PAGAMENT_OPTIONS" :count="(v) => table.countFor('pagament', v)" />
+            <FilterChip v-model="table.filters.compte" label="Compte" icon="bank" :options="COMPTE_OPTIONS" :count="(v) => table.countFor('compte', v)" />
+            <RangeChip v-model:from="table.filters.des" v-model:to="table.filters.fins" label="Data" kind="date" icon="history" />
+            <RangeChip v-model:from="table.filters.min" v-model:to="table.filters.max" label="Import" kind="amount" icon="sliders" />
+            <FilterChip v-model="table.filters.enviat" label="Enviat per" icon="user" :options="ENVIAT_OPTIONS" :count="(v) => table.countFor('enviat', v)" />
+            <button v-if="chipsSet || table.search.value" class="clear-all" type="button" @click="clearChips">
+              Neteja-ho tot
+            </button>
+        </div>
       </div>
 
       <p v-if="documentsQuery.isLoading.value" class="empty">Carregant el registre…</p>
@@ -800,27 +809,61 @@ const showUpload = ref(true)
 }
 
 /* ── List ────────────────────────────────────────────────────────────────── */
-.list-head {
-  align-items: center;
+
+.toolbar {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
 }
 
-.filters {
+.filters-top {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  flex: 1;
+  gap: 10px;
   min-width: 0;
 }
 
-.filters .select {
-  width: auto;
-  min-width: 140px;
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.clear-all {
+  padding: 4px 6px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink-500);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
+.clear-all:hover {
+  color: var(--danger-700);
+  text-decoration-color: currentColor;
+}
+
+.count strong {
+  color: var(--ink-900);
+  font-weight: 600;
+}
+
+.count-sep {
+  margin: 0 5px;
+  color: var(--ink-400);
 }
 
 .search {
-  flex: 1 1 220px;
-  max-width: 320px;
+  flex: 0 1 340px;
+  min-width: 0;
 }
 
 .origin {
@@ -831,46 +874,12 @@ const showUpload = ref(true)
   color: var(--gold-800);
 }
 
-.more-filters.on {
-  color: var(--accent-700);
-}
-
-.filter-count {
-  min-width: 16px;
-  padding: 0 4px;
-  border-radius: var(--r-full);
-  background: var(--accent-600);
-  color: #fff;
-  font-size: var(--text-xs);
-  line-height: 16px;
-  text-align: center;
-}
-
-.more-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 10px 14px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-1);
-}
-
-.inline-field {
-  display: grid;
-  gap: 3px;
-}
-
-.inline-field .select,
-.inline-field .input {
-  width: auto;
-  min-width: 150px;
-}
-
 .count {
+  margin-left: auto;
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  color: var(--ink-500);
 }
 
 .row {

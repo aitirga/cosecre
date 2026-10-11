@@ -10,6 +10,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
 import type { RequestDetail, RequestKind, RequestSummary } from '../api/types'
 import AppIcon from '../components/AppIcon.vue'
+import FilterChip from '../components/FilterChip.vue'
 import NewRequestDialog from '../components/NewRequestDialog.vue'
 import RequestStatusPill from '../components/RequestStatusPill.vue'
 import RequestWindow from '../components/RequestWindow.vue'
@@ -81,6 +82,16 @@ const table = useTableQuery({
 const visible = computed(() =>
   table.filters.vista ? table.visible.value : table.visible.value.filter((r) => inView(r, '')),
 )
+const KIND_OPTIONS = KINDS.map((kind) => ({ value: kind, label: KIND_LABEL[kind] }))
+const STATUS_OPTIONS = Object.entries(STATUS_META).map(([value, meta]) => ({ value, label: meta.label }))
+/** Counts within the current view card, like the list itself. */
+function countIn(name: 'tipus' | 'estat', value: string) {
+  if (table.filters.vista) return table.countFor(name, value)
+  return requests.value.filter(
+    (r) => inView(r, '') && (!value || (name === 'tipus' ? r.kind === value : r.status === value)),
+  ).length
+}
+
 const view = computed<View>({
   get: () => (table.filters.vista || '') as View,
   set: (value) => (table.filters.vista = value),
@@ -185,14 +196,21 @@ function ago(iso: string) {
         <div class="card-head list-head">
           <div class="filters">
             <SearchInput v-model="table.search.value" class="search" placeholder="Cerca per títol, persona, proveïdor…" />
-            <select v-model="table.filters.tipus" class="select" aria-label="Filtra per tipus">
-              <option value="">Tots els tipus</option>
-              <option v-for="kind in KINDS" :key="kind" :value="kind">{{ KIND_LABEL[kind] }}</option>
-            </select>
-            <select v-if="view === 'totes'" v-model="table.filters.estat" class="select" aria-label="Filtra per estat">
-              <option value="">Tots els estats</option>
-              <option v-for="(meta, key) in STATUS_META" :key="key" :value="key">{{ meta.label }}</option>
-            </select>
+            <FilterChip
+              v-model="table.filters.tipus"
+              label="Tipus"
+              icon="inbox"
+              :options="KIND_OPTIONS"
+              :count="(v) => countIn('tipus', v)"
+            />
+            <FilterChip
+              v-if="view === 'totes'"
+              v-model="table.filters.estat"
+              label="Estat"
+              icon="check"
+              :options="STATUS_OPTIONS"
+              :count="(v) => countIn('estat', v)"
+            />
           </div>
           <span class="count muted">{{ visible.length }}</span>
         </div>
@@ -369,11 +387,6 @@ function ago(iso: string) {
   gap: 8px;
   flex: 1;
   min-width: 0;
-}
-
-.filters .select {
-  width: auto;
-  min-width: 140px;
 }
 
 .search {

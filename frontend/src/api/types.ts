@@ -796,3 +796,15 @@ export interface Submission {
   updated_at: string | null
 }
 
+/** A plain-words question read as register filters. */
+export interface AiFilterResult {
+  /** Register filter name → value; only what the question asked for. */
+  filters: Record<string, string>
+  search: string
+  /** One sentence: what was understood. */
+  explanation: string
+  /** Which model decided each filter, and how sure Jev was. */
+  sources: Record<string, { source: 'jev' | 'openai' | 'jev+openai'; confidence: number | null }>
+  models: Record<'jev' | 'openai', 'ok' | 'off' | 'error'>
+}
+

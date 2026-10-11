@@ -95,6 +95,7 @@ Everything below is prefixed with `/api/v1`.
 | LLM | `POST /llm/stream` | **NDJSON.** `delta` frames, then exactly one `completed` or `error`. |
 | Documents | `GET/PUT /documents/settings` | Google Sheet target, register tab, model, prompt. |
 | Documents | `.../documents/records` | `upload` (with `source=camera\|file`), list, `sync`, get, `PATCH`, `validate`, `file`, `DELETE`, `jobs/{id}`. One register for every document type. |
+| Documents | `POST .../documents/records/ai-filter` | A question in plain words → the register's own filters. Jev decides the closed lists (type, payment, account, status, period) when confident; the language model reads the open parts (names, amounts, exact dates). Either alone is enough; neither → 503. |
 | Documents | `GET/POST /documents/migration`, `GET .../status`, `POST .../enrich` | Admin. Copies the old Factures/Tiquets tabs into the register, then re-reads originals with the models. |
 | Backups | `GET/POST /backups`, `GET /backups/{name}` | Admin. Daily zips of the database and the register. |
 

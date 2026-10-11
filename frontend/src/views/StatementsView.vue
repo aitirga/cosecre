@@ -11,6 +11,7 @@ import AppIcon from '../components/AppIcon.vue'
 import DocumentCard from '../components/DocumentCard.vue'
 import { useDocumentCards } from '../composables/useDocumentCards'
 import { useTableQuery } from '../composables/useTableQuery'
+import FilterChip from '../components/FilterChip.vue'
 import SearchInput from '../components/SearchInput.vue'
 import SortTh from '../components/SortTh.vue'
 
@@ -245,6 +246,11 @@ function period(s: Statement) {
 }
 
 const CATEGORIES = Object.entries(CATEGORIA_LABEL) as [Categoria, string][]
+const CATEGORY_OPTIONS = CATEGORIES.map(([value, label]) => ({ value, label }))
+const JUSTIFIED_OPTIONS = [
+  { value: 'no', label: 'Sense factura', hint: 'Pagaments que encara cal justificar' },
+  { value: 'si', label: 'Amb factura' },
+]
 
 function amountClass(m: Movement) {
   return m.import_value > 0 ? 'in' : ''
@@ -496,15 +502,20 @@ function amountClass(m: Movement) {
                       placeholder="Cerca concepte, import, factura…"
                       label="Cerca moviments"
                     />
-                    <select v-model="movementTable.filters.justificat" class="select select-sm" aria-label="Filtra per justificació">
-                      <option value="">Tots els pagaments</option>
-                      <option value="no">Sense factura</option>
-                      <option value="si">Amb factura</option>
-                    </select>
-                    <select v-model="movementTable.filters.categoria" class="select select-sm" aria-label="Filtra per categoria">
-                      <option value="">Totes les categories</option>
-                      <option v-for="[value, label] in CATEGORIES" :key="value" :value="value">{{ label }}</option>
-                    </select>
+                    <FilterChip
+                      v-model="movementTable.filters.justificat"
+                      label="Factura"
+                      icon="invoice"
+                      :options="JUSTIFIED_OPTIONS"
+                      :count="(v) => movementTable.countFor('justificat', v)"
+                    />
+                    <FilterChip
+                      v-model="movementTable.filters.categoria"
+                      label="Categoria"
+                      icon="sliders"
+                      :options="CATEGORY_OPTIONS"
+                      :count="(v) => movementTable.countFor('categoria', v)"
+                    />
                     <span class="muted count">
                       {{ movementTable.visible.value.length }}<template v-if="movementTable.visible.value.length !== movements.length"> de {{ movements.length }}</template>
                     </span>

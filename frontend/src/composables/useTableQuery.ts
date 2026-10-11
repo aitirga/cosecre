@@ -108,29 +108,48 @@ export function useTableQuery<T, F extends string = never>(options: TableQueryOp
     () => search.value.trim() !== '' || filterNames.some((name) => filters[name] !== ''),
   )
 
-  function reset() {
-    search.value = ''
-    for (const name of filterNames) filters[name] = ''
+  function reset(names: readonly F[] = filterNames) {
+    if (names === filterNames) search.value = ''
+    for (const name of names) filters[name] = ''
+  }
+
+  /** Each row's searchable text, folded once rather than on every keystroke. */
+  const haystacks = computed(() => {
+    const map = new Map<T, string>()
+    if (!options.search) return map
+    for (const row of options.rows.value) {
+      map.set(row, fold(options.search(row).filter((value) => !isBlank(value)).join(' ')))
+    }
+    return map
+  })
+
+  /** Whether a row survives the search and every filter but `except`. */
+  function passes(row: T, except?: F): boolean {
+    for (const name of filterNames) {
+      if (name === except) continue
+      const value = filters[name]
+      if (value !== '' && !options.filters![name](row, value)) return false
+    }
+    const term = fold(search.value)
+    if (!term || !options.search) return true
+    const haystack = haystacks.value.get(row) ?? ''
+    // Every word somewhere: "llibres 2026" finds the 2026 book invoices.
+    return term.split(' ').every((word) => haystack.includes(word))
+  }
+
+  /**
+   * How many rows choosing `value` for filter `name` would leave, given
+   * everything else that is set — what a filter menu shows beside each option,
+   * so nobody picks one that empties the table.
+   */
+  function countFor(name: F, value: string): number {
+    const test = options.filters![name]
+    return options.rows.value.filter((row) => passes(row, name) && (value === '' || test(row, value)))
+      .length
   }
 
   const visible = computed<T[]>(() => {
-    const term = fold(search.value)
-    const words = term ? term.split(' ') : []
-    let rows = options.rows.value.filter((row) => {
-      for (const name of filterNames) {
-        const value = filters[name]
-        if (value !== '' && !options.filters![name](row, value)) return false
-      }
-      if (!words.length || !options.search) return true
-      const haystack = fold(
-        options
-          .search(row)
-          .filter((value) => !isBlank(value))
-          .join(' '),
-      )
-      // Every word somewhere: "llibres 2026" finds the 2026 book invoices.
-      return words.every((word) => haystack.includes(word))
-    })
+    let rows = options.rows.value.filter((row) => passes(row))
 
     const order = sort.value
     const read = order ? options.sorts?.[order.key] : undefined
@@ -183,7 +202,7 @@ export function useTableQuery<T, F extends string = never>(options: TableQueryOp
     )
   }
 
-  return { search, filters, sort, toggleSort, sortDirection, isFiltered, reset, visible }
+  return { search, filters, sort, toggleSort, sortDirection, isFiltered, reset, visible, countFor }
 }
 
 export type TableQuery = Pick<ReturnType<typeof useTableQuery>, 'toggleSort' | 'sortDirection'>

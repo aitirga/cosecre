@@ -8,6 +8,7 @@ import { trackedFetch } from './loading'
  * are right and nobody calls it; in Electron the main process supplies both.
  */
 import type {
+  AiFilterResult,
   AppNotification,
   AuthTokens,
   BackupComparison,
@@ -539,6 +540,13 @@ export const api = {
     })
   },
   /** `camera` marks the entry as a photo; anything picked from disk is an original. */
+  /** A question in plain words, read back as the register's own filters. */
+  aiFilter(query: string) {
+    return request<AiFilterResult>(`${RECORDS}/ai-filter`, {
+      method: 'POST',
+      body: JSON.stringify({ query }),
+    })
+  },
   uploadDocument(file: File, source: CaptureSource) {
     const formData = new FormData()
     formData.append('file', file)
