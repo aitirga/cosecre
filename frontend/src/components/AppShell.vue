@@ -128,7 +128,9 @@ async function handleLogout() {
     </p>
 
     <main class="content">
-      <RouterView :key="route.fullPath" />
+      <!-- Keyed by path, not the full URL: views keep their search, filters and
+           open windows in the query, and must not be rebuilt on every keystroke. -->
+      <RouterView :key="route.path" />
       <p v-if="platform.name === 'desktop'" class="platform-note">
         Connectat a {{ platform.hubUrl }}
       </p>

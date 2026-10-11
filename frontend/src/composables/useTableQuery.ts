@@ -145,6 +145,24 @@ export function useTableQuery<T, F extends string = never>(options: TableQueryOp
   })
 
   if (prefix !== null) {
+    // The URL can change under the table too — the back button, or a nav link
+    // to the same page — and the view is not rebuilt for it, so follow it.
+    watch(
+      () => route.query,
+      (current) => {
+        const searched = firstString(current[keys.search])
+        if (searched !== search.value.trim()) search.value = searched
+        for (const name of filterNames) {
+          const value = firstString(current[keys.filter(name)])
+          if (value !== filters[name]) filters[name] = value
+        }
+        const wanted = parseSort(firstString(current[keys.sort]) || options.defaultSort)
+        if (wanted?.key !== sort.value?.key || wanted?.direction !== sort.value?.direction) {
+          sort.value = wanted
+        }
+      },
+    )
+
     watch(
       [search, () => ({ ...filters }), sort],
       () => {
