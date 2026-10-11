@@ -12,6 +12,7 @@ from .history import router as history_router
 from .llm import router as llm_router
 from .meta import router as meta_router
 from .notifications import router as notifications_router
+from .partides import router as partides_router
 from .reconciliation import router as reconciliation_router
 from .requests import router as requests_router
 from .statements import router as statements_router
@@ -53,6 +54,9 @@ api_router.include_router(
 )
 api_router.include_router(
     reconciliation_router, prefix="/reconciliation", tags=["reconciliation"], dependencies=staff
+)
+api_router.include_router(
+    partides_router, prefix="/partides", tags=["partides"], dependencies=staff
 )
 api_router.include_router(status_router, prefix="/status", tags=["status"], dependencies=staff)
 api_router.include_router(tools_router, prefix="/tools", tags=["tools"], dependencies=staff)

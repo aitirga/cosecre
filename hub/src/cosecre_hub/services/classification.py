@@ -196,7 +196,12 @@ class JevClient:
         self.model = model
         self._client = client or httpx.Client(timeout=timeout)
 
-    def decide(self, state: str, questions: dict[str, Question]) -> dict[str, JevAnswer]:
+    def ask(self, state: str, questions: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        """Any questions, as the API's own payloads; returns the raw ``answers``.
+
+        For callers whose questions are not :class:`Question` choices — a
+        ``noul``, or criteria that are objects rather than strings.
+        """
         try:
             response = self._client.post(
                 JEV_URL,
@@ -204,13 +209,16 @@ class JevClient:
                 json={
                     "model": self.model,
                     "state": state[:MAX_STATE_CHARS],
-                    "questions": {name: q.payload() for name, q in questions.items()},
+                    "questions": questions,
                 },
             )
             response.raise_for_status()
-            answers = response.json()["answers"]
+            return response.json()["answers"]
         except (httpx.HTTPError, KeyError, ValueError) as exc:
             raise JevError(str(exc)) from exc
+
+    def decide(self, state: str, questions: dict[str, Question]) -> dict[str, JevAnswer]:
+        answers = self.ask(state, {name: q.payload() for name, q in questions.items()})
 
         decided: dict[str, JevAnswer] = {}
         for name, question in questions.items():

@@ -34,6 +34,10 @@ import type {
   MirrorStatus,
   Movement,
   MovementDetail,
+  PartidaQueueItem,
+  Partida,
+  Pressupost,
+  PressupostImportSummary,
   PersonBrief,
   ReconcileStatement,
   RemovedDuplicate,
@@ -621,6 +625,41 @@ export const api = {
   },
   getRemovedDuplicates() {
     return request<RemovedDuplicate[]>('/documents/duplicates')
+  },
+
+  // ── Budget lines (partides) ────────────────────────────────────────────
+  getPressupost(exercici?: number | null) {
+    return request<Pressupost>(`/partides${exercici ? `?exercici=${exercici}` : ''}`)
+  },
+  importPressupost(file: File, dryRun: boolean) {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('dry_run', dryRun ? 'true' : 'false')
+    return request<PressupostImportSummary>('/partides/import', { method: 'POST', body: formData })
+  },
+  updatePartidesContext(context: string, exercici?: number | null) {
+    return request<Pressupost>(`/partides/context${exercici ? `?exercici=${exercici}` : ''}`, {
+      method: 'PUT',
+      body: JSON.stringify({ context }),
+    })
+  },
+  updatePartidaContext(id: number, context: string) {
+    return request<Partida>(`/partides/lines/${id}/context`, {
+      method: 'PUT',
+      body: JSON.stringify({ context }),
+    })
+  },
+  getPartidesQueue() {
+    return request<PartidaQueueItem[]>('/partides/queue')
+  },
+  assignPartides(reference: string, partides: { partida_id: number; import_assignat: number | null }[]) {
+    return request<PartidaQueueItem>(`/partides/documents/${reference}`, {
+      method: 'PUT',
+      body: JSON.stringify({ partides }),
+    })
+  },
+  suggestPartides(reference: string) {
+    return request<PartidaQueueItem>(`/partides/documents/${reference}/suggest`, { method: 'POST' })
   },
 
   // ── Migration from the two old tabs ─────────────────────────────────────

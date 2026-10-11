@@ -11,6 +11,7 @@ import DuplicatesPanel from '../components/DuplicatesPanel.vue'
 import HistoryPanel from '../components/HistoryPanel.vue'
 import MigrationPanel from '../components/MigrationPanel.vue'
 import OriginalsPanel from '../components/OriginalsPanel.vue'
+import PressupostPanel from '../components/partides/PressupostPanel.vue'
 import TeamPanel from '../components/TeamPanel.vue'
 import type { IconName } from '../components/icons'
 import { useAuth } from '../composables/useAuth'
@@ -187,7 +188,7 @@ const activeUsers = computed(() => (usersQuery.data.value ?? []).filter((user) =
 // one section, a second, quieter bar. The open section lives in `?tab=`, so a
 // link (or the register's "restore from Configuració") can land on the right
 // one and a reload keeps it; old links to a section keep working.
-type TabId = 'general' | 'sheet' | 'ai' | 'data' | 'history' | 'centre' | 'bank' | 'team' | 'app'
+type TabId = 'general' | 'sheet' | 'ai' | 'data' | 'history' | 'centre' | 'bank' | 'pressupost' | 'team' | 'app'
 type GroupId = 'general' | 'centre' | 'team' | 'app'
 
 interface Tab {
@@ -242,6 +243,7 @@ const groups = computed<Group[]>(() => {
       dot: centreDirty.value ? 'accent' : settings && !settings.school_cif ? 'gold' : undefined,
     },
     { id: 'bank', label: 'Banc', icon: 'bank', dot: bankDirty.value ? 'accent' : undefined },
+    { id: 'pressupost', label: 'Pressupost', icon: 'tag' },
   ]
   const teamCount = usersQuery.data.value ? activeUsers.value : undefined
   const list: Group[] = [
@@ -333,7 +335,7 @@ function onSubtabKey(event: KeyboardEvent) {
     <header class="page-head">
       <div>
         <h1 class="page-title">Configuració</h1>
-        <p class="page-lead">El hub i el full de càlcul, les dades del centre i el banc, i l'equip.</p>
+        <p class="page-lead">El hub i el full de càlcul, les dades del centre, el banc i el pressupost, i l'equip.</p>
       </div>
     </header>
 
@@ -770,6 +772,17 @@ function onSubtabKey(event: KeyboardEvent) {
           </div>
         </form>
       </section>
+    </div>
+
+    <!-- ── Budget lines ───────────────────────────────────────────────── -->
+    <div
+      v-else-if="active === 'pressupost'"
+      id="panel-pressupost"
+      class="panel"
+      role="tabpanel"
+      aria-labelledby="subtab-pressupost"
+    >
+      <PressupostPanel />
     </div>
 
     <!-- ── Backups & originals ───────────────────────────────────────── -->

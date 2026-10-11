@@ -8,6 +8,7 @@
 import { api } from '../api/client'
 import { useAuth } from '../composables/useAuth'
 import DossierView from '../views/DossierView.vue'
+import PartidesView from '../views/PartidesView.vue'
 import DocumentDetailView from '../views/DocumentDetailView.vue'
 import ReconcileView from '../views/ReconcileView.vue'
 import RegisterView from '../views/RegisterView.vue'
@@ -40,6 +41,13 @@ export const documentsModule: CosecreModule = {
     { path: 'registre/:internalDocNumber', name: 'document', component: DocumentDetailView },
     { path: 'extractes', name: 'statements', component: StatementsView },
     { path: 'tasques/justificar-extractes', name: 'reconcile', component: ReconcileView },
+    {
+      path: 'tasques/assignar-partides',
+      name: 'partides',
+      component: PartidesView,
+      // Which line an invoice is charged to is the secretari/a's decision.
+      meta: { roles: ['admin'] },
+    },
     { path: 'eines/dossier-extracte', name: 'statement-dossier', component: DossierView },
     { path: 'invoices/:internalDocNumber?', redirect: (to) => legacyRedirect(to.params) },
     { path: 'tickets/:internalDocNumber?', redirect: (to) => legacyRedirect(to.params) },
@@ -62,6 +70,7 @@ export const documentsModule: CosecreModule = {
     },
     { name: 'statements', label: 'Extractes', icon: 'bank', group: 'comptabilitat' },
     { name: 'reconcile', label: 'Justificar extractes', icon: 'tasks', group: 'tasques' },
+    { name: 'partides', label: 'Assignar partides', icon: 'tag', group: 'tasques', roles: ['admin'] },
     { name: 'statement-dossier', label: "Dossier d'extracte", icon: 'invoice', group: 'eines' },
   ],
   // Registered last, so its unconditional claim on home is the default rather

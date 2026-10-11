@@ -925,3 +925,102 @@ export type AssistantFrame =
   | { type: 'block'; block: AssistantBlock }
   | { type: 'done'; message: AssistantMessage }
   | { type: 'error'; detail: string; message?: AssistantMessage }
+
+// ── Budget lines (partides) ─────────────────────────────────────────────────
+
+export interface Partida {
+  id: number
+  exercici: number
+  tipus: 'despesa' | 'ingres'
+  codi: string
+  codi_pare: string | null
+  codi_finalista: string
+  /** The fund without its year (`MOTXILLES`), `''` for the ordinary budget. */
+  fons: string
+  fons_label: string
+  nom: string
+  import_pressupost: number
+  ordre: number
+  /** A heading with sub-lines: invoices go to its sub-lines. */
+  te_fills: boolean
+  retirada: boolean
+  context: string
+  factures: number
+  imputat: number
+}
+
+export interface Pressupost {
+  exercici: number | null
+  exercicis: number[]
+  centre: string
+  nif: string
+  codi_centre: string
+  data_informe: string
+  total_ingressos: number | null
+  total_despeses: number | null
+  file_name: string
+  imported_at: string | null
+  context_general: string
+  jev: boolean
+  partides: Partida[]
+}
+
+export interface PressupostImportSummary {
+  dry_run: boolean
+  exercici: number
+  centre: string
+  nif: string
+  codi_centre: string
+  nif_matches: boolean | null
+  replaces: boolean
+  created: number
+  updated: number
+  unchanged: number
+  retired: number
+  removed: number
+  despeses: number
+  ingressos: number
+  total_despeses: number | null
+  context_inherited: number
+}
+
+export interface PartidaAssignment {
+  partida_id: number
+  import_assignat: number | null
+  origen: 'persona' | 'jev'
+  confianca: number | null
+  confirmada: boolean
+}
+
+export interface PartidaSuggestion {
+  ranking: { partida_id: number; probability: number }[]
+  confidence: number
+  cap: number
+  multiple: number | null
+  model: string
+  created_at: string
+}
+
+export interface PartidaQueueItem {
+  reference: string
+  tipus_document: string
+  num_factura: string
+  proveidor: string
+  cif_proveidor: string
+  data_factura: string | null
+  import_value: number | null
+  descripcio: string
+  descripcio_compra: string
+  metode_pagament: string
+  pagament: string
+  pressupost_afectat: string
+  responsable_nom: string
+  validat: boolean
+  file_url: string | null
+  file_name: string | null
+  exercici: number | null
+  curs: string
+  estat: 'pendent' | 'proposta' | 'assignada'
+  assignments: PartidaAssignment[]
+  suggestion: PartidaSuggestion | null
+}
