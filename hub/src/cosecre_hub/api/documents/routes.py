@@ -94,11 +94,14 @@ async def queue_upload(
     source: CaptureSource,
     *,
     request_id: int | None = None,
+    responsable: tuple[str, str] | None = None,
 ) -> UploadResponse:
     """Store one file, open its register entry, and queue it to be read.
 
     The office's upload and a teacher's submission are the same thing from here
     on; only who may call it, and what they may see afterwards, differs.
+    ``responsable`` starts the entry with a name and e-mail already in place;
+    the models do not read those fields, so they stay until someone edits them.
     """
     reference = generate_reference()
     stored_path = await save_upload_file(file, reference, settings)
@@ -122,6 +125,8 @@ async def queue_upload(
         origen="Foto" if source == "camera" else "Original",
         status="pending",
         sheet_state="pending",
+        responsable_nom=responsable[0] if responsable else "",
+        responsable_email=responsable[1] if responsable else "",
     )
     session.add_all([upload, job, document])
     session.commit()

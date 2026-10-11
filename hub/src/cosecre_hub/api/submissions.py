@@ -20,7 +20,7 @@ from ..deps import get_current_user, get_db, get_settings, get_workspace_setting
 from ..models import Document, ExtractionJob, Request as OfficeRequest, User
 from ..schemas import DocumentRecord, DocumentUpdate, JobRead, UploadResponse
 from ..schemas.common import UtcDatetime
-from ..schemas.documents import CaptureSource, ExtractionStatus
+from ..schemas.documents import RESPONSABLE_EMAIL, CaptureSource, ExtractionStatus
 from .documents.register import drive_name, extension_for, sync_register, to_record
 from .documents.routes import _save, queue_upload
 from ..services.text_format import compact_code
@@ -97,8 +97,20 @@ async def submit(
             raise HTTPException(status_code=404, detail="Aquesta sol·licitud no existeix.")
         if office_request.status == "cancellada":
             raise HTTPException(status_code=409, detail="Aquesta sol·licitud està cancel·lada.")
+    # Whoever sends it in is who answers for it, until they say otherwise. The
+    # register only takes @xtec.cat addresses, so any other is left for them.
+    email = user.email.lower()
+    responsable = (user.display_name or "", email if RESPONSABLE_EMAIL.fullmatch(email) else "")
     return await queue_upload(
-        request, background_tasks, session, user, settings, file, source, request_id=request_id
+        request,
+        background_tasks,
+        session,
+        user,
+        settings,
+        file,
+        source,
+        request_id=request_id,
+        responsable=responsable,
     )
 
 

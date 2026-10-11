@@ -183,3 +183,26 @@ def test_only_an_invoice_made_out_to_the_centre_can_be_validated(school):
     )
     assert right.status_code == 200, right.text
     assert right.json()["validat"] is True
+
+
+def test_the_sender_starts_as_the_responsable(tmp_path):
+    client, _ = build_client(tmp_path, sheet_service=FakeSheets())
+    with client:
+        admin = register_admin(client)
+        teacher = make_user(client, admin, "professor", email="laia.puig@xtec.cat")
+        outsider = make_user(client, admin, "professor", email="pau@example.com")
+
+        reference = submit(client, teacher).json()["internal_doc_number"]
+        record = client.get(f"{API}/submissions/{reference}/record", headers=teacher).json()
+        assert record["responsable_nom"] == "Professor"
+        assert record["responsable_email"] == "laia.puig@xtec.cat"
+
+        # Still theirs to change.
+        edited = client.patch(
+            f"{API}/submissions/{reference}", headers=teacher, json={"responsable_nom": "Marta Vila"}
+        )
+        assert edited.json()["responsable_nom"] == "Marta Vila"
+
+        # Only @xtec.cat addresses go in the register.
+        other = submit(client, outsider).json()["internal_doc_number"]
+        assert client.get(f"{API}/submissions/{other}/record", headers=outsider).json()["responsable_email"] == ""
