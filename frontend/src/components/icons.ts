@@ -5,7 +5,7 @@
  * stays a single `v-for` instead of a switch over element types.
  */
 export const ICONS = {
-  refresh: ['M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8', 'M3 3v5h5'],
+  refresh: ['M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8', 'M21 3v5h-5'],
   camera: [
     'M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z',
     'M16 13a4 4 0 1 1-8 0 4 4 0 0 1 8 0',
@@ -86,6 +86,16 @@ export const ICONS = {
   sparkles: [
     'M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z',
     'M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z',
+  ],
+  database: [
+    'M3 5a9 3 0 1 0 18 0a9 3 0 1 0-18 0',
+    'M3 5v14a9 3 0 0 0 18 0V5',
+    'M3 12a9 3 0 0 0 18 0',
+  ],
+  monitor: [
+    'M20 3H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z',
+    'M8 21h8',
+    'M12 17v4',
   ],
 } as const
 

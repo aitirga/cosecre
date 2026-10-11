@@ -237,6 +237,9 @@ async function handleLogout() {
 @media (max-width: 860px) {
   .shell {
     grid-template-columns: minmax(0, 1fr);
+    /* Bar, then content: without this a short page splits the spare height
+       between the two rows and floats its content halfway down. */
+    grid-template-rows: auto 1fr;
   }
 
   .mobile-bar {

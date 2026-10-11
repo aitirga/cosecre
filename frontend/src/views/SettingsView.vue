@@ -1,19 +1,23 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 
 import { api, ApiError } from '../api/client'
-import type { User } from '../api/types'
+import type { User, WorkspaceSettings } from '../api/types'
 import AppIcon from '../components/AppIcon.vue'
 import BackupsPanel from '../components/BackupsPanel.vue'
 import MigrationPanel from '../components/MigrationPanel.vue'
 import OriginalsPanel from '../components/OriginalsPanel.vue'
+import type { IconName } from '../components/icons'
 import { useAuth } from '../composables/useAuth'
 import { usePlatform } from '../platform'
 
 const auth = useAuth()
 const platform = usePlatform()
 const queryClient = useQueryClient()
+const route = useRoute()
+const router = useRouter()
 
 // ── Hub status ───────────────────────────────────────────────────────────────
 const providersQuery = useQuery({
@@ -26,10 +30,30 @@ const capabilities = computed(() => {
   const hub = auth.state.hub
   if (!hub) return []
   return [
-    { label: 'Model de visió (OpenAI)', on: hub.capabilities.llm },
-    { label: 'Classificador Jev', on: Boolean(hub.capabilities.classifier) },
-    { label: 'Google Sheets', on: hub.capabilities.google_sheets },
-    { label: 'Documents', on: hub.capabilities.documents },
+    {
+      label: 'Model de visió',
+      detail: 'Llegeix factures i tiquets (OpenAI).',
+      icon: 'sparkles' as IconName,
+      on: hub.capabilities.llm,
+    },
+    {
+      label: 'Classificador Jev',
+      detail: 'Segona opinió sobre el tipus i el pagament.',
+      icon: 'check' as IconName,
+      on: Boolean(hub.capabilities.classifier),
+    },
+    {
+      label: 'Google Sheets',
+      detail: 'Escriu el registre al full de càlcul.',
+      icon: 'sheet' as IconName,
+      on: hub.capabilities.google_sheets,
+    },
+    {
+      label: 'Documents',
+      detail: 'Desa els originals al servidor.',
+      icon: 'invoice' as IconName,
+      on: hub.capabilities.documents,
+    },
   ]
 })
 
@@ -39,9 +63,25 @@ const modelOptions = computed(() => {
 })
 
 // ── Workspace settings ───────────────────────────────────────────────────────
+// One form, edited from two tabs. It is saved as a whole, so the save bar
+// floats over every tab while anything differs from what the hub holds.
 const settingsQuery = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
 
-const form = reactive({
+type EditableSettings = Omit<WorkspaceSettings, 'classifier_configured' | 'drive_folder_configured'>
+
+function fromSettings(settings: WorkspaceSettings): EditableSettings {
+  return {
+    spreadsheet_url: settings.spreadsheet_url ?? '',
+    registry_sheet_name: settings.registry_sheet_name,
+    sheet_name: settings.sheet_name,
+    ticket_sheet_name: settings.ticket_sheet_name,
+    openai_model: settings.openai_model,
+    extraction_prompt: settings.extraction_prompt,
+    polling_interval_seconds: settings.polling_interval_seconds,
+  }
+}
+
+const form = reactive<EditableSettings>({
   spreadsheet_url: '',
   registry_sheet_name: 'Registre documents comptables',
   sheet_name: 'Factures',
@@ -50,30 +90,59 @@ const form = reactive({
   extraction_prompt: '',
   polling_interval_seconds: 30,
 })
+const saved = ref<EditableSettings | null>(null)
 
 watch(
   () => settingsQuery.data.value,
   (settings) => {
     if (!settings) return
-    form.spreadsheet_url = settings.spreadsheet_url ?? ''
-    form.registry_sheet_name = settings.registry_sheet_name
-    form.sheet_name = settings.sheet_name
-    form.ticket_sheet_name = settings.ticket_sheet_name
-    form.openai_model = settings.openai_model
-    form.extraction_prompt = settings.extraction_prompt
-    form.polling_interval_seconds = settings.polling_interval_seconds
+    saved.value = fromSettings(settings)
+    Object.assign(form, saved.value)
   },
   { immediate: true },
 )
 
+const SHEET_FIELDS = ['spreadsheet_url', 'registry_sheet_name', 'sheet_name', 'ticket_sheet_name'] as const
+const AI_FIELDS = ['openai_model', 'polling_interval_seconds', 'extraction_prompt'] as const
+
+function changed(fields: readonly (keyof EditableSettings)[]) {
+  const base = saved.value
+  return Boolean(base) && fields.some((field) => form[field] !== base![field])
+}
+
+const sheetDirty = computed(() => changed(SHEET_FIELDS))
+const aiDirty = computed(() => changed(AI_FIELDS))
+const dirty = computed(() => sheetDirty.value || aiDirty.value)
+
+function discard() {
+  if (saved.value) Object.assign(form, saved.value)
+  saveMutation.reset()
+}
+
+const justSaved = ref(false)
+let savedTimer: ReturnType<typeof setTimeout> | undefined
+
 const saveMutation = useMutation({
   mutationFn: () =>
     api.updateSettings({ ...form, spreadsheet_url: form.spreadsheet_url || null }),
-  onSuccess: () => queryClient.invalidateQueries({ queryKey: ['settings'] }),
+  onSuccess: (settings) => {
+    queryClient.setQueryData(['settings'], settings)
+    void queryClient.invalidateQueries({ queryKey: ['settings'] })
+    justSaved.value = true
+    clearTimeout(savedTimer)
+    savedTimer = setTimeout(() => (justSaved.value = false), 2400)
+  },
+})
+
+const spreadsheetHref = computed(() => {
+  const url = saved.value?.spreadsheet_url
+  return url && /^https?:\/\//.test(url) ? url : null
 })
 
 // ── Team ─────────────────────────────────────────────────────────────────────
 const usersQuery = useQuery({ queryKey: ['users'], queryFn: api.listUsers })
+const users = computed(() => usersQuery.data.value ?? [])
+const activeUsers = computed(() => users.value.filter((user) => user.is_active).length)
 
 const newUser = reactive({ email: '', display_name: '', password: '', is_admin: false })
 const showNewUser = ref(false)
@@ -119,6 +188,99 @@ const updateUserMutation = useMutation({
 })
 
 const isSelf = (user: User) => user.id === auth.user.value?.id
+
+function initials(user: User) {
+  const source = (user.display_name || user.email.split('@')[0]).trim()
+  const parts = source.split(/[\s._-]+/).filter(Boolean)
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?'
+}
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+// The active tab lives in `?tab=`, so a link (or the register's "restore from
+// Configuració") can land on the right one and a reload keeps it.
+type TabId = 'general' | 'sheet' | 'ai' | 'data' | 'team' | 'app'
+
+interface Tab {
+  id: TabId
+  label: string
+  icon: IconName
+  /** gold = needs attention, accent = unsaved edits. */
+  dot?: 'gold' | 'accent'
+  count?: number
+}
+
+const tabs = computed<Tab[]>(() => {
+  const hub = auth.state.hub
+  const settings = settingsQuery.data.value
+  const list: Tab[] = [
+    {
+      id: 'general',
+      label: 'General',
+      icon: 'server',
+      dot: hub && !hub.capabilities.llm ? 'gold' : undefined,
+    },
+    {
+      id: 'sheet',
+      label: 'Full de càlcul',
+      icon: 'sheet',
+      dot: sheetDirty.value
+        ? 'accent'
+        : settings && (!settings.spreadsheet_url || !settings.drive_folder_configured)
+          ? 'gold'
+          : undefined,
+    },
+    { id: 'ai', label: 'Lectura amb IA', icon: 'sparkles', dot: aiDirty.value ? 'accent' : undefined },
+    { id: 'data', label: 'Còpies i originals', icon: 'database' },
+    { id: 'team', label: 'Equip', icon: 'users', count: usersQuery.data.value ? activeUsers.value : undefined },
+  ]
+  if (platform.settingsPanel) list.push({ id: 'app', label: 'Aplicació', icon: 'monitor' })
+  return list
+})
+
+// Local state, mirrored into the URL without a router navigation: the shell
+// keys its view on `fullPath`, so a real one would remount the page and drop
+// any unsaved edits on every tab switch.
+const active = ref<TabId>(tabs.value.find((tab) => tab.id === route.query.tab)?.id ?? 'general')
+
+function select(id: TabId) {
+  if (id === active.value) return
+  active.value = id
+  const target = router.resolve({ query: { ...route.query, tab: id === 'general' ? undefined : id } })
+  window.history.replaceState({ ...window.history.state, current: target.fullPath }, '', target.href)
+}
+
+const tabRefs = ref<HTMLButtonElement[]>([])
+
+// On a phone the bar scrolls sideways; keep the open tab in sight.
+watch(
+  active,
+  async (id) => {
+    await nextTick()
+    const index = tabs.value.findIndex((tab) => tab.id === id)
+    const button = tabRefs.value[index]
+    const bar = button?.parentElement
+    // Scrolls the bar alone: scrollIntoView would drag the page along with it.
+    if (button && bar) bar.scrollLeft = button.offsetLeft - (bar.clientWidth - button.offsetWidth) / 2
+  },
+  { immediate: true },
+)
+
+// Arrow keys move between tabs, as the WAI-ARIA tabs pattern expects.
+function onTabKey(event: KeyboardEvent) {
+  const ids = tabs.value.map((tab) => tab.id)
+  const index = ids.indexOf(active.value)
+  const moves: Record<string, number> = {
+    ArrowRight: index + 1,
+    ArrowLeft: index - 1,
+    Home: 0,
+    End: ids.length - 1,
+  }
+  if (!(event.key in moves)) return
+  event.preventDefault()
+  const next = (moves[event.key] + ids.length) % ids.length
+  select(ids[next])
+  void nextTick(() => tabRefs.value[next]?.focus())
+}
 </script>
 
 <template>
@@ -126,266 +288,441 @@ const isSelf = (user: User) => user.id === auth.user.value?.id
     <header class="page-head">
       <div>
         <h1 class="page-title">Configuració</h1>
-        <p class="page-lead">Full de càlcul, models, migració, còpies de seguretat, originals i comptes.</p>
+        <p class="page-lead">El hub, el full de càlcul, la lectura amb IA, les còpies i l'equip.</p>
       </div>
     </header>
 
-    <!-- ── Hub ────────────────────────────────────────────────────────── -->
-    <section class="card">
-      <div class="card-head">
-        <h2 class="card-title">Hub</h2>
-        <span class="mono muted">{{ auth.state.hub?.version }}</span>
-      </div>
-      <div class="card-body hub">
-        <dl class="meta">
-          <dt>Servidor</dt>
-          <dd>{{ auth.state.hub?.name ?? 'Desconegut' }}</dd>
-          <dt>API</dt>
-          <dd class="mono">v{{ auth.state.hub?.api_version }} · {{ auth.state.hub?.api_prefix }}</dd>
-          <dt>Aplicacions</dt>
-          <dd>{{ auth.state.hub?.apps.join(', ') || '—' }}</dd>
-        </dl>
-        <div class="caps">
-          <span
-            v-for="cap in capabilities"
-            :key="cap.label"
-            class="badge"
-            :class="cap.on ? 'badge-olive' : 'badge-neutral'"
-          >
-            <AppIcon :name="cap.on ? 'check' : 'close'" :size="12" />
-            {{ cap.label }}
-          </span>
-        </div>
-        <p v-if="auth.state.hub && !auth.state.hub.capabilities.llm" class="notice notice-info">
-          <AppIcon name="alert" :size="15" />
-          <span>
-            El hub no té cap model configurat i no podrà llegir documents. Defineix
-            <code class="mono">COSECRE_OPENAI_API_KEY</code> i reinicia'l.
-          </span>
-        </p>
-      </div>
-    </section>
+    <nav class="tabs" role="tablist" aria-label="Seccions de la configuració" @keydown="onTabKey">
+      <button
+        v-for="tab in tabs"
+        :id="`tab-${tab.id}`"
+        :key="tab.id"
+        ref="tabRefs"
+        class="tab"
+        :class="{ 'is-active': tab.id === active }"
+        type="button"
+        role="tab"
+        :aria-selected="tab.id === active"
+        :aria-controls="`panel-${tab.id}`"
+        :tabindex="tab.id === active ? 0 : -1"
+        @click="select(tab.id)"
+      >
+        <AppIcon :name="tab.icon" :size="15" />
+        <span>{{ tab.label }}</span>
+        <span v-if="tab.count !== undefined" class="tab-count">{{ tab.count }}</span>
+        <span
+          v-if="tab.dot"
+          class="tab-dot"
+          :class="`tab-dot-${tab.dot}`"
+          :title="tab.dot === 'accent' ? 'Canvis sense desar' : 'Cal revisar-ho'"
+        />
+      </button>
+    </nav>
 
-    <!-- ── Workspace ──────────────────────────────────────────────────── -->
-    <section class="card">
-      <div class="card-head">
-        <div>
-          <h2 class="card-title">Full de càlcul i models</h2>
-          <p class="hint">
-            Les credencials de Google es queden al servidor; aquí només es tria el full.
-          </p>
-        </div>
-      </div>
-
-      <p v-if="settingsQuery.isLoading.value" class="empty">Carregant…</p>
-      <p v-else-if="settingsQuery.isError.value" class="card-body">
-        <span class="notice notice-error">
-          <AppIcon name="alert" :size="15" />
-          <span>{{ (settingsQuery.error.value as Error).message }}</span>
+    <!-- ── General ────────────────────────────────────────────────────── -->
+    <div
+      v-if="active === 'general'"
+      id="panel-general"
+      class="panel"
+      role="tabpanel"
+      aria-labelledby="tab-general"
+    >
+      <p v-if="auth.state.hub && !auth.state.hub.capabilities.llm" class="notice notice-gold">
+        <AppIcon name="alert" :size="15" />
+        <span>
+          El hub no té cap model configurat i no podrà llegir documents. Defineix
+          <code class="mono">COSECRE_OPENAI_API_KEY</code> i reinicia'l.
         </span>
       </p>
 
-      <form v-else class="card-body grid" @submit.prevent="saveMutation.mutate()">
-        <label class="field span-2">
-          <span class="label">URL del full de càlcul</span>
-          <input
-            v-model="form.spreadsheet_url"
-            class="input"
-            type="url"
-            placeholder="https://docs.google.com/spreadsheets/d/…"
-          />
-          <span class="hint">Comparteix el full amb el compte de servei, o no s'hi podrà escriure.</span>
-        </label>
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">Servidor</h2>
+            <p class="hint">El hub al qual està connectada aquesta aplicació.</p>
+          </div>
+          <span class="badge badge-neutral mono">{{ auth.state.hub?.version ?? '—' }}</span>
+        </div>
+        <dl class="facts">
+          <div class="fact">
+            <dt>Nom</dt>
+            <dd>{{ auth.state.hub?.name ?? 'Desconegut' }}</dd>
+          </div>
+          <div class="fact">
+            <dt>API</dt>
+            <dd class="mono">v{{ auth.state.hub?.api_version }} · {{ auth.state.hub?.api_prefix }}</dd>
+          </div>
+          <div class="fact">
+            <dt>Aplicacions</dt>
+            <dd>{{ auth.state.hub?.apps.join(', ') || '—' }}</dd>
+          </div>
+        </dl>
+      </section>
 
-        <label class="field span-2">
-          <span class="label">Pestanya del registre</span>
-          <input v-model="form.registry_sheet_name" class="input" type="text" required />
-          <span class="hint">Si no existeix, es crea amb les columnes, formats i desplegables.</span>
-        </label>
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">Capacitats</h2>
+            <p class="hint">Es configuren al servidor, amb variables d'entorn.</p>
+          </div>
+        </div>
+        <ul class="caps">
+          <li v-for="cap in capabilities" :key="cap.label" class="cap">
+            <span class="cap-icon" :class="{ 'is-on': cap.on }">
+              <AppIcon :name="cap.icon" :size="15" />
+            </span>
+            <span class="cap-text">
+              <strong>{{ cap.label }}</strong>
+              <span class="muted">{{ cap.detail }}</span>
+            </span>
+            <span class="badge" :class="cap.on ? 'badge-olive' : 'badge-neutral'">
+              <span class="badge-dot" />
+              {{ cap.on ? 'Actiu' : 'Inactiu' }}
+            </span>
+          </li>
+        </ul>
+      </section>
+    </div>
 
-        <label class="field">
-          <span class="label">Pestanya antiga de factures</span>
-          <input v-model="form.sheet_name" class="input" type="text" required />
-        </label>
+    <!-- ── Spreadsheet ────────────────────────────────────────────────── -->
+    <div
+      v-else-if="active === 'sheet'"
+      id="panel-sheet"
+      class="panel"
+      role="tabpanel"
+      aria-labelledby="tab-sheet"
+    >
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">Full de càlcul</h2>
+            <p class="hint">Les credencials de Google es queden al servidor; aquí només es tria el full.</p>
+          </div>
+          <a
+            v-if="spreadsheetHref"
+            class="btn btn-outline btn-sm"
+            :href="spreadsheetHref"
+            target="_blank"
+            rel="noopener"
+          >
+            <AppIcon name="external" />
+            Obre el full
+          </a>
+        </div>
 
-        <label class="field">
-          <span class="label">Pestanya antiga de tiquets</span>
-          <input v-model="form.ticket_sheet_name" class="input" type="text" required />
-        </label>
-
-        <label class="field">
-          <span class="label">Model de lectura</span>
-          <input
-            v-model="form.openai_model"
-            class="input"
-            type="text"
-            list="cosecre-models"
-            required
-          />
-          <datalist id="cosecre-models">
-            <option v-for="model in modelOptions" :key="model" :value="model" />
-          </datalist>
-        </label>
-
-        <label class="field">
-          <span class="label">Interval de consulta (segons)</span>
-          <input
-            v-model.number="form.polling_interval_seconds"
-            class="input"
-            type="number"
-            min="10"
-            max="300"
-          />
-        </label>
-
-        <label class="field span-2">
-          <span class="label">Instruccions addicionals per a la lectura</span>
-          <textarea
-            v-model="form.extraction_prompt"
-            class="textarea"
-            rows="5"
-            placeholder="S'afegeixen a les instruccions de sèrie. Deixa-ho buit per no canviar res."
-          />
-        </label>
-
-        <div class="row span-2">
-          <button class="btn btn-primary" type="submit" :disabled="saveMutation.isPending.value">
-            {{ saveMutation.isPending.value ? 'Desant…' : 'Desa la configuració' }}
-          </button>
-          <span v-if="saveMutation.isSuccess.value" class="badge badge-olive">
-            <AppIcon name="check" :size="12" />
-            Desat
+        <p v-if="settingsQuery.isLoading.value" class="empty">Carregant…</p>
+        <p v-else-if="settingsQuery.isError.value" class="card-body">
+          <span class="notice notice-error">
+            <AppIcon name="alert" :size="15" />
+            <span>{{ (settingsQuery.error.value as Error).message }}</span>
           </span>
+        </p>
+
+        <form v-else class="rows" @submit.prevent="saveMutation.mutate()">
+          <div class="row">
+            <div class="row-label">
+              <label class="label" for="set-url">URL del full</label>
+              <span class="hint">Comparteix-lo amb el compte de servei, o no s'hi podrà escriure.</span>
+            </div>
+            <input
+              id="set-url"
+              v-model="form.spreadsheet_url"
+              class="input"
+              type="url"
+              placeholder="https://docs.google.com/spreadsheets/d/…"
+            />
+          </div>
+
+          <div class="row">
+            <div class="row-label">
+              <label class="label" for="set-registry">Pestanya del registre</label>
+              <span class="hint">Si no existeix, es crea amb les columnes, formats i desplegables.</span>
+            </div>
+            <input id="set-registry" v-model="form.registry_sheet_name" class="input" type="text" required />
+          </div>
+
+          <div class="row">
+            <div class="row-label">
+              <span class="label">Pestanyes antigues</span>
+              <span class="hint">D'on llegeix la migració. No s'hi escriu res més.</span>
+            </div>
+            <div class="pair">
+              <label class="field">
+                <span class="sublabel">Factures</span>
+                <input v-model="form.sheet_name" class="input" type="text" required />
+              </label>
+              <label class="field">
+                <span class="sublabel">Tiquets</span>
+                <input v-model="form.ticket_sheet_name" class="input" type="text" required />
+              </label>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="row-label">
+              <span class="label">Carpeta de Drive</span>
+              <span class="hint">On es pugen els originals. Es configura al servidor.</span>
+            </div>
+            <div class="status-cell">
+              <span
+                class="badge"
+                :class="settingsQuery.data.value?.drive_folder_configured ? 'badge-olive' : 'badge-gold'"
+              >
+                <AppIcon
+                  :name="settingsQuery.data.value?.drive_folder_configured ? 'check' : 'alert'"
+                  :size="12"
+                />
+                {{ settingsQuery.data.value?.drive_folder_configured ? 'Configurada' : 'Sense carpeta' }}
+              </span>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <MigrationPanel
+        :legacy-tabs="[form.sheet_name, form.ticket_sheet_name]"
+        :registry-tab="form.registry_sheet_name"
+      />
+    </div>
+
+    <!-- ── AI reading ─────────────────────────────────────────────────── -->
+    <div v-else-if="active === 'ai'" id="panel-ai" class="panel" role="tabpanel" aria-labelledby="tab-ai">
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">Lectura amb IA</h2>
+            <p class="hint">Com es llegeixen les fotos i els PDF per omplir el registre.</p>
+          </div>
           <span
             class="badge"
             :class="settingsQuery.data.value?.classifier_configured ? 'badge-olive' : 'badge-neutral'"
             title="Jev dona una segona opinió sobre el tipus de document i el pagament"
           >
-            <AppIcon :name="settingsQuery.data.value?.classifier_configured ? 'check' : 'close'" :size="12" />
+            <span class="badge-dot" />
             Jev {{ settingsQuery.data.value?.classifier_configured ? 'actiu' : 'no configurat' }}
           </span>
-          <span
-            class="badge"
-            :class="settingsQuery.data.value?.drive_folder_configured ? 'badge-olive' : 'badge-gold'"
-          >
-            <AppIcon :name="settingsQuery.data.value?.drive_folder_configured ? 'check' : 'alert'" :size="12" />
-            {{ settingsQuery.data.value?.drive_folder_configured ? 'Carpeta de Drive' : 'Sense carpeta de Drive' }}
-          </span>
         </div>
 
-        <p v-if="saveMutation.isError.value" class="notice notice-error span-2">
-          <AppIcon name="alert" :size="15" />
-          <span>{{ (saveMutation.error.value as Error).message }}</span>
-        </p>
-      </form>
-    </section>
+        <p v-if="settingsQuery.isLoading.value" class="empty">Carregant…</p>
+        <form v-else class="rows" @submit.prevent="saveMutation.mutate()">
+          <div class="row">
+            <div class="row-label">
+              <label class="label" for="set-model">Model de lectura</label>
+              <span class="hint">Tria'n un de la llista o escriu-ne el nom.</span>
+            </div>
+            <input
+              id="set-model"
+              v-model="form.openai_model"
+              class="input input-mono"
+              type="text"
+              list="cosecre-models"
+              required
+            />
+            <datalist id="cosecre-models">
+              <option v-for="model in modelOptions" :key="model" :value="model" />
+            </datalist>
+          </div>
 
-    <MigrationPanel
-      :legacy-tabs="[form.sheet_name, form.ticket_sheet_name]"
-      :registry-tab="form.registry_sheet_name"
-    />
+          <div class="row">
+            <div class="row-label">
+              <label class="label" for="set-interval">Interval de consulta</label>
+              <span class="hint">Cada quant es mira si hi ha documents nous (10–300 s).</span>
+            </div>
+            <div class="suffixed">
+              <input
+                id="set-interval"
+                v-model.number="form.polling_interval_seconds"
+                class="input"
+                type="number"
+                min="10"
+                max="300"
+              />
+              <span class="suffix">segons</span>
+            </div>
+          </div>
 
-    <BackupsPanel />
+          <div class="row row-stacked">
+            <div class="row-label">
+              <label class="label" for="set-prompt">Instruccions addicionals</label>
+              <span class="hint">S'afegeixen a les de sèrie. Deixa-ho buit per no canviar res.</span>
+            </div>
+            <textarea
+              id="set-prompt"
+              v-model="form.extraction_prompt"
+              class="textarea"
+              rows="7"
+              placeholder="Per exemple: els tiquets de benzinera sempre van al compte 628…"
+            />
+          </div>
+        </form>
+      </section>
+    </div>
 
-    <OriginalsPanel />
+    <!-- ── Backups & originals ───────────────────────────────────────── -->
+    <div
+      v-else-if="active === 'data'"
+      id="panel-data"
+      class="panel"
+      role="tabpanel"
+      aria-labelledby="tab-data"
+    >
+      <BackupsPanel />
+      <OriginalsPanel />
+    </div>
 
     <!-- ── Team ───────────────────────────────────────────────────────── -->
-    <section class="card">
-      <div class="card-head">
-        <div>
-          <h2 class="card-title">Equip</h2>
-          <p class="hint">Els comptes es desactiven en lloc d'esborrar-se, i així se'n conserva l'historial.</p>
+    <div
+      v-else-if="active === 'team'"
+      id="panel-team"
+      class="panel"
+      role="tabpanel"
+      aria-labelledby="tab-team"
+    >
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">Equip</h2>
+            <p class="hint">Els comptes es desactiven en lloc d'esborrar-se, i així se'n conserva l'historial.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" type="button" @click="showNewUser = true">
+            <AppIcon name="plus" />
+            Afegeix membre
+          </button>
         </div>
-        <button class="btn btn-outline" type="button" @click="showNewUser = true">
-          <AppIcon name="plus" />
-          Afegeix membre
-        </button>
+
+        <p v-if="teamError" class="card-body team-error">
+          <span class="notice notice-error">
+            <AppIcon name="alert" :size="15" />
+            <span>{{ teamError }}</span>
+          </span>
+        </p>
+
+        <p v-if="usersQuery.isLoading.value" class="empty">Carregant comptes…</p>
+        <div v-else class="table-scroll">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Compte</th>
+                <th>Rol</th>
+                <th>Últim accés</th>
+                <th class="actions"><span class="sr-only">Accions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="user in users" :key="user.id" :class="{ 'is-inactive': !user.is_active }">
+                <td>
+                  <div class="account-cell">
+                    <span class="avatar" :class="{ 'is-admin': user.is_admin }">{{ initials(user) }}</span>
+                    <span class="account-text">
+                      <strong>
+                        {{ user.display_name || user.email }}
+                        <span v-if="isSelf(user)" class="you">Tu</span>
+                      </strong>
+                      <span v-if="user.display_name" class="muted">{{ user.email }}</span>
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  <span class="badge" :class="user.is_admin ? 'badge-accent' : 'badge-neutral'">
+                    {{ user.is_admin ? 'Administrador/a' : 'Membre' }}
+                  </span>
+                  <span v-if="!user.is_active" class="badge badge-danger disabled-badge">Desactivat</span>
+                </td>
+                <td class="muted">
+                  {{ user.last_login_at ? new Date(user.last_login_at).toLocaleDateString('ca-ES') : 'Mai' }}
+                </td>
+                <td class="actions">
+                  <div class="row-actions">
+                    <button
+                      class="btn btn-ghost btn-sm"
+                      type="button"
+                      @click="
+                        () => {
+                          resetTarget = user
+                          resetPassword = ''
+                        }
+                      "
+                    >
+                      <AppIcon name="lock" />
+                      Contrasenya
+                    </button>
+                    <button
+                      class="btn btn-outline btn-sm"
+                      type="button"
+                      :disabled="isSelf(user) || updateUserMutation.isPending.value"
+                      @click="updateUserMutation.mutate({ id: user.id, patch: { is_admin: !user.is_admin } })"
+                    >
+                      {{ user.is_admin ? 'Fes-lo membre' : 'Fes-lo admin' }}
+                    </button>
+                    <button
+                      class="btn btn-ghost btn-sm"
+                      type="button"
+                      :disabled="isSelf(user) || updateUserMutation.isPending.value"
+                      @click="
+                        updateUserMutation.mutate({ id: user.id, patch: { is_active: !user.is_active } })
+                      "
+                    >
+                      {{ user.is_active ? 'Desactiva' : 'Activa' }}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- ── This app (desktop updates, …) ─────────────────────────────── -->
+    <div
+      v-else-if="active === 'app' && platform.settingsPanel"
+      id="panel-app"
+      class="panel"
+      role="tabpanel"
+      aria-labelledby="tab-app"
+    >
+      <component :is="platform.settingsPanel" />
+    </div>
+
+    <!-- ── Save bar ───────────────────────────────────────────────────── -->
+    <Transition name="savebar">
+      <div v-if="dirty || justSaved || saveMutation.isError.value" class="savebar" role="status">
+        <template v-if="saveMutation.isError.value">
+          <AppIcon name="alert" :size="15" class="savebar-icon is-error" />
+          <span class="savebar-text">{{ (saveMutation.error.value as Error).message }}</span>
+        </template>
+        <template v-else-if="dirty">
+          <span class="badge-dot savebar-dot" />
+          <span class="savebar-text">
+            Canvis sense desar
+            <span class="muted">
+              ·
+              {{
+                sheetDirty && aiDirty ? 'full de càlcul i lectura' : sheetDirty ? 'full de càlcul' : 'lectura amb IA'
+              }}
+            </span>
+          </span>
+        </template>
+        <template v-else>
+          <AppIcon name="check" :size="15" class="savebar-icon is-ok" />
+          <span class="savebar-text">Configuració desada</span>
+        </template>
+
+        <div v-if="dirty" class="savebar-actions">
+          <button class="btn btn-ghost btn-sm" type="button" :disabled="saveMutation.isPending.value" @click="discard">
+            Descarta
+          </button>
+          <button
+            class="btn btn-primary btn-sm"
+            type="button"
+            :disabled="saveMutation.isPending.value"
+            @click="saveMutation.mutate()"
+          >
+            {{ saveMutation.isPending.value ? 'Desant…' : 'Desa els canvis' }}
+          </button>
+        </div>
       </div>
-
-      <p v-if="usersQuery.isLoading.value" class="empty">Carregant comptes…</p>
-      <div v-else class="table-scroll">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Compte</th>
-              <th>Rol</th>
-              <th>Últim accés</th>
-              <th class="actions"><span class="sr-only">Accions</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="user in usersQuery.data.value ?? []" :key="user.id">
-              <td>
-                <div class="account-cell">
-                  <strong>{{ user.display_name || user.email }}</strong>
-                  <span v-if="user.display_name" class="muted">{{ user.email }}</span>
-                </div>
-              </td>
-              <td>
-                <span class="badge" :class="user.is_admin ? 'badge-accent' : 'badge-neutral'">
-                  {{ user.is_admin ? 'Administrador/a' : 'Membre' }}
-                </span>
-                <span v-if="!user.is_active" class="badge badge-danger disabled-badge">
-                  Desactivat
-                </span>
-              </td>
-              <td class="muted">
-                {{ user.last_login_at ? new Date(user.last_login_at).toLocaleDateString('ca-ES') : 'Mai' }}
-              </td>
-              <td class="actions">
-                <div class="row-actions">
-                  <button
-                    class="btn btn-ghost btn-sm"
-                    type="button"
-                    @click="
-                      () => {
-                        resetTarget = user
-                        resetPassword = ''
-                      }
-                    "
-                  >
-                    <AppIcon name="lock" />
-                    Contrasenya
-                  </button>
-                  <button
-                    class="btn btn-outline btn-sm"
-                    type="button"
-                    :disabled="isSelf(user) || updateUserMutation.isPending.value"
-                    @click="
-                      updateUserMutation.mutate({ id: user.id, patch: { is_admin: !user.is_admin } })
-                    "
-                  >
-                    {{ user.is_admin ? 'Fes-lo membre' : 'Fes-lo admin' }}
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-sm"
-                    type="button"
-                    :disabled="isSelf(user) || updateUserMutation.isPending.value"
-                    @click="
-                      updateUserMutation.mutate({
-                        id: user.id,
-                        patch: { is_active: !user.is_active },
-                      })
-                    "
-                  >
-                    {{ user.is_active ? 'Desactiva' : 'Activa' }}
-                  </button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <p v-if="teamError" class="card-body">
-        <span class="notice notice-error">
-          <AppIcon name="alert" :size="15" />
-          <span>{{ teamError }}</span>
-        </span>
-      </p>
-    </section>
-
-    <component :is="platform.settingsPanel" v-if="platform.settingsPanel" />
+    </Transition>
 
     <!-- ── Dialogs ────────────────────────────────────────────────────── -->
     <Teleport to="body">
@@ -420,14 +757,8 @@ const isSelf = (user: User) => user.id === auth.user.value?.id
             <span>Administrador/a — pot gestionar la configuració i els comptes</span>
           </label>
           <div class="dialog-actions">
-            <button class="btn btn-outline" type="button" @click="showNewUser = false">
-              Cancel·la
-            </button>
-            <button
-              class="btn btn-primary"
-              type="submit"
-              :disabled="createUserMutation.isPending.value"
-            >
+            <button class="btn btn-outline" type="button" @click="showNewUser = false">Cancel·la</button>
+            <button class="btn btn-primary" type="submit" :disabled="createUserMutation.isPending.value">
               {{ createUserMutation.isPending.value ? 'Creant…' : 'Crea el compte' }}
             </button>
           </div>
@@ -464,11 +795,7 @@ const isSelf = (user: User) => user.id === auth.user.value?.id
           </label>
           <div class="dialog-actions">
             <button class="btn btn-outline" type="button" @click="resetTarget = null">Cancel·la</button>
-            <button
-              class="btn btn-primary"
-              type="submit"
-              :disabled="updateUserMutation.isPending.value"
-            >
+            <button class="btn btn-primary" type="submit" :disabled="updateUserMutation.isPending.value">
               {{ updateUserMutation.isPending.value ? 'Desant…' : 'Desa la contrasenya' }}
             </button>
           </div>
@@ -483,61 +810,336 @@ const isSelf = (user: User) => user.id === auth.user.value?.id
   display: grid;
   /* minmax(0, …): wide tables scroll inside their card, not the page. */
   grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
-  max-width: 880px;
+  gap: 14px;
+  max-width: 920px;
 }
 
-.hub {
-  display: grid;
-  gap: 12px;
+/* ── Tab bar ─────────────────────────────────────────────────────────── */
+/* Sticks under the top of the page so switching section never needs a
+   scroll back up; scrolls sideways on a phone instead of wrapping. */
+.tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: 2px;
+  margin: 0 -2px;
+  padding: 0 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-1);
 }
 
-.meta {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 5px 16px;
-  margin: 0;
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 10px 11px;
+  border: 0;
+  background: none;
+  color: var(--ink-400);
+  font: inherit;
   font-size: var(--text-base);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.12s ease;
 }
 
-.meta dt {
+.tab::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  transition: background-color 0.12s ease;
+}
+
+.tab:hover {
+  color: var(--ink-900);
+}
+
+.tab:hover::after {
+  background: var(--line-strong);
+}
+
+.tab.is-active {
+  color: var(--ink-900);
+}
+
+.tab.is-active::after {
+  background: var(--accent-700);
+}
+
+.tab.is-active svg {
+  color: var(--accent-700);
+}
+
+.tab-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-full);
+  background: var(--surface-3);
+  color: var(--ink-500);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 17px;
+  text-align: center;
+}
+
+.tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+}
+
+.tab-dot-gold {
+  background: var(--gold-500);
+  box-shadow: 0 0 0 1px var(--gold-800) inset;
+}
+
+.tab-dot-accent {
+  background: var(--accent-500);
+}
+
+/* ── Panels ──────────────────────────────────────────────────────────── */
+.panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  animation: panel-in 0.16s ease-out;
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+.notice-gold {
+  background: var(--gold-100);
+  border-color: var(--gold-200);
+  color: var(--gold-800);
+}
+
+/* Server facts: three cells in a row, divided by hairlines. */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.fact {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 12px 16px;
+}
+
+.fact + .fact {
+  border-left: 1px solid var(--line);
+}
+
+.fact dt {
+  color: var(--ink-400);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.fact dd {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--text-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Capabilities: a two-up list of status rows. */
+.caps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.cap:nth-child(-n + 2) {
+  border-top: 0;
+}
+
+.cap:nth-child(even) {
+  border-left: 1px solid var(--line);
+}
+
+.cap-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
   color: var(--ink-400);
 }
 
-.meta dd {
-  margin: 0;
-  min-width: 0;
+.cap-icon.is-on {
+  background: var(--olive-100);
+  color: var(--olive-700);
 }
 
-.caps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.grid {
+.cap-text {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+  font-size: var(--text-base);
 }
 
-.span-2 {
-  grid-column: 1 / -1;
+.cap-text .muted {
+  font-size: var(--text-sm);
+}
+
+/* Setting rows: label and hint on the left, the control on the right. */
+.rows {
+  display: grid;
 }
 
 .row {
+  display: grid;
+  grid-template-columns: minmax(0, 240px) minmax(0, 1fr);
+  align-items: start;
+  gap: 6px 28px;
+  padding: 14px 16px;
+}
+
+.row + .row {
+  border-top: 1px solid var(--line);
+}
+
+.row-stacked {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.row-label {
+  display: grid;
+  gap: 2px;
+  padding-top: 6px;
+}
+
+.row-stacked .row-label {
+  padding-top: 0;
+}
+
+.row-label .label {
+  color: var(--ink-700);
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sublabel {
+  color: var(--ink-400);
+  font-size: var(--text-sm);
+}
+
+.status-cell {
+  padding-top: 6px;
+}
+
+.suffixed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 180px;
+}
+
+.suffix {
+  color: var(--ink-400);
+  font-size: var(--text-base);
+}
+
+/* ── Team ────────────────────────────────────────────────────────────── */
+.team-error {
+  padding-bottom: 0;
+}
+
+.account-cell {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.account-cell {
+.account-text {
   display: grid;
   line-height: 1.35;
 }
 
-.account-cell .muted {
+.account-text strong {
+  white-space: nowrap;
+}
+
+.account-text .muted {
   font-size: var(--text-sm);
+}
+
+.avatar {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-full);
+  background: var(--surface-3);
+  color: var(--ink-500);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.avatar.is-admin {
+  background: var(--accent-100);
+  color: var(--accent-700);
+}
+
+.you {
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  color: var(--ink-400);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.is-inactive td {
+  opacity: 0.6;
 }
 
 .disabled-badge {
@@ -567,9 +1169,113 @@ code {
   background: var(--surface-2);
 }
 
+/* ── Save bar ────────────────────────────────────────────────────────── */
+/* Floats over the bottom of the page instead of taking a row of it. */
+.savebar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-self: center;
+  width: min(100%, 560px);
+  min-height: 44px;
+  padding: 6px 6px 6px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--surface-0);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--text-base);
+}
+
+.savebar-dot {
+  width: 7px;
+  height: 7px;
+  color: var(--accent-500);
+}
+
+.savebar-icon.is-ok {
+  color: var(--olive-700);
+}
+
+.savebar-icon.is-error {
+  color: var(--danger-700);
+}
+
+.savebar-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-700);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.savebar-text .muted {
+  font-weight: 400;
+}
+
+.savebar-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.savebar-enter-active,
+.savebar-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.savebar-enter-from,
+.savebar-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+@media (max-width: 860px) {
+  .tabs {
+    top: var(--topbar-h);
+  }
+}
+
 @media (max-width: 720px) {
-  .grid {
+  .facts,
+  .caps {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fact + .fact {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .cap:nth-child(2) {
+    border-top: 1px solid var(--line);
+  }
+
+  .cap:nth-child(even) {
+    border-left: 0;
+  }
+
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .row-label {
+    padding-top: 0;
+  }
+
+  .savebar-text .muted {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    animation: none;
   }
 }
 </style>
