@@ -463,6 +463,10 @@ export const api = {
   sessions() {
     return request<SessionInfo[]>('/auth/sessions')
   },
+  /** Revoke every session of the signed-in user, this one included. */
+  logoutAll() {
+    return request<{ message: string }>('/auth/logout-all', { method: 'POST' })
+  },
   changePassword(payload: { current_password: string; new_password: string }) {
     return request<{ message: string }>('/auth/password', {
       method: 'POST',
