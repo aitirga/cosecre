@@ -99,7 +99,8 @@ function usedJev(result: AiFilterResult) {
       <span class="said-text">
         <strong>Entès:</strong>
         {{ understood.explanation || 'He posat els filtres de sota.' }}
-        <span v-if="usedJev(understood)" class="by" title="Jev ha confirmat els filtres de llista tancada">· confirmat per Jev</span>
+        <span v-if="understood.models.openai === 'skipped'" class="by" title="Jev l'ha resolt sol, sense consultar el model de llenguatge">· resolt per Jev</span>
+        <span v-else-if="usedJev(understood)" class="by" title="Jev ha confirmat els filtres de llista tancada">· confirmat per Jev</span>
       </span>
       <button class="btn btn-ghost btn-sm" type="button" @click="undo">
         <AppIcon name="undo" :size="13" />

@@ -46,10 +46,18 @@ class FakeJev(JevClient):
         pass
 
 
-def _client(tmp_path, *, reading=None, jev=None, configured=True):
-    provider = FakeProvider(structured_payload=dict(reading or READING), configured=configured)
+def _client(tmp_path, *, reading=None, jev=None, configured=True, provider=None):
+    provider = provider or FakeProvider(structured_payload=dict(reading or READING), configured=configured)
     client, _ = build_client(tmp_path, provider=provider, classifier=DocumentClassifier(jev))
     return client
+
+
+def sure(**labels):
+    """Jev confident on every question; ``labels`` set the ones that say something."""
+    answers = {name: JevAnswer(label="", confidence=0.97) for name in ("tipus", "pagament", "compte", "estat", "enviat", "periode")}
+    answers["obert"] = JevAnswer(label="no", confidence=0.95)
+    answers.update({name: JevAnswer(label=label, confidence=0.95) for name, label in labels.items()})
+    return answers
 
 
 def test_the_language_model_alone_fills_every_filter(tmp_path):
@@ -85,8 +93,8 @@ def test_a_confident_jev_overrules_the_language_model(tmp_path):
     assert result["sources"]["pagament"]["source"] == "jev+openai"
     # An unsure Jev does not add a filter the language model did not see.
     assert "tipus" not in result["filters"]
-    # Jev is only ever asked closed questions.
-    assert set(jev.questions) == {"tipus", "pagament", "compte", "estat", "enviat", "periode"}
+    # Jev is only ever asked closed questions — the filters, and whether there is more to read.
+    assert set(jev.questions) == {"tipus", "pagament", "compte", "estat", "enviat", "periode", "obert"}
 
 
 def test_jev_alone_still_filters_when_the_language_model_is_down(tmp_path):
@@ -96,6 +104,43 @@ def test_jev_alone_still_filters_when_the_language_model_is_down(tmp_path):
         result = client.post(URL, headers=headers, json={"query": "què tinc per revisar"}).json()
     assert result["filters"] == {"estat": "needs_validation"}
     assert result["models"] == {"jev": "ok", "openai": "off"}
+
+
+def test_a_question_jev_settles_never_reaches_the_language_model(tmp_path):
+    provider = FakeProvider(structured_payload=dict(READING))
+    jev = FakeJev(sure(pagament="Pendent de pagament", compte="Menjador", periode="aquest_curs"))
+    with _client(tmp_path, jev=jev, provider=provider) as client:
+        headers = register_admin(client)
+        result = client.post(URL, headers=headers, json={"query": "menjador pendent d'aquest curs"}).json()
+
+    assert provider.structures == []
+    assert result["models"] == {"jev": "ok", "openai": "skipped"}
+    assert result["filters"]["pagament"] == "Pendent de pagament"
+    assert result["filters"]["compte"] == "Menjador"
+    assert result["filters"]["des"].endswith("-09-01")
+    assert result["search"] == ""
+    assert result["explanation"] == "Documents pendents de pagament del compte Menjador d'aquest curs."
+
+
+@pytest.mark.parametrize(
+    ("query", "answers"),
+    [
+        # Something open to read: a name.
+        ("pendents de Pérez", sure(pagament="Pendent de pagament", obert="si")),
+        # Jev unsure of one answer.
+        ("material", {**sure(), "compte": JevAnswer(label="Material i Sortides", confidence=0.7)}),
+        # A digit is an amount, a date or a number, whatever Jev thinks.
+        ("més de 100 €", sure()),
+    ],
+)
+def test_the_language_model_steps_in_when_jev_cannot_finish(tmp_path, query, answers):
+    provider = FakeProvider(structured_payload=dict(READING))
+    with _client(tmp_path, jev=FakeJev(answers), provider=provider) as client:
+        headers = register_admin(client)
+        result = client.post(URL, headers=headers, json={"query": query}).json()
+    assert len(provider.structures) == 1
+    assert result["models"] == {"jev": "ok", "openai": "ok"}
+    assert result["search"] == "Pérez"
 
 
 def test_no_model_at_all_is_said_plainly(tmp_path):

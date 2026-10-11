@@ -807,6 +807,7 @@ export interface AiFilterResult {
   explanation: string
   /** Which model decided each filter, and how sure Jev was. */
   sources: Record<string, { source: 'jev' | 'openai' | 'jev+openai'; confidence: number | null }>
-  models: Record<'jev' | 'openai', 'ok' | 'off' | 'error'>
+  /** `skipped`: Jev settled it alone, so the language model was never asked. */
+  models: Record<'jev' | 'openai', 'ok' | 'off' | 'error' | 'skipped'>
 }
 

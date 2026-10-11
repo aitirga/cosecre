@@ -4,16 +4,19 @@
 register already has — tipus, pagament, compte, estat, a date range — plus the
 words to search for and an amount range.
 
-Two models share the work, as they do when a document is read:
+Two models share the work, in a pipeline:
 
-* **Jev** answers the closed questions (which type, which account, which
-  period…). It only ever chooses among the options it is given, with a
-  calibrated probability, so it cannot invent a filter value — but it cannot
-  read a supplier's name, an amount or an exact date out of the sentence either.
-* **The language model** reads everything, open parts included: the words to
-  search, amounts, explicit dates, and a one-line reading to show back.
+1. **Jev** goes first, because it answers in a blink. It takes the closed
+   questions (which type, which account, which period…) and one more: does the
+   question ask for anything open — a name, a number, an amount, a date? It
+   only ever chooses among the options it is given, with a calibrated
+   probability, so it cannot invent a filter value.
+2. **The language model** runs only when Jev cannot finish alone: it is off,
+   unsure of any answer, or the question has open parts (which Jev cannot read
+   out of a sentence). It reads everything — the words to search, amounts,
+   explicit dates, and a one-line reading to show back.
 
-Where both answer a closed question, a confident Jev decides; otherwise the
+When both answered a closed question, a confident Jev decides; otherwise the
 language model's answer stands. Either one alone is enough to filter.
 """
 
@@ -21,7 +24,6 @@ from __future__ import annotations
 
 import calendar
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Literal
@@ -136,6 +138,20 @@ FIELDS: dict[str, Question] = {
 
 CLOSED = tuple(name for name in FIELDS if name != "periode")
 
+#: Not a filter: whether the question needs reading beyond the closed lists.
+OPEN = "obert"
+_OPEN_QUESTION = Question(
+    instructions=(
+        "A més dels filtres de llista tancada, la cerca demana alguna cosa concreta que s'ha de "
+        "llegir de la frase: el nom d'un proveïdor, un número de factura, un CIF, un import, una "
+        "data o un mes concret, o un concepte per buscar?"
+    ),
+    options={
+        "si": ("si", "Sí: hi ha un nom, número, import, data o concepte concret."),
+        "no": ("no", "No: només tipus, pagament, compte, estat, professorat o un període com «aquest mes»."),
+    },
+)
+
 
 # ── Periods ──────────────────────────────────────────────────────────────────
 
@@ -236,7 +252,7 @@ class AiFilter:
     search: str = ""
     explanation: str = ""
     sources: dict[str, FieldReading] = field(default_factory=dict)
-    #: ``ok``, ``off`` or ``error``, per model.
+    #: ``ok``, ``off`` or ``error`` per model; ``skipped`` when Jev was enough.
     models: dict[str, str] = field(default_factory=dict)
 
 
@@ -256,7 +272,7 @@ def _ask_jev(jev: JevClient | None, query: str, today: date):
     if jev is None:
         return None, "off"
     try:
-        return jev.decide(_state(query, today), FIELDS), "ok"
+        return jev.decide(_state(query, today), {**FIELDS, OPEN: _OPEN_QUESTION}), "ok"
     except JevError:
         logger.warning("Jev could not read the filter question", exc_info=True)
         return None, "error"
@@ -308,13 +324,83 @@ def _amount(value: float | None) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
+def jev_is_enough(query: str, answers: dict | None) -> bool:
+    """Whether Jev's answers settle the question without the language model.
+
+    Every closed question must be answered confidently, and Jev must be sure
+    there is nothing open to read. A digit always means something open — an
+    amount, a date, a number — so it goes on regardless.
+    """
+    if not answers or any(char.isdigit() for char in query):
+        return False
+    for name in (*FIELDS, OPEN):
+        answer = answers.get(name)
+        if answer is None or answer.confidence < JEV_DECIDES:
+            return False
+    return answers[OPEN].label == "no"
+
+
+_TIPUS_TEXT = {
+    "Factura": "Factures",
+    "Factura simplificada": "Factures simplificades",
+    "Pressupost": "Pressupostos",
+    "Albarà": "Albarans",
+    "Tiquet de rebut": "Rebuts",
+    "Altres": "Documents de tipus «Altres»",
+}
+_PAGAMENT_TEXT = {
+    "Pagat": "pagats",
+    "Pendent de pagament": "pendents de pagament",
+    "Altres": "amb pagament «Altres»",
+    "—": "sense estat de pagament",
+}
+_ESTAT_TEXT = {
+    "needs_validation": "per revisar",
+    "validated": "validats",
+    "error": "amb error",
+    "active": "que s'estan llegint",
+    "unmatched": "sense moviment a l'extracte",
+    "outside": "fora del full",
+}
+_PERIODE_TEXT = {
+    "aquest_mes": "d'aquest mes",
+    "mes_passat": "del mes passat",
+    "aquest_trimestre": "d'aquest trimestre",
+    "trimestre_passat": "del trimestre passat",
+    "aquest_curs": "d'aquest curs",
+    "curs_passat": "del curs passat",
+    "aquest_any": "d'aquest any",
+    "any_passat": "de l'any passat",
+}
+
+
+def _describe(filters: dict[str, str], period: str | None) -> str:
+    """The one-line reading, when Jev settled the question on its own."""
+    tipus = filters.get("tipus")
+    parts = [_TIPUS_TEXT.get(tipus, tipus) if tipus else "Documents"]
+    if estat := filters.get("estat"):
+        parts.append(_ESTAT_TEXT.get(estat, estat))
+    if pagament := filters.get("pagament"):
+        parts.append(_PAGAMENT_TEXT.get(pagament, pagament.lower()))
+    if compte := filters.get("compte"):
+        parts.append("sense compte assignat" if compte == "—" else f"del compte {compte}")
+    if filters.get("enviat"):
+        parts.append("enviats pel professorat")
+    if period in _PERIODE_TEXT:
+        parts.append(_PERIODE_TEXT[period])
+    return " ".join(parts) + "."
+
+
 def read_filter(query: str, registry: LLMRegistry, jev: JevClient | None, today: date) -> AiFilter:
-    """Turn ``query`` into register filters. Raises when no model is reachable."""
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        jev_job = pool.submit(_ask_jev, jev, query, today)
-        model_job = pool.submit(_ask_model, registry, query, today)
-        jev_answers, jev_status = jev_job.result()
-        reading, model_status = model_job.result()
+    """Turn ``query`` into register filters. Raises when no model is reachable.
+
+    Jev first; the language model only when Jev cannot settle it alone.
+    """
+    jev_answers, jev_status = _ask_jev(jev, query, today)
+    if jev_is_enough(query, jev_answers):
+        reading, model_status = None, "skipped"
+    else:
+        reading, model_status = _ask_model(registry, query, today)
 
     result = AiFilter(models={"jev": jev_status, "openai": model_status})
     if jev_answers is None and reading is None:
@@ -346,6 +432,9 @@ def read_filter(query: str, registry: LLMRegistry, jev: JevClient | None, today:
                 result.sources[key] = FieldReading(value, "openai")
         result.search = reading.text.strip()
         result.explanation = reading.explanation.strip()
+    else:
+        period = jev_answers.get("periode")
+        result.explanation = _describe(result.filters, period.label if period else None)
     return result
 
 __all__ = ["AiFilter", "AiFilterUnavailable", "FIELDS", "period_range", "read_filter"]
