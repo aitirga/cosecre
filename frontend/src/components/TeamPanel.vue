@@ -11,9 +11,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { api, ApiError, getApiBaseUrl } from '../api/client'
 import type { UserStatus, InviteIssued, Role, User } from '../api/types'
 import { useAuth } from '../composables/useAuth'
+import { useTableQuery } from '../composables/useTableQuery'
 import { ROLE_HINTS, ROLE_LABELS, ROLES } from '../roles'
 import AppIcon from './AppIcon.vue'
 import RoleBadge from './RoleBadge.vue'
+import SearchInput from './SearchInput.vue'
+import SortTh from './SortTh.vue'
 
 const auth = useAuth()
 const queryClient = useQueryClient()
@@ -37,6 +40,19 @@ const users = computed(() =>
     )
   }),
 )
+
+const table = useTableQuery({
+  rows: users,
+  sorts: {
+    nom: (u) => u.display_name || u.email,
+    rol: (u) => ROLES.indexOf(u.role),
+    estat: (u) => u.status,
+    acces: (u) => u.last_login_at,
+  },
+  search: (u) => [u.display_name, u.email, ROLE_LABELS[u.role]],
+  filters: { rol: (u, value) => u.role === value },
+  urlPrefix: false,
+})
 
 const error = ref('')
 function report(err: unknown) {
@@ -159,20 +175,28 @@ function formatDate(value: string | null) {
       </button>
     </div>
 
+    <div v-if="users.length > 6" class="team-tools">
+      <SearchInput v-model="table.search.value" class="team-search" placeholder="Cerca per nom o correu" />
+      <select v-model="table.filters.rol" class="select role-filter" aria-label="Filtra per rol">
+        <option value="">Tots els rols</option>
+        <option v-for="role in ROLES" :key="role" :value="role">{{ ROLE_LABELS[role] }}</option>
+      </select>
+    </div>
+
     <p v-if="usersQuery.isLoading.value" class="empty">Carregant comptes…</p>
     <div v-else class="table-scroll">
       <table class="table">
         <thead>
           <tr>
-            <th>Compte</th>
-            <th>Rol</th>
-            <th>Estat</th>
-            <th>Últim accés</th>
+            <SortTh :table="table" sort-key="nom">Compte</SortTh>
+            <SortTh :table="table" sort-key="rol">Rol</SortTh>
+            <SortTh :table="table" sort-key="estat">Estat</SortTh>
+            <SortTh :table="table" sort-key="acces">Últim accés</SortTh>
             <th class="actions"><span class="sr-only">Accions</span></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="user in users" :key="user.id" :class="{ dim: user.status === 'disabled' }">
+          <tr v-for="user in table.visible.value" :key="user.id" :class="{ dim: user.status === 'disabled' }">
             <td>
               <div class="account-cell">
                 <strong>{{ user.display_name || user.email }}</strong>
@@ -377,6 +401,21 @@ function formatDate(value: string | null) {
 </template>
 
 <style scoped>
+.team-tools {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.team-search {
+  flex: 0 1 260px;
+}
+
+.role-filter {
+  width: auto;
+}
+
 .account-cell {
   display: grid;
   line-height: 1.35;

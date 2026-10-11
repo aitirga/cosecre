@@ -10,6 +10,9 @@ import { CATEGORIA_LABEL, SOURCE_LABEL } from '../matching'
 import AppIcon from '../components/AppIcon.vue'
 import DocumentCard from '../components/DocumentCard.vue'
 import { useDocumentCards } from '../composables/useDocumentCards'
+import { useTableQuery } from '../composables/useTableQuery'
+import SearchInput from '../components/SearchInput.vue'
+import SortTh from '../components/SortTh.vue'
 
 /**
  * Bringing statements in — and only that. Matching them to invoices is a task
@@ -175,6 +178,44 @@ const movementsQuery = useQuery({
 function toggle(statement: Statement) {
   open.value = open.value === statement.id ? null : statement.id
 }
+
+const statementTable = useTableQuery({
+  rows: statements,
+  sorts: {
+    compte: (s) => s.compte,
+    periode: (s) => s.period_from,
+    moviments: (s) => s.rows_total,
+    data: (s) => s.updated_at,
+  },
+  urlPrefix: false,
+})
+
+const movements = computed<Movement[]>(() => movementsQuery.data.value ?? [])
+
+/** The open statement's lines: searchable, sortable, and narrowed to what is left. */
+const movementTable = useTableQuery({
+  rows: movements,
+  sorts: {
+    data: (m) => m.data,
+    concepte: (m) => m.concepte,
+    import: (m) => m.import_value,
+    registre: (m) => m.matched[0]?.num_factura ?? null,
+  },
+  search: (m) => [
+    m.concepte,
+    m.mes_dades,
+    m.codi,
+    m.external_ref,
+    formatAmount(m.import_value),
+    ...m.matched.flatMap((doc) => [doc.num_factura, doc.proveidor]),
+  ],
+  filters: {
+    justificat: (m, value) =>
+      m.categoria === 'pagament' && (value === 'si' ? m.matched.length > 0 : m.matched.length === 0),
+    categoria: (m, value) => m.categoria === value,
+  },
+  urlPrefix: 'mov_',
+})
 
 const updateMovement = useMutation({
   mutationFn: ({ id, payload }: { id: number; payload: { tipus?: string; categoria?: Categoria } }) =>
@@ -387,17 +428,17 @@ function amountClass(m: Movement) {
           <thead>
             <tr>
               <th class="caret-col"><span class="sr-only">Obre</span></th>
-              <th>Compte</th>
+              <SortTh :table="statementTable" sort-key="compte">Compte</SortTh>
               <th>Font</th>
-              <th>Període</th>
-              <th class="num">Moviments</th>
+              <SortTh :table="statementTable" sort-key="periode">Període</SortTh>
+              <SortTh :table="statementTable" sort-key="moviments" class="num">Moviments</SortTh>
               <th>Pujat per</th>
-              <th>Data</th>
+              <SortTh :table="statementTable" sort-key="data">Data</SortTh>
               <th class="actions"><span class="sr-only">Accions</span></th>
             </tr>
           </thead>
           <tbody>
-            <template v-for="statement in statements" :key="statement.id">
+            <template v-for="statement in statementTable.visible.value" :key="statement.id">
               <tr class="row" :class="{ open: open === statement.id }" @click="toggle(statement)">
                 <td class="caret-col">
                   <AppIcon name="chevron" :size="13" class="caret" />
@@ -448,21 +489,41 @@ function amountClass(m: Movement) {
               <tr v-if="open === statement.id" class="movements-row">
                 <td colspan="8">
                   <p v-if="movementsQuery.isLoading.value" class="empty">Carregant moviments…</p>
-                  <table v-else class="table inner">
+                  <div v-else class="movement-tools">
+                    <SearchInput
+                      v-model="movementTable.search.value"
+                      class="movement-search"
+                      placeholder="Cerca concepte, import, factura…"
+                      label="Cerca moviments"
+                    />
+                    <select v-model="movementTable.filters.justificat" class="select select-sm" aria-label="Filtra per justificació">
+                      <option value="">Tots els pagaments</option>
+                      <option value="no">Sense factura</option>
+                      <option value="si">Amb factura</option>
+                    </select>
+                    <select v-model="movementTable.filters.categoria" class="select select-sm" aria-label="Filtra per categoria">
+                      <option value="">Totes les categories</option>
+                      <option v-for="[value, label] in CATEGORIES" :key="value" :value="value">{{ label }}</option>
+                    </select>
+                    <span class="muted count">
+                      {{ movementTable.visible.value.length }}<template v-if="movementTable.visible.value.length !== movements.length"> de {{ movements.length }}</template>
+                    </span>
+                  </div>
+                  <table v-if="!movementsQuery.isLoading.value" class="table inner">
                     <thead>
                       <tr>
-                        <th>Data</th>
-                        <th>Concepte</th>
+                        <SortTh :table="movementTable" sort-key="data">Data</SortTh>
+                        <SortTh :table="movementTable" sort-key="concepte">Concepte</SortTh>
                         <th>Més dades</th>
-                        <th class="num">Import</th>
+                        <SortTh :table="movementTable" sort-key="import" class="num">Import</SortTh>
                         <th class="num">Saldo</th>
-                        <th>Registre</th>
+                        <SortTh :table="movementTable" sort-key="registre">Registre</SortTh>
                         <th>Tipus</th>
                         <th>Categoria</th>
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="m in movementsQuery.data.value ?? []" :key="m.id" :class="{ dim: m.categoria !== 'pagament' }">
+                      <tr v-for="m in movementTable.visible.value" :key="m.id" :class="{ dim: m.categoria !== 'pagament' }">
                         <td class="mono">{{ formatDate(m.data) }}</td>
                         <td class="concept">
                           <span class="truncate">{{ m.concepte }}</span>
@@ -839,6 +900,18 @@ function amountClass(m: Movement) {
 
 .reg-chip .reg-who {
   color: var(--ink-500);
+}
+
+.movement-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.movement-search {
+  flex: 0 1 260px;
 }
 
 .movements-row > td {

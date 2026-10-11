@@ -6,7 +6,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
 import type { DocumentRecord, ExtractionStatus, Movement, PaidBy } from '../api/types'
 import { useExtractionTracker } from '../composables/useExtractionTracker'
+import { useTableQuery } from '../composables/useTableQuery'
 import {
+  COMPTES,
   ESTATS_PAGAMENT,
   TIPUS_DOCUMENT,
   formatAmount,
@@ -17,6 +19,8 @@ import DocumentIntake from '../components/DocumentIntake.vue'
 import DocumentWindow from '../components/DocumentWindow.vue'
 import ImageViewer from '../components/ImageViewer.vue'
 import MovementCard from '../components/MovementCard.vue'
+import SearchInput from '../components/SearchInput.vue'
+import SortTh from '../components/SortTh.vue'
 import SyncPanel from '../components/SyncPanel.vue'
 import StatusPill from '../components/StatusPill.vue'
 
@@ -101,13 +105,8 @@ function paymentLabel(payment: PaidBy) {
   return [payment.codi || payment.compte, formatDate(payment.data)].filter(Boolean).join(' · ')
 }
 
-// ── Filtering ────────────────────────────────────────────────────────────────
+// ── Filtering and order ──────────────────────────────────────────────────────
 type Filter = 'all' | 'active' | 'needs_validation' | 'validated' | 'error' | 'outside' | 'unmatched'
-
-const filter = ref<Filter>('all')
-const tipus = ref('')
-const pagament = ref('')
-const search = ref('')
 
 const IN_FLIGHT: ExtractionStatus[] = ['pending', 'processing', 'written_to_sheet']
 
@@ -129,35 +128,70 @@ function isUnmatched(item: DocumentRecord) {
   return !item.matched_movements && !IN_FLIGHT.includes(item.extraction_status) && item.extraction_status !== 'error'
 }
 
-const visible = computed(() => {
-  const term = search.value.trim().toLowerCase()
-  return documents.value.filter((item) => {
-    const matchesFilter =
-      filter.value === 'all' ||
-      (filter.value === 'active' && IN_FLIGHT.includes(item.extraction_status)) ||
-      (filter.value === 'outside' &&
-        item.sheet_state !== 'synced' &&
-        !IN_FLIGHT.includes(item.extraction_status)) ||
-      (filter.value === 'unmatched' && isUnmatched(item)) ||
-      item.extraction_status === filter.value
-    if (!matchesFilter) return false
-    if (tipus.value && item.tipus_document !== tipus.value) return false
-    if (pagament.value === '—' ? item.pagament : pagament.value && item.pagament !== pagament.value)
-      return false
-    if (!term) return true
-    return [
-      item.num_factura,
-      item.num_doc_intern,
-      item.proveidor,
-      item.descripcio,
-      item.descripcio_compra,
-      item.cif_proveidor,
-      item.responsable_nom,
-    ]
-      .filter(Boolean)
-      .some((field) => field.toLowerCase().includes(term))
-  })
+function matchesStage(item: DocumentRecord, stage: string) {
+  if (stage === 'active') return IN_FLIGHT.includes(item.extraction_status)
+  if (stage === 'outside') return item.sheet_state !== 'synced' && !IN_FLIGHT.includes(item.extraction_status)
+  if (stage === 'unmatched') return isUnmatched(item)
+  return item.extraction_status === stage
+}
+
+/** The status order a person works through: what is moving, then what needs them. */
+const STAGE_ORDER: Record<ExtractionStatus, number> = {
+  pending: 0,
+  processing: 0,
+  written_to_sheet: 0,
+  error: 1,
+  needs_validation: 2,
+  validated: 3,
+}
+
+const table = useTableQuery({
+  rows: documents,
+  // The hub sends newest invoice date first; that stays the order until a
+  // header is clicked.
+  sorts: {
+    estat: (item) => STAGE_ORDER[item.extraction_status],
+    document: (item) => item.num_factura || null,
+    proveidor: (item) => item.proveidor || null,
+    data: (item) => item.data_factura || null,
+    import: (item) => item.import ?? null,
+    pagament: (item) => item.pagament || null,
+  },
+  search: (item) => [
+    item.num_factura,
+    item.num_doc_intern,
+    item.proveidor,
+    item.descripcio,
+    item.descripcio_compra,
+    item.cif_proveidor,
+    item.responsable_nom,
+    item.import != null ? formatAmount(item.import) : null,
+  ],
+  filters: {
+    estat: matchesStage,
+    tipus: (item, value) => item.tipus_document === value,
+    compte: (item, value) => (value === '—' ? !item.pressupost_afectat : item.pressupost_afectat === value),
+    pagament: (item, value) => (value === '—' ? !item.pagament : item.pagament === value),
+    // ISO dates compare as text.
+    des: (item, value) => !!item.data_factura && item.data_factura >= value,
+    fins: (item, value) => !!item.data_factura && item.data_factura <= value,
+  },
 })
+
+/** The stat cards are the status filter; "Total" clears it. */
+const filter = computed<Filter>({
+  get: () => (table.filters.estat || 'all') as Filter,
+  set: (value) => (table.filters.estat = value === 'all' ? '' : value),
+})
+const visible = table.visible
+
+/** Filters beyond the stat cards and the search, shown in the "more" row. */
+const showMoreFilters = ref(
+  Boolean(table.filters.compte || table.filters.des || table.filters.fins),
+)
+const extraFilterCount = computed(
+  () => [table.filters.compte, table.filters.des, table.filters.fins].filter(Boolean).length,
+)
 
 const visibleTotal = computed(() =>
   visible.value.reduce((sum, item) => sum + (item.import ?? 0), 0),
@@ -392,27 +426,63 @@ const showUpload = ref(true)
     <section class="card">
       <div class="card-head list-head">
         <div class="filters">
-          <input
-            v-model="search"
-            class="input search"
-            type="search"
-            placeholder="Cerca per proveïdor, número, descripció…"
-            aria-label="Cerca documents"
+          <SearchInput
+            v-model="table.search.value"
+            class="search"
+            placeholder="Cerca per proveïdor, número, import…"
+            label="Cerca documents"
           />
-          <select v-model="tipus" class="select" aria-label="Filtra per tipus">
+          <select v-model="table.filters.tipus" class="select" aria-label="Filtra per tipus">
             <option value="">Tots els tipus</option>
             <option v-for="option in TIPUS_DOCUMENT" :key="option" :value="option">{{ option }}</option>
           </select>
-          <select v-model="pagament" class="select" aria-label="Filtra per pagament">
+          <select v-model="table.filters.pagament" class="select" aria-label="Filtra per pagament">
             <option value="">Qualsevol pagament</option>
             <option v-for="option in ESTATS_PAGAMENT" :key="option" :value="option">{{ option }}</option>
             <option value="—">Sense indicar</option>
           </select>
+          <button
+            class="btn btn-ghost btn-sm more-filters"
+            :class="{ on: showMoreFilters || extraFilterCount }"
+            type="button"
+            :aria-expanded="showMoreFilters"
+            @click="showMoreFilters = !showMoreFilters"
+          >
+            <AppIcon name="filter" :size="13" />
+            Més filtres
+            <span v-if="extraFilterCount" class="filter-count">{{ extraFilterCount }}</span>
+          </button>
+          <button
+            v-if="table.isFiltered.value"
+            class="btn btn-ghost btn-sm"
+            type="button"
+            @click="table.reset()"
+          >
+            Neteja
+          </button>
         </div>
         <span class="count muted">
           {{ visible.length }}<template v-if="visible.length !== stats.total"> de {{ stats.total }}</template>
           · {{ formatAmount(visibleTotal) }}
         </span>
+      </div>
+      <div v-if="showMoreFilters" class="more-row">
+        <label class="inline-field">
+          <span class="label">Compte</span>
+          <select v-model="table.filters.compte" class="select">
+            <option value="">Tots</option>
+            <option v-for="option in COMPTES" :key="option" :value="option">{{ option }}</option>
+            <option value="—">Sense compte</option>
+          </select>
+        </label>
+        <label class="inline-field">
+          <span class="label">Data des de</span>
+          <input v-model="table.filters.des" class="input" type="date" :max="table.filters.fins || undefined" />
+        </label>
+        <label class="inline-field">
+          <span class="label">fins a</span>
+          <input v-model="table.filters.fins" class="input" type="date" :min="table.filters.des || undefined" />
+        </label>
       </div>
 
       <p v-if="documentsQuery.isLoading.value" class="empty">Carregant el registre…</p>
@@ -431,12 +501,12 @@ const showUpload = ref(true)
         <table class="table">
           <thead>
             <tr>
-              <th>Estat</th>
-              <th>Document</th>
-              <th>Proveïdor</th>
-              <th>Data</th>
-              <th class="num">Import</th>
-              <th>Pagament</th>
+              <SortTh :table="table" sort-key="estat">Estat</SortTh>
+              <SortTh :table="table" sort-key="document">Document</SortTh>
+              <SortTh :table="table" sort-key="proveidor">Proveïdor</SortTh>
+              <SortTh :table="table" sort-key="data">Data</SortTh>
+              <SortTh :table="table" sort-key="import" class="num">Import</SortTh>
+              <SortTh :table="table" sort-key="pagament">Pagament</SortTh>
               <th>Extracte</th>
               <th class="actions"><span class="sr-only">Accions</span></th>
             </tr>
@@ -715,6 +785,8 @@ const showUpload = ref(true)
 
 .filters {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   flex: 1;
   min-width: 0;
@@ -722,11 +794,48 @@ const showUpload = ref(true)
 
 .filters .select {
   width: auto;
-  min-width: 150px;
+  min-width: 140px;
 }
 
 .search {
-  max-width: 300px;
+  flex: 1 1 220px;
+  max-width: 320px;
+}
+
+.more-filters.on {
+  color: var(--accent-700);
+}
+
+.filter-count {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: var(--r-full);
+  background: var(--accent-600);
+  color: #fff;
+  font-size: var(--text-xs);
+  line-height: 16px;
+  text-align: center;
+}
+
+.more-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-1);
+}
+
+.inline-field {
+  display: grid;
+  gap: 3px;
+}
+
+.inline-field .select,
+.inline-field .input {
+  width: auto;
+  min-width: 150px;
 }
 
 .count {
