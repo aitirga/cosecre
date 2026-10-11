@@ -33,6 +33,11 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+#: Wrong codes an invitation survives. Six digits is a small space, so a guesser
+#: gets a handful of tries and then the admin has to issue a new one.
+INVITE_MAX_ATTEMPTS = 5
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -40,10 +45,23 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: ``admin``, ``secretaria`` or ``professor``. ``is_admin`` is kept in step
+    #: with it (``role == "admin"``) for tokens and clients that predate roles.
+    role: Mapped[str] = mapped_column(String(16), default="secretaria", server_default="secretaria")
     # Added by the hub.
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: When the account's owner chose its password. ``None`` while an invitation
+    #: is pending — such an account has an empty ``password_hash`` and cannot sign in.
+    password_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # A pending invitation: only hashes are stored, like refresh tokens. The
+    # token goes in a link; the short code is the same invitation typed by hand.
+    invite_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    invite_code_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    invite_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Wrong codes typed against this invitation; enough of them spends it.
+    invite_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -52,6 +70,24 @@ class User(Base):
     refresh_sessions: Mapped[list["RefreshSession"]] = relationship(back_populates="user")
     uploads: Mapped[list["Upload"]] = relationship(back_populates="user")
     jobs: Mapped[list["ExtractionJob"]] = relationship(back_populates="user")
+
+    @property
+    def invite_is_live(self) -> bool:
+        if self.invite_token_hash is None or self.invite_expires_at is None:
+            return False
+        expires_at = self.invite_expires_at
+        if expires_at.tzinfo is None:  # SQLite hands back naive datetimes.
+            expires_at = expires_at.replace(tzinfo=UTC)
+        return expires_at > utcnow() and (self.invite_attempts or 0) < INVITE_MAX_ATTEMPTS
+
+    @property
+    def account_status(self) -> str:
+        """``disabled``, ``active``, ``pending`` (invitation usable) or ``expired``."""
+        if not self.is_active:
+            return "disabled"
+        if self.password_hash:
+            return "active"
+        return "pending" if self.invite_is_live else "expired"
 
 
 class RefreshSession(Base):

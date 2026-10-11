@@ -28,6 +28,9 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, password_digest: str) -> bool:
+    # An account still waiting on its invitation has no password at all.
+    if not password_digest:
+        return False
     return password_hash.verify(password, password_digest)
 
 
@@ -40,6 +43,7 @@ def create_access_token(user: User, settings: Settings) -> str:
         "sub": str(user.id),
         "email": user.email,
         "is_admin": user.is_admin,
+        "role": user.role,
         "type": "access",
         "exp": expires_at,
     }
@@ -136,3 +140,56 @@ def revoke_all_sessions(session: Session, user: User) -> int:
         refresh_session.revoked_at = stamp
     session.flush()
     return len(live)
+
+
+# -------------------------------------------------------------------- invitations
+#
+# An admin enables an e-mail address and hands its owner either a link (carrying
+# a long token) or a six-digit code — the code is for the desktop app and for
+# reading out over the phone. Whoever holds one sets the account's password. Like
+# refresh tokens, only hashes are kept.
+
+INVITE_TTL = timedelta(days=7)
+
+
+def _hash_invite(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def issue_invite(user: User) -> tuple[str, str]:
+    """Give ``user`` a fresh invitation and return ``(token, code)`` in clear.
+
+    Any earlier invitation stops working, and so does the password: an invite is
+    also how an admin resets an account.
+    """
+    token = secrets.token_urlsafe(32)
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    user.invite_token_hash = _hash_invite(token)
+    user.invite_code_hash = _hash_invite(f"{user.email.lower()}:{code}")
+    user.invite_expires_at = utcnow() + INVITE_TTL
+    user.invite_attempts = 0
+    user.password_hash = ""
+    user.password_set_at = None
+    return token, code
+
+
+def find_invited_user(session: Session, token: str) -> User | None:
+    user = session.query(User).filter(User.invite_token_hash == _hash_invite(token)).first()
+    return user if user is not None and user.invite_is_live else None
+
+
+def check_invite_code(user: User, code: str) -> bool:
+    """Whether ``code`` opens ``user``'s invitation. A miss counts against it."""
+    if not user.invite_is_live:
+        return False
+    if secrets.compare_digest(user.invite_code_hash or "", _hash_invite(f"{user.email.lower()}:{code.strip()}")):
+        return True
+    user.invite_attempts += 1
+    return False
+
+
+def clear_invite(user: User) -> None:
+    user.invite_token_hash = None
+    user.invite_code_hash = None
+    user.invite_expires_at = None
+    user.invite_attempts = 0

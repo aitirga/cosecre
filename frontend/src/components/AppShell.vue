@@ -9,6 +9,7 @@ import { usePlatform } from '../platform'
 import AppIcon from './AppIcon.vue'
 import BrandMark from './BrandMark.vue'
 import NavTree from './NavTree.vue'
+import RoleBadge from './RoleBadge.vue'
 
 const auth = useAuth()
 const router = useRouter()
@@ -63,7 +64,7 @@ async function handleLogout() {
           <BrandMark :size="24" />
           <span class="brand-name">Cosecre</span>
         </RouterLink>
-        <div class="undo-redo">
+        <div v-if="auth.isStaff.value" class="undo-redo">
           <button class="btn btn-ghost btn-icon" type="button" :title="undoTitle" :aria-label="undoTitle" :disabled="!undoTarget || busy" @click="undo()">
             <AppIcon name="undo" />
           </button>
@@ -86,7 +87,7 @@ async function handleLogout() {
           <span class="avatar" aria-hidden="true">{{ initials }}</span>
           <span class="account-text">
             <span class="account-name truncate">{{ displayName }}</span>
-            <span class="account-role">{{ auth.isAdmin.value ? 'Administrador/a' : 'Membre' }}</span>
+            <RoleBadge v-if="auth.role.value" class="account-role" :role="auth.role.value" />
           </span>
         </RouterLink>
         <button class="btn btn-ghost btn-icon" type="button" title="Tanca la sessió" @click="handleLogout">
@@ -273,8 +274,8 @@ async function handleLogout() {
 }
 
 .account-role {
-  font-size: var(--text-xs);
-  color: var(--ink-400);
+  justify-self: start;
+  margin-top: 2px;
 }
 
 /* ── Content ─────────────────────────────────────────────────────────────── */

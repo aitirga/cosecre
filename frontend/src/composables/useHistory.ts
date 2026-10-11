@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 
 import { api, ApiError, CHANGED_EVENT } from '../api/client'
 import type { ReplayResult } from '../api/types'
+import { useAuth } from './useAuth'
 
 /** The last undo/redo outcome, shown briefly wherever the shell is. */
 const notice = ref<{ text: string; tone: 'ok' | 'error' } | null>(null)
@@ -21,7 +22,14 @@ function show(text: string, tone: 'ok' | 'error') {
  */
 export function useHistory() {
   const queryClient = useQueryClient()
-  const historyQuery = useQuery({ queryKey: ['history'], queryFn: () => api.getHistory(), refetchInterval: 30_000 })
+  // The history is the office's: a Professor/a's own changes are not replayable.
+  const { isStaff } = useAuth()
+  const historyQuery = useQuery({
+    queryKey: ['history'],
+    queryFn: () => api.getHistory(),
+    refetchInterval: 30_000,
+    enabled: isStaff,
+  })
 
   const undoTarget = computed(() => historyQuery.data.value?.undo ?? null)
   const redoTarget = computed(() => historyQuery.data.value?.redo ?? null)

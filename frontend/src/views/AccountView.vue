@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 
 import { api, ApiError } from '../api/client'
 import AppIcon from '../components/AppIcon.vue'
+import RoleBadge from '../components/RoleBadge.vue'
 import { useAuth } from '../composables/useAuth'
 import { usePlatform } from '../platform'
 
@@ -47,13 +48,11 @@ function describeSession(client: string | null, label: string | null) {
         <h1 class="page-title">El meu compte</h1>
         <p class="page-lead">{{ auth.user.value?.email }}</p>
       </div>
-      <span class="badge" :class="auth.isAdmin.value ? 'badge-accent' : 'badge-neutral'">
-        {{ auth.isAdmin.value ? 'Administrador/a' : 'Membre' }}
-      </span>
+      <RoleBadge v-if="auth.role.value" :role="auth.role.value" />
     </header>
 
     <section class="card">
-      <div class="card-head"><h2 class="card-title">Change password</h2></div>
+      <div class="card-head"><h2 class="card-title">Canvia la contrasenya</h2></div>
       <form class="card-body form" @submit.prevent="changePassword.mutate()">
         <label class="field">
           <span class="label">Contrasenya actual</span>

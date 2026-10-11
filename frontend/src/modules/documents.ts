@@ -7,12 +7,10 @@
  */
 import { api } from '../api/client'
 import { useAuth } from '../composables/useAuth'
-import AccountView from '../views/AccountView.vue'
 import DossierView from '../views/DossierView.vue'
 import DocumentDetailView from '../views/DocumentDetailView.vue'
 import ReconcileView from '../views/ReconcileView.vue'
 import RegisterView from '../views/RegisterView.vue'
-import SettingsView from '../views/SettingsView.vue'
 import StatementsView from '../views/StatementsView.vue'
 import StatusView from '../views/StatusView.vue'
 import type { CosecreModule } from './types'
@@ -34,6 +32,8 @@ function checkCaixeta() {
 export const documentsModule: CosecreModule = {
   id: 'documents',
   appSlug: 'cosecre-docs',
+  // The office's: Professor/a sends invoices in through their own screens.
+  roles: ['admin', 'secretaria'],
   routes: [
     { path: 'estat', name: 'status', component: StatusView },
     { path: 'registre', name: 'register', component: RegisterView },
@@ -43,10 +43,6 @@ export const documentsModule: CosecreModule = {
     { path: 'eines/dossier-extracte', name: 'statement-dossier', component: DossierView },
     { path: 'invoices/:internalDocNumber?', redirect: (to) => legacyRedirect(to.params) },
     { path: 'tickets/:internalDocNumber?', redirect: (to) => legacyRedirect(to.params) },
-    // Account and Settings are the hub's own screens rather than this module's,
-    // but they have nowhere else to live until a second module needs them.
-    { path: 'account', name: 'account', component: AccountView },
-    { path: 'settings', name: 'settings', component: SettingsView, meta: { requiresAdmin: true } },
   ],
   // The id stays `comptabilitat` so the sidebar remembers whether it was collapsed.
   navGroups: [
@@ -67,7 +63,6 @@ export const documentsModule: CosecreModule = {
     { name: 'statements', label: 'Extractes', icon: 'bank', group: 'comptabilitat' },
     { name: 'reconcile', label: 'Justificar extractes', icon: 'tasks', group: 'tasques' },
     { name: 'statement-dossier', label: "Dossier d'extracte", icon: 'invoice', group: 'eines' },
-    { name: 'settings', label: 'Configuració', icon: 'sliders', adminOnly: true, placement: 'foot' },
   ],
   // Registered last, so its unconditional claim on home is the default rather
   // than an override of a module with a better reason to be there.

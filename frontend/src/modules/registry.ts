@@ -38,7 +38,15 @@ export function registerModules(registered: CosecreModule[]) {
  */
 function activeModules(): CosecreModule[] {
   const auth = useAuth()
-  return modules.filter((module) => module.enabled?.(auth.state.hub) ?? true)
+  return modules.filter(
+    (module) => (module.enabled?.(auth.state.hub) ?? true) && auth.hasRole(module.roles),
+  )
+}
+
+/** A module's role restriction, stamped on a route unless it sets its own. */
+function withRoles(route: RouteRecordRaw, roles: CosecreModule['roles']): RouteRecordRaw {
+  if (!roles || route.meta?.roles) return route
+  return { ...route, meta: { ...route.meta, roles } } as RouteRecordRaw
 }
 
 /**
@@ -50,13 +58,16 @@ function activeModules(): CosecreModule[] {
  */
 export function moduleRoutes(): { shell: RouteRecordRaw[]; root: RouteRecordRaw[] } {
   return {
-    shell: modules.flatMap((module) => module.routes),
-    root: modules.flatMap((module) => module.rootRoutes ?? []),
+    shell: modules.flatMap((module) => module.routes.map((route) => withRoles(route, module.roles))),
+    root: modules.flatMap((module) =>
+      (module.rootRoutes ?? []).map((route) => withRoles(route, module.roles)),
+    ),
   }
 }
 
+/** Only the modules this person can use: another role's bootstrap would only be refused. */
 export async function bootstrapModules(): Promise<void> {
-  await Promise.all(modules.map((module) => module.bootstrap?.()))
+  await Promise.all(activeModules().map((module) => module.bootstrap?.()))
 }
 
 /** Runs every module's own authorisation. First redirect wins. */
@@ -75,6 +86,7 @@ export function useModules() {
     activeModules()
       .flatMap((module) => module.nav)
       .filter((item) => !item.adminOnly || auth.isAdmin.value)
+      .filter((item) => auth.hasRole(item.roles))
       .filter((item) => item.visible?.() ?? true),
   )
 

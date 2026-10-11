@@ -1,7 +1,7 @@
 import { computed, reactive } from 'vue'
 
 import { api, ApiError, clearTokens } from '../api/client'
-import type { HubMeta, User } from '../api/types'
+import type { HubMeta, Role, User } from '../api/types'
 
 const state = reactive<{
   ready: boolean
@@ -98,6 +98,32 @@ async function authenticate(
   }
 }
 
+/** Opens an invitation and signs in with the password just chosen. */
+async function activate(payload: Parameters<typeof api.activate>[0]) {
+  state.loading = true
+  state.error = null
+  try {
+    const result = await api.activate(payload)
+    state.user = result.user
+    state.ready = true
+    return result.user
+  } catch (error) {
+    state.error = error instanceof ApiError ? error.message : "No s'ha pogut activar el compte."
+    throw error
+  } finally {
+    state.loading = false
+  }
+}
+
+/**
+ * The signed-in person's role. A hub from before roles only says `is_admin`,
+ * and everyone else there could reach everything — which is Secretaria.
+ */
+function roleOf(user: User | null): Role | null {
+  if (!user) return null
+  return user.role ?? (user.is_admin ? 'admin' : 'secretaria')
+}
+
 async function logout() {
   state.user = null
   state.error = null
@@ -112,10 +138,17 @@ export function useAuth() {
     user: computed(() => state.user),
     hub: computed(() => state.hub),
     isAuthenticated: computed(() => Boolean(state.user)),
-    isAdmin: computed(() => Boolean(state.user?.is_admin)),
+    role: computed(() => roleOf(state.user)),
+    isAdmin: computed(() => roleOf(state.user) === 'admin'),
+    /** The office: admins and Secretaria. */
+    isStaff: computed(() => ['admin', 'secretaria'].includes(roleOf(state.user) ?? '')),
+    isProfessor: computed(() => roleOf(state.user) === 'professor'),
+    hasRole: (roles: readonly Role[] | undefined) =>
+      !roles || (roleOf(state.user) !== null && roles.includes(roleOf(state.user)!)),
     canRegister: computed(() => state.hub?.accepts_registration ?? false),
     bootstrap,
     authenticate,
+    activate,
     logout,
   }
 }

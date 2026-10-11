@@ -212,3 +212,24 @@ def register_admin(client: TestClient, email: str = ADMIN_EMAIL) -> dict[str, st
     )
     assert response.status_code == 201, response.text
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+def make_user(
+    client: TestClient,
+    admin_headers: dict[str, str],
+    role: str,
+    email: str | None = None,
+    password: str = "member-password",
+) -> dict[str, str]:
+    """Invite an account with ``role``, open the invitation, and return its headers."""
+    invited = client.post(
+        "/api/v1/users",
+        headers=admin_headers,
+        json={"email": email or f"{role}@example.com", "display_name": role.title(), "role": role},
+    )
+    assert invited.status_code == 201, invited.text
+    activated = client.post(
+        "/api/v1/auth/activate", json={"token": invited.json()["token"], "password": password}
+    )
+    assert activated.status_code == 200, activated.text
+    return {"Authorization": f"Bearer {activated.json()['access_token']}"}

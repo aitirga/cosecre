@@ -6,7 +6,10 @@ from .apps import (
     AppSettingWrite,
 )
 from .auth import (
+    ActivateRequest,
     AuthTokens,
+    InviteIssued,
+    InvitePreview,
     LoginRequest,
     PasswordChangeRequest,
     RefreshRequest,
@@ -43,6 +46,9 @@ from .llm import (
 from .meta import HubCapabilities, HubMeta
 
 __all__ = [
+    "ActivateRequest",
+    "InviteIssued",
+    "InvitePreview",
     "APP_SLUG_PATTERN",
     "AppSettingRead",
     "AppSettingWrite",

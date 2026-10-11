@@ -11,7 +11,7 @@
  */
 import type { RouteLocationNormalized, RouteLocationRaw, RouteRecordRaw } from 'vue-router'
 
-import type { HubMeta } from '../api/types'
+import type { HubMeta, Role } from '../api/types'
 import type { IconName } from '../components/icons'
 
 export interface CosecreNavItem {
@@ -20,6 +20,8 @@ export interface CosecreNavItem {
   label: string
   icon: IconName
   adminOnly?: boolean
+  /** Narrows the entry to some roles, on top of its module's own `roles`. */
+  roles?: readonly Role[]
   /**
    * Detail routes that should keep this entry lit. `invoices` claims `invoice`,
    * so a document open in the detail view still highlights its list.
@@ -51,6 +53,13 @@ export interface CosecreNavGroup {
 
 export interface CosecreModule {
   id: string
+  /**
+   * Who the module is for. Its routes refuse everyone else (the global guard
+   * reads `meta.roles`, which the registry stamps on every route), its nav is
+   * hidden from them and its claim on home does not apply to them. Omitted
+   * means every signed-in role.
+   */
+  roles?: readonly Role[]
   /** The hub app slug, when the module keeps server-side settings. */
   appSlug?: string
   /** Mounted as children of `AppShell`, so they get the sidebar. */

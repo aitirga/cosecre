@@ -10,6 +10,7 @@ import type { CosecreModule } from './types'
 
 export const printModule: CosecreModule = {
   id: 'print',
+  roles: ['admin', 'secretaria'],
   routes: [
     // Lazy: the desktop half of the view pulls in pdf.js.
     { path: 'eines/impressio', name: 'print', component: () => import('../views/PrintView.vue') },

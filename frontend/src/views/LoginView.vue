@@ -1,18 +1,52 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watchEffect } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { computed, reactive, ref, watch, watchEffect } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
+import { api, ApiError } from '../api/client'
+import type { InvitePreview } from '../api/types'
 import AppIcon from '../components/AppIcon.vue'
 import BrandMark from '../components/BrandMark.vue'
+import RoleBadge from '../components/RoleBadge.vue'
 import { useAuth } from '../composables/useAuth'
 import { usePlatform } from '../platform'
 
+const route = useRoute()
 const router = useRouter()
 const auth = useAuth()
 const platform = usePlatform()
 
-const mode = ref<'login' | 'register'>('login')
-const form = reactive({ email: '', password: '' })
+/**
+ * `invite` opens an account with the e-mail and six-digit code an admin handed
+ * over; `link` is the same, arrived at through the invitation link, so the
+ * hub already knows who it is for.
+ */
+type Mode = 'login' | 'register' | 'invite' | 'link'
+const mode = ref<Mode>('login')
+const form = reactive({ email: '', password: '', confirm: '', code: '' })
+
+const inviteToken = computed(() =>
+  typeof route.params.token === 'string' ? route.params.token : null,
+)
+const invite = ref<InvitePreview | null>(null)
+const inviteError = ref<string | null>(null)
+
+watch(
+  inviteToken,
+  async (token) => {
+    if (!token) return
+    mode.value = 'link'
+    invite.value = null
+    inviteError.value = null
+    try {
+      invite.value = await api.invitePreview(token)
+      form.email = invite.value.email
+    } catch (error) {
+      inviteError.value =
+        error instanceof ApiError ? error.message : "No s'ha pogut llegir la invitació."
+    }
+  },
+  { immediate: true },
+)
 
 /**
  * The hub only accepts registration while it has no accounts, so the very
@@ -20,14 +54,21 @@ const form = reactive({ email: '', password: '' })
  * sign-in. Nobody has to know which case they are in.
  */
 watchEffect(() => {
-  if (auth.canRegister.value && !auth.state.hub?.has_users) {
+  if (mode.value === 'login' && auth.canRegister.value && !auth.state.hub?.has_users) {
     mode.value = 'register'
   }
 })
 
 const isFirstAccount = computed(() => auth.state.hub?.has_users === false)
+const choosingPassword = computed(() => mode.value !== 'login')
+const opensInvite = computed(() => mode.value === 'invite' || mode.value === 'link')
 
 const heading = computed(() => {
+  if (mode.value === 'link') {
+    const name = invite.value?.display_name?.split(' ')[0]
+    return name ? `Benvingut/da, ${name}` : 'Activa el teu compte'
+  }
+  if (mode.value === 'invite') return 'Activa el teu compte'
   if (mode.value === 'register') {
     return isFirstAccount.value ? 'Crea el primer compte' : 'Crea un compte'
   }
@@ -36,6 +77,12 @@ const heading = computed(() => {
 
 const lead = computed(() => {
   if (auth.state.hubError) return auth.state.hubError
+  if (mode.value === 'link') {
+    return inviteError.value ?? 'Tria la contrasenya amb què entraràs a partir d\'ara.'
+  }
+  if (mode.value === 'invite') {
+    return 'Escriu el correu i el codi de 6 xifres que t\'ha donat l\'administrador, i tria una contrasenya.'
+  }
   if (mode.value === 'register' && isFirstAccount.value) {
     return 'Aquest hub encara no té comptes. El primer que creïs serà l\'administrador i podrà afegir la resta.'
   }
@@ -44,10 +91,30 @@ const lead = computed(() => {
 })
 
 const submitting = computed(() => auth.state.loading)
+const mismatch = computed(
+  () => opensInvite.value && form.confirm.length > 0 && form.confirm !== form.password,
+)
+
+function switchTo(next: Mode) {
+  mode.value = next
+  auth.state.error = null
+  form.password = ''
+  form.confirm = ''
+}
 
 async function submit() {
+  if (mismatch.value) return
   try {
-    await auth.authenticate(mode.value, { email: form.email, password: form.password })
+    if (mode.value === 'link' && inviteToken.value) {
+      await auth.activate({ token: inviteToken.value, password: form.password })
+    } else if (mode.value === 'invite') {
+      await auth.activate({ email: form.email, code: form.code, password: form.password })
+    } else {
+      await auth.authenticate(mode.value === 'register' ? 'register' : 'login', {
+        email: form.email,
+        password: form.password,
+      })
+    }
     // `/` rather than a named route: the shell's index redirect asks the module
     // registry where this particular person belongs, which is not knowable here
     // — their modules have not resolved their membership yet.
@@ -74,13 +141,22 @@ async function submit() {
           <h1 class="title">{{ heading }}</h1>
           <p class="lead">{{ lead }}</p>
 
-          <div v-if="auth.canRegister.value && !isFirstAccount" class="segmented" role="tablist">
+          <p v-if="mode === 'link' && invite" class="invite-for">
+            <span class="truncate">{{ invite.email }}</span>
+            <RoleBadge :role="invite.role" />
+          </p>
+
+          <div
+            v-if="auth.canRegister.value && !isFirstAccount && !opensInvite"
+            class="segmented"
+            role="tablist"
+          >
             <button
               type="button"
               role="tab"
               :aria-selected="mode === 'login'"
               :class="{ active: mode === 'login' }"
-              @click="mode = 'login'"
+              @click="switchTo('login')"
             >
               Entra
             </button>
@@ -89,14 +165,14 @@ async function submit() {
               role="tab"
               :aria-selected="mode === 'register'"
               :class="{ active: mode === 'register' }"
-              @click="mode = 'register'"
+              @click="switchTo('register')"
             >
               Registra't
             </button>
           </div>
 
-          <form class="form" @submit.prevent="submit">
-            <label class="field">
+          <form v-if="!(mode === 'link' && !invite)" class="form" @submit.prevent="submit">
+            <label v-if="mode !== 'link'" class="field">
               <span class="label">Correu electrònic</span>
               <input
                 v-model="form.email"
@@ -108,26 +184,59 @@ async function submit() {
               />
             </label>
 
+            <label v-if="mode === 'invite'" class="field">
+              <span class="label">Codi d'invitació</span>
+              <input
+                v-model="form.code"
+                class="input input-mono code-input"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                pattern="[0-9]{6}"
+                maxlength="6"
+                placeholder="000000"
+                required
+              />
+            </label>
+
             <label class="field">
-              <span class="label">Contrasenya</span>
+              <span class="label">{{ opensInvite ? 'Nova contrasenya' : 'Contrasenya' }}</span>
               <input
                 v-model="form.password"
                 class="input"
                 type="password"
-                :autocomplete="mode === 'register' ? 'new-password' : 'current-password'"
-                :minlength="mode === 'register' ? 8 : undefined"
+                :autocomplete="choosingPassword ? 'new-password' : 'current-password'"
+                :minlength="choosingPassword ? 8 : undefined"
                 required
               />
-              <span v-if="mode === 'register'" class="hint">Mínim 8 caràcters.</span>
+              <span v-if="choosingPassword" class="hint">Mínim 8 caràcters.</span>
             </label>
 
-            <button class="btn btn-primary btn-lg btn-block" type="submit" :disabled="submitting">
+            <label v-if="opensInvite" class="field">
+              <span class="label">Repeteix-la</span>
+              <input
+                v-model="form.confirm"
+                class="input"
+                type="password"
+                autocomplete="new-password"
+                minlength="8"
+                required
+              />
+              <span v-if="mismatch" class="hint hint-error">No coincideixen.</span>
+            </label>
+
+            <button
+              class="btn btn-primary btn-lg btn-block"
+              type="submit"
+              :disabled="submitting || mismatch"
+            >
               {{
                 submitting
                   ? 'Un moment…'
-                  : mode === 'register'
-                    ? 'Crea el compte'
-                    : 'Entra'
+                  : opensInvite
+                    ? 'Activa el compte'
+                    : mode === 'register'
+                      ? 'Crea el compte'
+                      : 'Entra'
               }}
             </button>
 
@@ -136,6 +245,21 @@ async function submit() {
               <span>{{ auth.state.error }}</span>
             </p>
           </form>
+
+          <p v-if="mode === 'login'" class="switch">
+            Primer cop?
+            <button type="button" class="link-btn" @click="switchTo('invite')">
+              Tinc un codi d'invitació
+            </button>
+          </p>
+          <p v-else-if="opensInvite" class="switch">
+            <RouterLink v-if="mode === 'link'" class="link-btn" :to="{ name: 'login' }">
+              Ja tinc contrasenya
+            </RouterLink>
+            <button v-else type="button" class="link-btn" @click="switchTo('login')">
+              Ja tinc contrasenya
+            </button>
+          </p>
         </div>
 
         <footer class="card-foot">
@@ -230,6 +354,51 @@ async function submit() {
   display: grid;
   gap: 14px;
   margin-top: 18px;
+}
+
+.invite-for {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  font-size: var(--text-base);
+  color: var(--ink-700);
+}
+
+.code-input {
+  letter-spacing: 0.3em;
+  font-size: var(--text-md);
+}
+
+.hint-error {
+  color: var(--danger-700);
+}
+
+.switch {
+  margin-top: 14px;
+  font-size: var(--text-sm);
+  color: var(--ink-500);
+  text-align: center;
+}
+
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-700);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
 }
 
 .card-foot {

@@ -7,7 +7,9 @@ from ..config import Settings
 from ..deps import get_current_user, get_db, get_settings
 from ..models import RefreshSession, User
 from ..schemas import (
+    ActivateRequest,
     AuthTokens,
+    InvitePreview,
     LoginRequest,
     MessageResponse,
     PasswordChangeRequest,
@@ -17,7 +19,10 @@ from ..schemas import (
     UserRead,
 )
 from ..security import (
+    check_invite_code,
+    clear_invite,
     create_access_token,
+    find_invited_user,
     hash_password,
     issue_refresh_token,
     revoke_all_sessions,
@@ -78,8 +83,10 @@ def register(
         password_hash=hash_password(payload.password),
         display_name=payload.display_name,
         is_admin=is_first_user,
+        role="admin" if is_first_user else "secretaria",
         is_active=True,
         last_login_at=utcnow(),
+        password_set_at=utcnow(),
     )
     session.add(user)
     session.flush()
@@ -97,6 +104,11 @@ def login(
     settings: Settings = Depends(get_settings),
 ):
     user = session.query(User).filter(User.email == payload.email).first()
+    if user is not None and user.is_active and not user.password_hash:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Aquest compte encara no està activat. Fes servir l'enllaç o el codi d'invitació.",
+        )
     # One message for "no such account" and "wrong password" alike, so the
     # endpoint cannot be used to enumerate who has an account here.
     if user is None or not verify_password(payload.password, user.password_hash):
@@ -105,6 +117,47 @@ def login(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Aquest compte està desactivat.")
 
     user.last_login_at = utcnow()
+    tokens = _tokens(
+        session, user, settings, client=payload.client, client_label=payload.client_label
+    )
+    session.commit()
+    return tokens
+
+
+_INVITE_GONE = "Aquesta invitació no és vàlida o ha caducat. Demana'n una de nova a l'administrador."
+
+
+@router.get("/invite/{token}", response_model=InvitePreview)
+def invite_preview(token: str, session: Session = Depends(get_db)):
+    """Who an invitation link is for, so the activation page can greet them."""
+    user = find_invited_user(session, token)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_INVITE_GONE)
+    return InvitePreview(email=user.email, display_name=user.display_name, role=user.role)
+
+
+@router.post("/activate", response_model=AuthTokens)
+def activate(
+    payload: ActivateRequest,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Open an invitation and choose the account's password; signs straight in."""
+    if payload.token:
+        user = find_invited_user(session, payload.token)
+    else:
+        user = session.query(User).filter(User.email == payload.email).first()
+        if user is not None and not check_invite_code(user, payload.code or ""):
+            # The failed attempt is counted on the row, so it is kept.
+            session.commit()
+            user = None
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_INVITE_GONE)
+
+    user.password_hash = hash_password(payload.password)
+    user.password_set_at = utcnow()
+    user.last_login_at = utcnow()
+    clear_invite(user)
     tokens = _tokens(
         session, user, settings, client=payload.client, client_label=payload.client_label
     )
@@ -188,6 +241,7 @@ def change_password(
             status_code=status.HTTP_400_BAD_REQUEST, detail="La contrasenya actual no és correcta."
         )
     user.password_hash = hash_password(payload.new_password)
+    user.password_set_at = utcnow()
     # A password change is also how someone reacts to a suspected compromise, so
     # every other session goes with it.
     revoke_all_sessions(session, user)

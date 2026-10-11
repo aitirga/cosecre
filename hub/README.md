@@ -62,6 +62,20 @@ created by an admin (`POST /users`), which is what replaces the old
 `COSECRE_ALLOW_OPEN_REGISTRATION=true` only if you actually want anyone who can
 reach the hub to be able to sign up.
 
+**Roles and invitations.** Every account has a role: `admin` (everything,
+including accounts and settings), `secretaria` (the register, statements and the
+rest of the office's work) or `professor` (only their own requests and
+invoices). Access is denied by default — every router outside auth, meta and the
+Professor/a's own is mounted behind `require_staff` in `api/__init__.py`, and
+`tests/test_roles.py` walks the whole API to keep it that way.
+
+An admin creates an account without a password: `POST /users` returns, once, an
+invitation token (for the link `/activar/{token}`) and a six-digit code (typed on
+the sign-in screen with the e-mail). Either one lets the owner choose a password
+through `POST /auth/activate`. Invitations last seven days and survive five
+wrong codes; `POST /users/{id}/invite` issues a new one, which is also how an
+account is reset.
+
 ## API
 
 Everything below is prefixed with `/api/v1`.
@@ -70,9 +84,10 @@ Everything below is prefixed with `/api/v1`.
 |---|---|---|
 | Discovery | `GET /meta` | **No token.** What a client reads to validate a hub URL. |
 | Auth | `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/logout-all` | Refresh tokens rotate on use. |
+| Auth | `GET /auth/invite/{token}`, `POST /auth/activate` | **No token.** Open an invitation by link or by e-mail + code. |
 | Auth | `GET /auth/me`, `GET /auth/sessions`, `POST /auth/password` | Sessions are listed per client app. |
-| Users | `GET/POST /users`, `PATCH/DELETE /users/{id}` | Admin only. Accounts are disabled, never deleted. |
-| Apps | `GET /apps`, `GET/PUT /apps/{slug}/settings`, `GET/PUT/DELETE /apps/{slug}/settings/{key}` | Read: any user. Write: admin. |
+| Users | `GET/POST /users`, `PATCH/DELETE /users/{id}`, `POST /users/{id}/invite` | Admin only. A used account is disabled, never deleted; an unopened invitation is. |
+| Apps | `GET /apps`, `GET/PUT /apps/{slug}/settings`, `GET/PUT/DELETE /apps/{slug}/settings/{key}` | Read: admin and Secretaria. Write: admin. |
 | LLM | `GET /llm/providers`, `POST /llm/complete`, `/llm/structured`, `/llm/extract` | `structured` takes a JSON Schema; `extract` takes a file. A message may carry `images` as `data:` URLs. |
 | LLM | `POST /llm/stream` | **NDJSON.** `delta` frames, then exactly one `completed` or `error`. |
 | Documents | `GET/PUT /documents/settings` | Google Sheet target, register tab, model, prompt. |

@@ -32,14 +32,39 @@ export interface HubMeta {
 
 // ── Identity ────────────────────────────────────────────────────────────────
 
+/**
+ * Administrador/a runs the hub and its accounts; Secretaria runs the register,
+ * statements and requests; Professor/a only sends requests and invoices in.
+ */
+export type Role = 'admin' | 'secretaria' | 'professor'
+export type UserStatus = 'active' | 'pending' | 'expired' | 'disabled'
+
 export interface User {
   id: number
   email: string
   display_name: string | null
+  /** Kept in step with `role === 'admin'` for older hubs and clients. */
   is_admin: boolean
+  role: Role
   is_active: boolean
+  status: UserStatus
   created_at: string
   last_login_at: string | null
+  password_set_at: string | null
+}
+
+/** A fresh invitation. Shown once: the hub only keeps hashes of both. */
+export interface InviteIssued {
+  user: User
+  token: string
+  code: string
+  expires_at: string
+}
+
+export interface InvitePreview {
+  email: string
+  display_name: string | null
+  role: Role
 }
 
 export interface AuthTokens {
@@ -60,16 +85,14 @@ export interface SessionInfo {
 
 export interface UserCreate {
   email: string
-  password: string
   display_name?: string | null
-  is_admin?: boolean
+  role: Role
 }
 
 export interface UserUpdate {
   display_name?: string | null
-  is_admin?: boolean
+  role?: Role
   is_active?: boolean
-  password?: string
 }
 
 // ── Model gateway ───────────────────────────────────────────────────────────

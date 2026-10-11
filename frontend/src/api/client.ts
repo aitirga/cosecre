@@ -8,31 +8,33 @@ import { trackedFetch } from './loading'
  * are right and nobody calls it; in Electron the main process supplies both.
  */
 import type {
-  HistoryState,
-  RemovedDuplicate,
-  ReplayResult,
   AuthTokens,
+  BackupComparison,
+  BackupOverview,
   CaixetaStatus,
-  MirrorStatus,
+  CaptureSource,
   DocumentBrief,
   DocumentPayment,
+  DocumentRecord,
+  DocumentUpdate,
+  HistoryState,
+  HubMeta,
+  InviteIssued,
+  InvitePreview,
+  JobRead,
+  LlmProvider,
   MatchRun,
+  MigrationReport,
+  MirrorStatus,
   Movement,
   MovementDetail,
   ReconcileStatement,
-  Statement,
-  StatusOverview,
-  BackupComparison,
-  BackupOverview,
-  CaptureSource,
-  DocumentRecord,
-  DocumentUpdate,
-  HubMeta,
-  JobRead,
-  LlmProvider,
-  MigrationReport,
+  RemovedDuplicate,
+  ReplayResult,
   ResponsableSearch,
   SessionInfo,
+  Statement,
+  StatusOverview,
   SyncApplied,
   SyncDiff,
   SyncResult,
@@ -47,7 +49,14 @@ const ACCESS_KEY = 'cosecre.accessToken'
 const REFRESH_KEY = 'cosecre.refreshToken'
 
 /** Endpoints that must never trigger a refresh-and-retry of their own. */
-const NO_RETRY_PATHS = ['/auth/refresh', '/auth/login', '/auth/register', '/auth/logout']
+const NO_RETRY_PATHS = [
+  '/auth/refresh',
+  '/auth/login',
+  '/auth/register',
+  '/auth/logout',
+  '/auth/activate',
+  '/auth/invite',
+]
 
 export class ApiError extends Error {
   status: number
@@ -413,6 +422,21 @@ export const api = {
     persistTokens(tokens)
     return tokens
   },
+  /** Who an invitation link is for — unauthenticated, it is the way in. */
+  invitePreview(token: string) {
+    return request<InvitePreview>(`/auth/invite/${encodeURIComponent(token)}`)
+  },
+  /** Open an invitation by its link or by e-mail and code; signs straight in. */
+  async activate(
+    payload: { password: string } & ({ token: string } | { email: string; code: string }),
+  ) {
+    const tokens = await request<AuthTokens>('/auth/activate', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, client: clientName, client_label: clientLabel }),
+    })
+    persistTokens(tokens)
+    return tokens
+  },
   /** Revoke this session on the hub, then forget it locally either way. */
   async logout() {
     loadTokens()
@@ -452,13 +476,19 @@ export const api = {
   listUsers() {
     return request<User[]>('/users')
   },
-  createUser(payload: UserCreate) {
-    return request<User>('/users', { method: 'POST', body: JSON.stringify(payload) })
+  /** Enables an address; the account waits on the invitation it returns. */
+  inviteUser(payload: UserCreate) {
+    return request<InviteIssued>('/users', { method: 'POST', body: JSON.stringify(payload) })
+  },
+  /** A new invitation — also how an account is reset: its password stops working. */
+  reinviteUser(userId: number) {
+    return request<InviteIssued>(`/users/${userId}/invite`, { method: 'POST' })
   },
   updateUser(userId: number, payload: UserUpdate) {
     return request<User>(`/users/${userId}`, { method: 'PATCH', body: JSON.stringify(payload) })
   },
-  disableUser(userId: number) {
+  /** Deletes an invitation nobody opened; disables an account that was used. */
+  removeUser(userId: number) {
     return request<{ message: string }>(`/users/${userId}`, { method: 'DELETE' })
   },
 

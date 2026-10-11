@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from .config import Settings
 from .models import Document, ExtractionJob, MatchRun, User, WorkspaceSetting
-from .security import hash_password
+from .security import hash_password, utcnow
 from .services.statements.store import assign_codes
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,12 @@ ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("users", "display_name", "VARCHAR(255)"),
     ("users", "is_active", "BOOLEAN DEFAULT 1 NOT NULL"),
     ("users", "last_login_at", "DATETIME"),
+    ("users", "role", "VARCHAR(16) DEFAULT 'secretaria' NOT NULL"),
+    ("users", "password_set_at", "DATETIME"),
+    ("users", "invite_token_hash", "VARCHAR(64)"),
+    ("users", "invite_code_hash", "VARCHAR(64)"),
+    ("users", "invite_expires_at", "DATETIME"),
+    ("users", "invite_attempts", "INTEGER DEFAULT 0 NOT NULL"),
     ("refresh_sessions", "client", "VARCHAR(64)"),
     ("refresh_sessions", "client_label", "VARCHAR(255)"),
     ("workspace_settings", "ticket_sheet_name", "VARCHAR(255) DEFAULT 'Tiquets' NOT NULL"),
@@ -84,6 +90,13 @@ def apply_compat_migrations(session: Session) -> list[str]:
 
     if applied:
         logger.info("Applied schema catch-up: %s", ", ".join(applied))
+    if "users.role" in applied:
+        # Accounts from before roles: admins stay admins, and everyone else —
+        # who could already reach everything — becomes Secretaria rather than
+        # losing access on deploy. They all chose their own password already.
+        session.execute(text("UPDATE users SET role = 'admin' WHERE is_admin = 1"))
+        session.execute(text("UPDATE users SET password_set_at = created_at WHERE password_set_at IS NULL"))
+        session.commit()
     return applied
 
 
@@ -133,14 +146,18 @@ def bootstrap_admin(session: Session, settings: Settings) -> None:
                 email=email,
                 password_hash=hash_password(password),
                 is_admin=True,
+                role="admin",
                 is_active=True,
+                password_set_at=utcnow(),
             )
         )
         logger.info("Created bootstrap admin %s", email)
     else:
         user.password_hash = hash_password(password)
         user.is_admin = True
+        user.role = "admin"
         user.is_active = True
+        user.password_set_at = user.password_set_at or utcnow()
         logger.info("Reset bootstrap admin %s", email)
     session.commit()
 
@@ -179,12 +196,16 @@ def seed_users(session: Session, settings: Settings) -> None:
                     email=seed_user.email,
                     password_hash=hash_password(seed_user.password),
                     is_admin=seed_user.is_admin,
+                    role="admin" if seed_user.is_admin else "secretaria",
                     is_active=True,
+                    password_set_at=utcnow(),
                 )
             )
             continue
         existing.password_hash = hash_password(seed_user.password)
         existing.is_admin = seed_user.is_admin
+        existing.role = "admin" if seed_user.is_admin else "secretaria"
+        existing.password_set_at = existing.password_set_at or utcnow()
 
     session.commit()
 

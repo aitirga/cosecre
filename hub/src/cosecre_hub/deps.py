@@ -68,7 +68,23 @@ def get_current_user(
     return user
 
 
+def require_role(*roles: str, detail: str = "No tens permís per fer això."):
+    """A dependency that lets through only the given roles."""
+
+    def dependency(user: User = Depends(get_current_user)) -> User:
+        if user.role not in roles:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+        return user
+
+    return dependency
+
+
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    if not user.is_admin:
+    if user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cal ser administrador.")
     return user
+
+
+#: The office: admins and Secretaria. Everything that touches the register, the
+#: statements and the hub's own settings sits behind this.
+require_staff = require_role("admin", "secretaria", detail="Aquesta secció és només per a secretaria.")

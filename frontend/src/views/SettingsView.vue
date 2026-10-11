@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 
-import { api, ApiError } from '../api/client'
-import type { User } from '../api/types'
+import { api } from '../api/client'
 import AppIcon from '../components/AppIcon.vue'
 import BackupsPanel from '../components/BackupsPanel.vue'
 import MigrationPanel from '../components/MigrationPanel.vue'
 import DuplicatesPanel from '../components/DuplicatesPanel.vue'
 import HistoryPanel from '../components/HistoryPanel.vue'
 import OriginalsPanel from '../components/OriginalsPanel.vue'
+import TeamPanel from '../components/TeamPanel.vue'
 import { useAuth } from '../composables/useAuth'
 import { usePlatform } from '../platform'
 
@@ -83,54 +83,6 @@ const saveMutation = useMutation({
     api.updateSettings({ ...form, spreadsheet_url: form.spreadsheet_url || null }),
   onSuccess: () => queryClient.invalidateQueries({ queryKey: ['settings'] }),
 })
-
-// ── Team ─────────────────────────────────────────────────────────────────────
-const usersQuery = useQuery({ queryKey: ['users'], queryFn: api.listUsers })
-
-const newUser = reactive({ email: '', display_name: '', password: '', is_admin: false })
-const showNewUser = ref(false)
-const teamError = ref('')
-const resetTarget = ref<User | null>(null)
-const resetPassword = ref('')
-
-function refreshUsers() {
-  void queryClient.invalidateQueries({ queryKey: ['users'] })
-}
-
-function reportTeamError(error: unknown) {
-  teamError.value = error instanceof ApiError ? error.message : "No s'ha pogut desar el canvi."
-}
-
-const createUserMutation = useMutation({
-  mutationFn: () =>
-    api.createUser({
-      email: newUser.email,
-      password: newUser.password,
-      display_name: newUser.display_name || null,
-      is_admin: newUser.is_admin,
-    }),
-  onSuccess: () => {
-    teamError.value = ''
-    showNewUser.value = false
-    Object.assign(newUser, { email: '', display_name: '', password: '', is_admin: false })
-    refreshUsers()
-  },
-  onError: reportTeamError,
-})
-
-const updateUserMutation = useMutation({
-  mutationFn: (input: { id: number; patch: Parameters<typeof api.updateUser>[1] }) =>
-    api.updateUser(input.id, input.patch),
-  onSuccess: () => {
-    teamError.value = ''
-    resetTarget.value = null
-    resetPassword.value = ''
-    refreshUsers()
-  },
-  onError: reportTeamError,
-})
-
-const isSelf = (user: User) => user.id === auth.user.value?.id
 </script>
 
 <template>
@@ -337,192 +289,9 @@ const isSelf = (user: User) => user.id === auth.user.value?.id
 
     <DuplicatesPanel />
 
-    <!-- ── Team ───────────────────────────────────────────────────────── -->
-    <section class="card">
-      <div class="card-head">
-        <div>
-          <h2 class="card-title">Equip</h2>
-          <p class="hint">Els comptes es desactiven en lloc d'esborrar-se, i així se'n conserva l'historial.</p>
-        </div>
-        <button class="btn btn-outline" type="button" @click="showNewUser = true">
-          <AppIcon name="plus" />
-          Afegeix membre
-        </button>
-      </div>
-
-      <p v-if="usersQuery.isLoading.value" class="empty">Carregant comptes…</p>
-      <div v-else class="table-scroll">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Compte</th>
-              <th>Rol</th>
-              <th>Últim accés</th>
-              <th class="actions"><span class="sr-only">Accions</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="user in usersQuery.data.value ?? []" :key="user.id">
-              <td>
-                <div class="account-cell">
-                  <strong>{{ user.display_name || user.email }}</strong>
-                  <span v-if="user.display_name" class="muted">{{ user.email }}</span>
-                </div>
-              </td>
-              <td>
-                <span class="badge" :class="user.is_admin ? 'badge-accent' : 'badge-neutral'">
-                  {{ user.is_admin ? 'Administrador/a' : 'Membre' }}
-                </span>
-                <span v-if="!user.is_active" class="badge badge-danger disabled-badge">
-                  Desactivat
-                </span>
-              </td>
-              <td class="muted">
-                {{ user.last_login_at ? new Date(user.last_login_at).toLocaleDateString('ca-ES') : 'Mai' }}
-              </td>
-              <td class="actions">
-                <div class="row-actions">
-                  <button
-                    class="btn btn-ghost btn-sm"
-                    type="button"
-                    @click="
-                      () => {
-                        resetTarget = user
-                        resetPassword = ''
-                      }
-                    "
-                  >
-                    <AppIcon name="lock" />
-                    Contrasenya
-                  </button>
-                  <button
-                    class="btn btn-outline btn-sm"
-                    type="button"
-                    :disabled="isSelf(user) || updateUserMutation.isPending.value"
-                    @click="
-                      updateUserMutation.mutate({ id: user.id, patch: { is_admin: !user.is_admin } })
-                    "
-                  >
-                    {{ user.is_admin ? 'Fes-lo membre' : 'Fes-lo admin' }}
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-sm"
-                    type="button"
-                    :disabled="isSelf(user) || updateUserMutation.isPending.value"
-                    @click="
-                      updateUserMutation.mutate({
-                        id: user.id,
-                        patch: { is_active: !user.is_active },
-                      })
-                    "
-                  >
-                    {{ user.is_active ? 'Desactiva' : 'Activa' }}
-                  </button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <p v-if="teamError" class="card-body">
-        <span class="notice notice-error">
-          <AppIcon name="alert" :size="15" />
-          <span>{{ teamError }}</span>
-        </span>
-      </p>
-    </section>
+    <TeamPanel />
 
     <component :is="platform.settingsPanel" v-if="platform.settingsPanel" />
-
-    <!-- ── Dialogs ────────────────────────────────────────────────────── -->
-    <Teleport to="body">
-      <div v-if="showNewUser" class="overlay" @click.self="showNewUser = false">
-        <form class="dialog" @submit.prevent="createUserMutation.mutate()">
-          <h2 class="dialog-title">Afegeix un membre</h2>
-          <label class="field">
-            <span class="label">Correu electrònic</span>
-            <input v-model="newUser.email" class="input" type="email" required />
-          </label>
-          <label class="field">
-            <span class="label">Nom (opcional)</span>
-            <input v-model="newUser.display_name" class="input" type="text" />
-          </label>
-          <label class="field">
-            <span class="label">Contrasenya provisional</span>
-            <input
-              v-model="newUser.password"
-              class="input"
-              type="text"
-              minlength="8"
-              required
-              autocomplete="off"
-            />
-            <span class="hint">
-              Mínim 8 caràcters. Comparteix-la per un canal de confiança; la persona la pot canviar
-              des del seu compte.
-            </span>
-          </label>
-          <label class="checkbox">
-            <input v-model="newUser.is_admin" type="checkbox" />
-            <span>Administrador/a — pot gestionar la configuració i els comptes</span>
-          </label>
-          <div class="dialog-actions">
-            <button class="btn btn-outline" type="button" @click="showNewUser = false">
-              Cancel·la
-            </button>
-            <button
-              class="btn btn-primary"
-              type="submit"
-              :disabled="createUserMutation.isPending.value"
-            >
-              {{ createUserMutation.isPending.value ? 'Creant…' : 'Crea el compte' }}
-            </button>
-          </div>
-        </form>
-      </div>
-    </Teleport>
-
-    <Teleport to="body">
-      <div v-if="resetTarget" class="overlay" @click.self="resetTarget = null">
-        <form
-          class="dialog"
-          @submit.prevent="
-            updateUserMutation.mutate({
-              id: resetTarget!.id,
-              patch: { password: resetPassword },
-            })
-          "
-        >
-          <h2 class="dialog-title">Canvia la contrasenya</h2>
-          <p class="subtle">
-            Posa una contrasenya nova a <strong>{{ resetTarget.email }}</strong> i en tanca totes
-            les sessions.
-          </p>
-          <label class="field">
-            <span class="label">Contrasenya nova</span>
-            <input
-              v-model="resetPassword"
-              class="input"
-              type="text"
-              minlength="8"
-              required
-              autocomplete="off"
-            />
-          </label>
-          <div class="dialog-actions">
-            <button class="btn btn-outline" type="button" @click="resetTarget = null">Cancel·la</button>
-            <button
-              class="btn btn-primary"
-              type="submit"
-              :disabled="updateUserMutation.isPending.value"
-            >
-              {{ updateUserMutation.isPending.value ? 'Desant…' : 'Desa la contrasenya' }}
-            </button>
-          </div>
-        </form>
-      </div>
-    </Teleport>
   </div>
 </template>
 
@@ -577,36 +346,6 @@ const isSelf = (user: User) => user.id === auth.user.value?.id
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.account-cell {
-  display: grid;
-  line-height: 1.35;
-}
-
-.account-cell .muted {
-  font-size: var(--text-sm);
-}
-
-.disabled-badge {
-  margin-left: 5px;
-}
-
-.row-actions {
-  display: inline-flex;
-  gap: 4px;
-}
-
-.checkbox {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: var(--text-base);
-  color: var(--ink-500);
-}
-
-.checkbox input {
-  accent-color: var(--accent-700);
 }
 
 code {

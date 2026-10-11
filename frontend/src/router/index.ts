@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory, createWebHistory, type Router } from 'vue-router'
 
+import type { Role } from '../api/types'
 import AppShell from '../components/AppShell.vue'
 import { useAuth } from '../composables/useAuth'
 import { bootstrapModules, moduleGuard, moduleRoutes, useModules } from '../modules/registry'
@@ -30,6 +31,9 @@ export function createAppRouter(options: RouterOptions = {}): Router {
         name: 'login',
         component: LoginView,
       },
+      // Where an invitation link lands. Public: it is how an account first gets in.
+      // Same screen as sign-in, opened on the invitation.
+      { path: '/activar/:token', name: 'activate', component: LoginView },
       ...routes.root,
       {
         path: '/',
@@ -69,7 +73,13 @@ export function createAppRouter(options: RouterOptions = {}): Router {
       return homeRoute.value
     }
 
-    if (to.name === 'login' && auth.isAuthenticated.value) {
+    // A route for other roles sends people home rather than to a 403 page:
+    // whatever they typed or bookmarked, home is the right place for them.
+    if (to.matched.some((record) => !auth.hasRole(record.meta.roles))) {
+      return homeRoute.value
+    }
+
+    if ((to.name === 'login' || to.name === 'activate') && auth.isAuthenticated.value) {
       return homeRoute.value
     }
 
@@ -77,6 +87,15 @@ export function createAppRouter(options: RouterOptions = {}): Router {
   })
 
   return router
+}
+
+declare module 'vue-router' {
+  interface RouteMeta {
+    requiresAuth?: boolean
+    requiresAdmin?: boolean
+    /** Who may open the route; stamped from the owning module's `roles`. */
+    roles?: readonly Role[]
+  }
 }
 
 export default createAppRouter
