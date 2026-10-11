@@ -195,6 +195,12 @@ def update_mine(
         )
     changes = payload.model_dump(exclude_unset=True, by_alias=False)
     if changes.get("validat"):
+        # What the purchase was for is the one thing only the teacher knows.
+        if not (changes.get("descripcio_compra", document.descripcio_compra) or "").strip():
+            raise HTTPException(
+                status_code=409,
+                detail="Escriu la descripció de la compra/servei abans d'enviar-la.",
+            )
         # Only an invoice made out to the centre is the centre's to pay. With no
         # CIF configured there is nothing to check against.
         school_cif = compact_code(get_workspace_setting(session).school_cif)

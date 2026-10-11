@@ -19,6 +19,7 @@ import {
 } from '../document-fields'
 import AiTrace from './AiTrace.vue'
 import AppIcon from './AppIcon.vue'
+import ChoicePills from './ChoicePills.vue'
 import ImageViewer from './ImageViewer.vue'
 import PersonInput from './PersonInput.vue'
 import StatusPill from './StatusPill.vue'
@@ -94,6 +95,14 @@ const centreCif = computed(() => compactCif(centreQuery.data.value?.cif ?? ''))
 const cifMismatch = computed(
   () => own && Boolean(centreCif.value) && compactCif(form.cif_proveit) !== centreCif.value,
 )
+/**
+ * What the purchase was for is the one thing no model can read off the paper:
+ * a teacher sending their own cannot leave it blank.
+ */
+const needsDescription = computed(() => own && !form.descripcio_compra.trim())
+function isRequired(field: FieldDef) {
+  return own && field.key === 'descripcio_compra'
+}
 /** A teacher's own, once validated, is the office's to change. */
 const locked = computed(() => own && Boolean(record.value?.validat))
 const ALL_FIELDS = SECTIONS.flatMap((section) => section.fields)
@@ -493,12 +502,17 @@ const SHEET_STATE = {
             <section v-for="section in SECTIONS" :key="section.id" class="section">
               <h2 class="section-title">{{ section.title }}</h2>
               <div class="grid">
-                <label
+                <component
+                  :is="field.kind === 'choice' ? 'div' : 'label'"
                   v-for="field in visibleFields(section.fields)"
                   :key="field.key"
                   class="field"
                   :class="{
                     wide: field.wide,
+                    choice: field.kind === 'choice',
+                    'choice-long': field.kind === 'choice' && (field.options?.length ?? 0) > 3,
+                    required: isRequired(field) && !locked,
+                    missing: isRequired(field) && needsDescription && !locked,
                     review: hintFor(field.key)?.review && !record.validat,
                     invalid: errors[field.key],
                     reading: ownerOf(field) === 'reading',
@@ -509,6 +523,7 @@ const SHEET_STATE = {
                 >
                   <span class="label">
                     {{ field.label }}
+                    <span v-if="isRequired(field) && !locked" class="required-tag">Obligatori</span>
                     <span v-if="ownerOf(field) === 'reading'" class="ai-tag reading-tag" title="La IA està llegint aquest camp">
                       <span class="pulse" />IA
                     </span>
@@ -528,23 +543,13 @@ const SHEET_STATE = {
                       IA
                     </span>
                   </span>
-                  <select
+                  <ChoicePills
                     v-if="field.kind === 'choice'"
                     v-model="form[field.key]"
-                    class="select"
-                    @change="touch(field.key)"
-                  >
-                    <option value="">—</option>
-                    <option v-for="option in field.options" :key="option" :value="option">
-                      {{ option }}
-                    </option>
-                    <option
-                      v-if="form[field.key] && !field.options?.includes(form[field.key])"
-                      :value="form[field.key]"
-                    >
-                      {{ form[field.key] }}
-                    </option>
-                  </select>
+                    :options="field.options ?? []"
+                    :label="field.label"
+                    @update:model-value="touch(field.key)"
+                  />
                   <PersonInput
                     v-else-if="field.kind === 'person' || field.kind === 'email'"
                     v-model="form[field.key]"
@@ -557,8 +562,15 @@ const SHEET_STATE = {
                     v-else-if="field.kind === 'area'"
                     v-model="form[field.key]"
                     class="textarea"
-                    rows="2"
-                    :placeholder="ownerOf(field) === 'reading' ? 'La IA ho està llegint…' : field.placeholder"
+                    :rows="isRequired(field) ? 3 : 2"
+                    :required="isRequired(field)"
+                    :placeholder="
+                      ownerOf(field) === 'reading'
+                        ? 'La IA ho està llegint…'
+                        : isRequired(field)
+                          ? 'Per a què és: activitat, grup, sortida… Secretaria ho necessita per justificar la despesa.'
+                          : field.placeholder
+                    "
                     @input="touch(field.key)"
                   />
                   <input
@@ -572,6 +584,10 @@ const SHEET_STATE = {
                     @input="touch(field.key)"
                   />
                   <span v-if="errors[field.key]" class="field-error">{{ errors[field.key] }}</span>
+                  <span v-else-if="isRequired(field) && needsDescription && !locked" class="required-line">
+                    <AppIcon name="alert" :size="12" />
+                    Imprescindible per enviar la factura: només tu saps per a què és.
+                  </span>
                   <span v-else-if="!inFlight && kept[field.key] && kept[field.key] !== form[field.key]" class="kept-line">
                     <AppIcon name="sparkles" :size="11" class="ai-mark" />
                     <span class="truncate">La IA hi llegia <span class="mono">{{ kept[field.key] }}</span></span>
@@ -587,7 +603,7 @@ const SHEET_STATE = {
                   >
                     El dígit de control no quadra: probablement hi ha un número mal llegit.
                   </span>
-                </label>
+                </component>
               </div>
             </section>
           </fieldset>
@@ -609,13 +625,17 @@ const SHEET_STATE = {
             <button
               class="btn btn-primary"
               type="button"
-              :disabled="saveMutation.isPending.value || (record.validat && !dirty) || hasErrors || inFlight || cifMismatch"
+              :disabled="
+                saveMutation.isPending.value || (record.validat && !dirty) || hasErrors || inFlight || cifMismatch || needsDescription
+              "
               :title="
                 inFlight
                   ? 'Espera que la IA acabi de llegir-lo'
                   : cifMismatch
                     ? `Només es poden enviar factures a nom del centre (${centreCif})`
-                    : undefined
+                    : needsDescription
+                      ? 'Escriu la descripció de la compra/servei per poder-la enviar'
+                      : undefined
               "
               @click="saveAndValidate()"
             >
@@ -898,6 +918,16 @@ const SHEET_STATE = {
 }
 
 /* A value the AI wrote and nobody has checked yet. */
+.field.ai-filled :deep(.pill.on) {
+  border-color: var(--ai-500);
+  background: var(--ai-500);
+}
+
+.field.ai-filled :deep(.pills) {
+  border-color: var(--ai-400);
+  background: var(--ai-50);
+}
+
 .field.ai-filled .input,
 .field.ai-filled .select,
 .field.ai-filled .textarea,
@@ -914,6 +944,7 @@ const SHEET_STATE = {
 }
 
 /* A field the AI is reading: violet, with a slow sheen across it. */
+.field.reading :deep(.pills),
 .field.reading .input,
 .field.reading .select,
 .field.reading .textarea,
@@ -938,6 +969,7 @@ const SHEET_STATE = {
   }
 }
 
+.field.mine :deep(.pills),
 .field.mine .input,
 .field.mine .select,
 .field.mine .textarea,
@@ -1019,6 +1051,7 @@ const SHEET_STATE = {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .field.reading :deep(.pills),
   .field.reading .input,
   .field.reading .select,
   .field.reading .textarea,
@@ -1074,12 +1107,68 @@ const SHEET_STATE = {
 .grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-flow: row dense;
   align-items: start;
   gap: 10px 12px;
 }
 
 .field.wide {
   grid-column: span 2;
+}
+
+/* A short closed list sits in two columns; a long one takes the row, so its
+   pills wrap as little as they can. Dense flow lets the next short field fill
+   the gap a full-row one leaves. */
+.field.choice {
+  grid-column: span 2;
+}
+
+.field.choice-long {
+  grid-column: 1 / -1;
+}
+
+/* The one field a teacher must write themselves: boxed in the accent, and
+   louder while it is still empty. */
+.field.required {
+  grid-column: 1 / -1;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-200);
+  border-left: 3px solid var(--accent-600);
+  border-radius: var(--r-md);
+  background: var(--accent-50);
+}
+
+.field.required .label {
+  color: var(--ink-900);
+  font-weight: 600;
+}
+
+.field.required .textarea {
+  background: var(--surface-0);
+}
+
+.field.missing .textarea {
+  border-color: var(--accent-500);
+}
+
+.required-tag {
+  padding: 0 5px;
+  border-radius: var(--r-xs);
+  background: var(--accent-600);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.required-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--accent-700);
 }
 
 .field .label {
@@ -1106,6 +1195,7 @@ const SHEET_STATE = {
   color: var(--gold-800);
 }
 
+.field.review :deep(.pills),
 .field.review .input,
 .field.review .select,
 .field.review .textarea {
@@ -1300,7 +1390,9 @@ const SHEET_STATE = {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .field.wide {
+  .field.wide,
+  .field.choice,
+  .field.required {
     grid-column: auto;
   }
 

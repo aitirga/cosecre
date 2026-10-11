@@ -140,7 +140,7 @@ def test_a_teacher_fills_in_and_validates_their_own(school):
     edited = client.patch(
         f"{API}/submissions/{reference}",
         headers=teacher,
-        json={"proveidor": "Llibreria Puig", "validat": True},
+        json={"proveidor": "Llibreria Puig", "descripcio_compra": "Llibres de lectura, 3r", "validat": True},
     )
     assert edited.status_code == 200, edited.text
     assert edited.json()["proveidor"] == "Llibreria Puig"
@@ -163,6 +163,22 @@ def test_nobody_edits_someone_elses(school):
     assert response.status_code == 404
 
 
+def test_the_teacher_must_say_what_the_purchase_was_for(school):
+    client, _admin, _secretaria, teacher, _other = school
+    reference = submit(client, teacher).json()["internal_doc_number"]
+    blank = client.patch(
+        f"{API}/submissions/{reference}", headers=teacher, json={"descripcio_compra": "  ", "validat": True}
+    )
+    assert blank.status_code == 409
+    assert "descripció" in blank.json()["detail"]
+
+    described = client.patch(
+        f"{API}/submissions/{reference}", headers=teacher, json={"descripcio_compra": "Colònies de 5è", "validat": True}
+    )
+    assert described.status_code == 200, described.text
+    assert described.json()["validat"] is True
+
+
 def test_only_an_invoice_made_out_to_the_centre_can_be_validated(school):
     client, admin, _secretaria, teacher, _other = school
     settings = client.get(f"{API}/documents/settings", headers=admin).json()
@@ -173,13 +189,13 @@ def test_only_an_invoice_made_out_to_the_centre_can_be_validated(school):
 
     reference = submit(client, teacher).json()["internal_doc_number"]
     wrong = client.patch(
-        f"{API}/submissions/{reference}", headers=teacher, json={"cif_proveit": "B12345678", "validat": True}
+        f"{API}/submissions/{reference}", headers=teacher, json={"cif_proveit": "B12345678", "descripcio_compra": "Material", "validat": True}
     )
     assert wrong.status_code == 409
     assert "S0800636C" in wrong.json()["detail"]
 
     right = client.patch(
-        f"{API}/submissions/{reference}", headers=teacher, json={"cif_proveit": "S 0800636-C", "validat": True}
+        f"{API}/submissions/{reference}", headers=teacher, json={"cif_proveit": "S 0800636-C", "descripcio_compra": "Material", "validat": True}
     )
     assert right.status_code == 200, right.text
     assert right.json()["validat"] is True
