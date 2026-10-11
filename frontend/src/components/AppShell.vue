@@ -9,6 +9,7 @@ import { usePlatform } from '../platform'
 import AppIcon from './AppIcon.vue'
 import BrandMark from './BrandMark.vue'
 import NavTree from './NavTree.vue'
+import NotificationBell from './NotificationBell.vue'
 import RoleBadge from './RoleBadge.vue'
 
 const auth = useAuth()
@@ -64,13 +65,16 @@ async function handleLogout() {
           <BrandMark :size="24" />
           <span class="brand-name">Cosecre</span>
         </RouterLink>
-        <div v-if="auth.isStaff.value" class="undo-redo">
+        <div class="shell-actions">
+          <NotificationBell />
+          <template v-if="auth.isStaff.value">
           <button class="btn btn-ghost btn-icon" type="button" :title="undoTitle" :aria-label="undoTitle" :disabled="!undoTarget || busy" @click="undo()">
             <AppIcon name="undo" />
           </button>
           <button class="btn btn-ghost btn-icon" type="button" :title="redoTitle" :aria-label="redoTitle" :disabled="!redoTarget || busy" @click="redo()">
             <AppIcon name="redo" />
           </button>
+          </template>
         </div>
       </div>
 
@@ -110,13 +114,16 @@ async function handleLogout() {
       </button>
       <BrandMark :size="20" />
       <span class="brand-name">Cosecre</span>
-      <div class="undo-redo">
-        <button class="btn btn-ghost btn-icon" type="button" :title="undoTitle" :aria-label="undoTitle" :disabled="!undoTarget || busy" @click="undo()">
-          <AppIcon name="undo" />
-        </button>
-        <button class="btn btn-ghost btn-icon" type="button" :title="redoTitle" :aria-label="redoTitle" :disabled="!redoTarget || busy" @click="redo()">
-          <AppIcon name="redo" />
-        </button>
+      <div class="shell-actions">
+        <template v-if="auth.isStaff.value">
+          <button class="btn btn-ghost btn-icon" type="button" :title="undoTitle" :aria-label="undoTitle" :disabled="!undoTarget || busy" @click="undo()">
+            <AppIcon name="undo" />
+          </button>
+          <button class="btn btn-ghost btn-icon" type="button" :title="redoTitle" :aria-label="redoTitle" :disabled="!redoTarget || busy" @click="redo()">
+            <AppIcon name="redo" />
+          </button>
+        </template>
+        <NotificationBell />
       </div>
     </header>
 
@@ -172,13 +179,13 @@ async function handleLogout() {
   padding: 6px 8px 14px;
 }
 
-.undo-redo {
+.shell-actions {
   display: flex;
   gap: 2px;
   margin-left: auto;
 }
 
-.undo-redo .btn:disabled {
+.shell-actions .btn:disabled {
   opacity: 0.35;
 }
 

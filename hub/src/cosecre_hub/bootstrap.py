@@ -49,6 +49,7 @@ ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("documents", "sheet_snapshot", "JSON"),
     ("documents", "responsable_nom", "VARCHAR(255) DEFAULT '' NOT NULL"),
     ("documents", "responsable_email", "VARCHAR(255) DEFAULT '' NOT NULL"),
+    ("documents", "request_id", "INTEGER REFERENCES requests(id) ON DELETE SET NULL"),
     ("workspace_settings", "iban_general", "VARCHAR(64) DEFAULT '' NOT NULL"),
     ("workspace_settings", "iban_material", "VARCHAR(64) DEFAULT '' NOT NULL"),
     ("workspace_settings", "iban_menjador", "VARCHAR(64) DEFAULT '' NOT NULL"),

@@ -92,7 +92,18 @@ _LABEL_PATTERNS = [
     for verb, suffix, label in LABELS
 ]
 #: Requests that never become actions.
-UNTRACKED_PREFIXES = ("/auth", "/users", "/llm", "/backups", "/history", "/meta")
+#: Requests keep their own thread as a record, and notifications are only read
+#: marks, so neither belongs in undo.
+UNTRACKED_PREFIXES = (
+    "/auth",
+    "/users",
+    "/llm",
+    "/backups",
+    "/history",
+    "/meta",
+    "/requests",
+    "/notifications",
+)
 
 
 # ── The action in progress ───────────────────────────────────────────────────

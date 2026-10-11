@@ -87,6 +87,8 @@ Everything below is prefixed with `/api/v1`.
 | Auth | `GET /auth/invite/{token}`, `POST /auth/activate` | **No token.** Open an invitation by link or by e-mail + code. |
 | Auth | `GET /auth/me`, `GET /auth/sessions`, `POST /auth/password` | Sessions are listed per client app. |
 | Users | `GET/POST /users`, `PATCH/DELETE /users/{id}`, `POST /users/{id}/invite` | Admin only. A used account is disabled, never deleted; an unopened invitation is. |
+| Requests | `GET/POST /requests`, `GET /requests/{id}`, `POST .../messages`, `.../status`, `.../assign`, `GET /requests/office` | Any role. Professor/a sees only their own (others answer 404); the office sees all and decides. |
+| Notifications | `GET /notifications`, `GET .../unread-count`, `POST .../{id}/read`, `POST .../read-all` | In-app only, each person's own. |
 | Apps | `GET /apps`, `GET/PUT /apps/{slug}/settings`, `GET/PUT/DELETE /apps/{slug}/settings/{key}` | Read: admin and Secretaria. Write: admin. |
 | LLM | `GET /llm/providers`, `POST /llm/complete`, `/llm/structured`, `/llm/extract` | `structured` takes a JSON Schema; `extract` takes a file. A message may carry `images` as `data:` URLs. |
 | LLM | `POST /llm/stream` | **NDJSON.** `delta` frames, then exactly one `completed` or `error`. |

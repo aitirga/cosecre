@@ -14,6 +14,7 @@ import App from './App.vue'
 import { documentsModule } from './modules/documents'
 import { hubModule } from './modules/hub'
 import { printModule } from './modules/print'
+import { requestsModule } from './modules/requests'
 import { registerModules } from './modules/registry'
 import type { CosecreModule } from './modules/types'
 import { PLATFORM_KEY, type PlatformIntegration } from './platform'
@@ -32,10 +33,11 @@ export type { PlatformIntegration } from './platform'
  * wants a different set passes `modules:` and gets exactly those.
  *
  * Print claims no home, so it only has to come after documents for the
- * sidebar: its entry joins the Eines group documents opens. The hub module —
- * account and settings — claims none either, and sits last.
+ * sidebar: its entry joins the Eines group documents opens. Requests claims
+ * home only for Professor/a, who has no documents module. The hub module —
+ * account and settings — claims none, and sits last.
  */
-const DEFAULT_MODULES: CosecreModule[] = [documentsModule, printModule, hubModule]
+const DEFAULT_MODULES: CosecreModule[] = [documentsModule, printModule, requestsModule, hubModule]
 
 export interface CosecreAppOptions {
   apiBaseUrl?: string

@@ -688,3 +688,88 @@ export interface StatusOverview {
   caixeta_synced_at: string | null
   last_run_at: string | null
 }
+
+// ── Requests to the office ──────────────────────────────────────────────────
+
+export type RequestKind = 'compra' | 'pressupost' | 'consulta' | 'reemborsament'
+export type RequestStatus =
+  | 'oberta'
+  | 'en_revisio'
+  | 'aprovada'
+  | 'rebutjada'
+  | 'resolta'
+  | 'cancellada'
+
+export interface PersonBrief {
+  id: number
+  name: string
+  role: Role
+}
+
+export interface RequestSummary {
+  id: number
+  code: string
+  kind: RequestKind
+  title: string
+  amount: number | null
+  proveidor: string
+  compte: string
+  needed_by: string | null
+  status: RequestStatus
+  requester: PersonBrief
+  assignee: PersonBrief | null
+  message_count: number
+  document_count: number
+  created_at: string
+  last_activity_at: string
+}
+
+export interface RequestMessage {
+  id: number
+  kind: 'message' | 'status'
+  body: string
+  status: RequestStatus | null
+  author: PersonBrief | null
+  created_at: string
+}
+
+export interface LinkedDocument {
+  num_doc_intern: string
+  num_factura: string
+  proveidor: string
+  import_value: number | null
+  status: ExtractionStatus
+  validat: boolean
+}
+
+export interface RequestDetail extends RequestSummary {
+  description: string
+  messages: RequestMessage[]
+  documents: LinkedDocument[]
+  /** What the person looking may move it to. */
+  allowed_statuses: RequestStatus[]
+  can_reply: boolean
+}
+
+export interface RequestCreate {
+  kind: RequestKind
+  title: string
+  description: string
+  amount: number | null
+  proveidor: string
+  compte: string
+  needed_by: string | null
+}
+
+export interface AppNotification {
+  id: number
+  kind: string
+  title: string
+  body: string
+  /** A client route: `{ name, query }`. */
+  link: { name: string; params?: Record<string, string>; query?: Record<string, string> } | null
+  actor: PersonBrief | null
+  read: boolean
+  created_at: string
+}
+

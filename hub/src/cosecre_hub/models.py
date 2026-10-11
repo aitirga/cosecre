@@ -253,6 +253,10 @@ class Document(Base):
     created_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    #: The request this invoice answers — a purchase made, a reimbursement asked.
+    request_id: Mapped[int | None] = mapped_column(
+        ForeignKey("requests.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     tipus_document: Mapped[str] = mapped_column(String(60), default="")
     origen: Mapped[str] = mapped_column(String(20), default="")
@@ -560,3 +564,93 @@ class HistoryChange(Base):
     #: Only the columns that changed, for an update; the whole row otherwise.
     before: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     after: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+
+# ── Requests to the office ───────────────────────────────────────────────────
+
+
+class Request(Base):
+    """Something a teacher (or anyone) asks the office for: a purchase, a
+    budget, a reimbursement, or just a question — with its conversation."""
+
+    __tablename__ = "requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: ``compra``, ``pressupost``, ``consulta`` or ``reemborsament``.
+    kind: Mapped[str] = mapped_column(String(20))
+    title: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str] = mapped_column(Text, default="")
+    #: Estimated cost of a purchase or budget; what was paid, for a reimbursement.
+    amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    proveidor: Mapped[str] = mapped_column(String(255), default="")
+    #: The account it would come out of, from the register's closed list.
+    compte: Mapped[str] = mapped_column(String(60), default="")
+    needed_by: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #: ``oberta``, ``en_revisio``, ``aprovada``, ``rebutjada``, ``resolta`` or ``cancellada``.
+    status: Mapped[str] = mapped_column(String(20), default="oberta", index=True)
+    requester_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    assignee_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+    #: The last message or status change — what an inbox sorts by.
+    last_activity_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    requester: Mapped["User"] = relationship(foreign_keys=[requester_id])
+    assignee: Mapped["User | None"] = relationship(foreign_keys=[assignee_id])
+    messages: Mapped[list["RequestMessage"]] = relationship(
+        back_populates="request", cascade="all, delete-orphan", order_by="RequestMessage.id"
+    )
+
+    @property
+    def code(self) -> str:
+        return f"SOL-{self.id:04d}"
+
+
+class RequestMessage(Base):
+    """One entry of a request's thread: something someone wrote, or a status change."""
+
+    __tablename__ = "request_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("requests.id", ondelete="CASCADE"), index=True)
+    author_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    #: ``message``, or ``status`` for a change the thread records on its own.
+    kind: Mapped[str] = mapped_column(String(16), default="message")
+    body: Mapped[str] = mapped_column(Text, default="")
+    #: For a ``status`` entry, the status it moved to.
+    status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    request: Mapped[Request] = relationship(back_populates="messages")
+    author: Mapped["User | None"] = relationship()
+
+
+class Notification(Base):
+    """Something that happened that one person should know about. In-app only."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    actor_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    kind: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(255))
+    body: Mapped[str] = mapped_column(Text, default="")
+    #: Where clicking it goes, as a client route: ``{"name": ..., "query": {...}}``.
+    link: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    request_id: Mapped[int | None] = mapped_column(
+        ForeignKey("requests.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    actor: Mapped["User | None"] = relationship(foreign_keys=[actor_id])
+

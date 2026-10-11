@@ -8,6 +8,7 @@ import { trackedFetch } from './loading'
  * are right and nobody calls it; in Electron the main process supplies both.
  */
 import type {
+  AppNotification,
   AuthTokens,
   BackupComparison,
   BackupOverview,
@@ -28,9 +29,14 @@ import type {
   MirrorStatus,
   Movement,
   MovementDetail,
+  PersonBrief,
   ReconcileStatement,
   RemovedDuplicate,
   ReplayResult,
+  RequestCreate,
+  RequestDetail,
+  RequestStatus,
+  RequestSummary,
   ResponsableSearch,
   SessionInfo,
   Statement,
@@ -745,6 +751,53 @@ export const api = {
     if (range.to) params.set('date_to', range.to)
     const query = params.toString() ? `?${params}` : ''
     return saveFile(`/tools/statement-dossier/${statement.id}${query}`, `dossier-${statement.compte}.pdf`)
+  },
+
+  // ── Requests ────────────────────────────────────────────────────────────
+  listRequests() {
+    return request<RequestSummary[]>('/requests')
+  },
+  getRequest(id: number) {
+    return request<RequestDetail>(`/requests/${id}`)
+  },
+  createRequest(payload: RequestCreate) {
+    return request<RequestDetail>('/requests', { method: 'POST', body: JSON.stringify(payload) })
+  },
+  replyToRequest(id: number, body: string) {
+    return request<RequestDetail>(`/requests/${id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    })
+  },
+  moveRequest(id: number, status: RequestStatus, note = '') {
+    return request<RequestDetail>(`/requests/${id}/status`, {
+      method: 'POST',
+      body: JSON.stringify({ status, note }),
+    })
+  },
+  /** Who in the office a request can be handed to. */
+  requestOffice() {
+    return request<PersonBrief[]>('/requests/office')
+  },
+  assignRequest(id: number, assigneeId: number | null) {
+    return request<RequestDetail>(`/requests/${id}/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ assignee_id: assigneeId }),
+    })
+  },
+
+  // ── Notifications ───────────────────────────────────────────────────────
+  notifications(limit = 30) {
+    return request<AppNotification[]>(`/notifications?limit=${limit}`)
+  },
+  unreadNotifications() {
+    return request<{ count: number }>('/notifications/unread-count')
+  },
+  readNotification(id: number) {
+    return request<{ message: string }>(`/notifications/${id}/read`, { method: 'POST' })
+  },
+  readAllNotifications() {
+    return request<{ message: string }>('/notifications/read-all', { method: 'POST' })
   },
 
   // ── Documents app settings ──────────────────────────────────────────────
