@@ -219,7 +219,7 @@ const changePassword = useMutation({
       </p>
       <p v-else class="profile-foot">
         <AppIcon name="users" :size="14" />
-        <span>Per canviar el rol, demana-ho a un administrador/a.</span>
+        <span>Per canviar el rol, demana-ho al secretari o la secretària.</span>
       </p>
     </section>
 
@@ -436,7 +436,7 @@ const changePassword = useMutation({
   color: var(--accent-700);
 }
 
-.avatar.role-secretaria {
+.avatar.role-administratiu {
   background: var(--teal-100);
   color: var(--teal-700);
 }

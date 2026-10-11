@@ -157,7 +157,7 @@ TABLES: dict[str, tuple[str, dict[str, str]]] = {
             "id": "Clau.",
             "email": "Correu.",
             "display_name": "Nom.",
-            "role": "admin, secretaria o professor.",
+            "role": "admin (secretari/a), administratiu o professor.",
             "is_active": "1 si el compte és actiu.",
             "last_login_at": "Darrer inici de sessió.",
         },

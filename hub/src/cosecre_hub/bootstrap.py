@@ -27,7 +27,7 @@ ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("users", "display_name", "VARCHAR(255)"),
     ("users", "is_active", "BOOLEAN DEFAULT 1 NOT NULL"),
     ("users", "last_login_at", "DATETIME"),
-    ("users", "role", "VARCHAR(16) DEFAULT 'secretaria' NOT NULL"),
+    ("users", "role", "VARCHAR(16) DEFAULT 'administratiu' NOT NULL"),
     ("users", "password_set_at", "DATETIME"),
     ("refresh_sessions", "client", "VARCHAR(64)"),
     ("refresh_sessions", "client_label", "VARCHAR(255)"),
@@ -90,11 +90,18 @@ def apply_compat_migrations(session: Session) -> list[str]:
         logger.info("Applied schema catch-up: %s", ", ".join(applied))
     if "users.role" in applied:
         # Accounts from before roles: admins stay admins, and everyone else —
-        # who could already reach everything — becomes Secretaria rather than
+        # who could already reach everything — becomes Administratiu/va rather than
         # losing access on deploy. They all chose their own password already.
         session.execute(text("UPDATE users SET role = 'admin' WHERE is_admin = 1"))
         session.execute(text("UPDATE users SET password_set_at = created_at WHERE password_set_at IS NULL"))
         session.commit()
+    if "users" in existing_tables:
+        # The office role was called Secretaria before the head of the office
+        # (admin) took that name; it is Administratiu/va now.
+        renamed = session.execute(text("UPDATE users SET role = 'administratiu' WHERE role = 'secretaria'"))
+        session.commit()
+        if renamed.rowcount:
+            applied.append(f"users.role secretaria→administratiu ({renamed.rowcount})")
     return applied
 
 
@@ -194,7 +201,7 @@ def seed_users(session: Session, settings: Settings) -> None:
                     email=seed_user.email,
                     password_hash=hash_password(seed_user.password),
                     is_admin=seed_user.is_admin,
-                    role="admin" if seed_user.is_admin else "secretaria",
+                    role="admin" if seed_user.is_admin else "administratiu",
                     is_active=True,
                     password_set_at=utcnow(),
                 )
@@ -202,7 +209,7 @@ def seed_users(session: Session, settings: Settings) -> None:
             continue
         existing.password_hash = hash_password(seed_user.password)
         existing.is_admin = seed_user.is_admin
-        existing.role = "admin" if seed_user.is_admin else "secretaria"
+        existing.role = "admin" if seed_user.is_admin else "administratiu"
         existing.password_set_at = existing.password_set_at or utcnow()
 
     session.commit()

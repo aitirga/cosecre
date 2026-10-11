@@ -81,10 +81,10 @@ def require_role(*roles: str, detail: str = "No tens permís per fer això."):
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cal ser administrador.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cal ser secretari/a.")
     return user
 
 
-#: The office: admins and Secretaria. Everything that touches the register, the
+#: The office: Secretari/a and Administratiu/va. Everything that touches the register, the
 #: statements and the hub's own settings sits behind this.
-require_staff = require_role("admin", "secretaria", detail="Aquesta secció és només per a secretaria.")
+require_staff = require_role("admin", "administratiu", detail="Aquesta secció és només per a secretaria.")

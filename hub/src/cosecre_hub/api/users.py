@@ -111,7 +111,7 @@ def update_user(
     if role is not None and role != "admin" and _is_last_admin(session, user):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="És l'últim compte d'administrador.",
+            detail="És l'últim compte de secretari/a.",
         )
 
     if payload.display_name is not None:

@@ -17,7 +17,7 @@ def school(tmp_path):
     client, _ = build_client(tmp_path, sheet_service=FakeSheets())
     with client:
         admin = register_admin(client)
-        secretaria = make_user(client, admin, "secretaria")
+        secretaria = make_user(client, admin, "administratiu")
         teacher = make_user(client, admin, "professor", email="laia@example.com")
         other = make_user(client, admin, "professor", email="pau@example.com")
         yield client, admin, secretaria, teacher, other

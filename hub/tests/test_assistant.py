@@ -198,7 +198,7 @@ def test_the_api_can_be_read_as_the_person_but_not_its_secrets(office):
 
 def test_chats_are_private_and_can_be_deleted(office):
     client, admin, _, provider = office
-    secretaria = make_user(client, admin, "secretaria")
+    secretaria = make_user(client, admin, "administratiu")
     provider.script = ["Hola!"]
     mine = _conversation(client, admin)
     _ask(client, admin, mine, "Hola")

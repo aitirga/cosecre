@@ -33,7 +33,7 @@ export const documentsModule: CosecreModule = {
   id: 'documents',
   appSlug: 'cosecre-docs',
   // The office's: Professor/a sends invoices in through their own screens.
-  roles: ['admin', 'secretaria'],
+  roles: ['admin', 'administratiu'],
   routes: [
     { path: 'estat', name: 'status', component: StatusView },
     { path: 'registre', name: 'register', component: RegisterView },

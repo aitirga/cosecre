@@ -117,11 +117,11 @@ async function activate(payload: Parameters<typeof api.activate>[0]) {
 
 /**
  * The signed-in person's role. A hub from before roles only says `is_admin`,
- * and everyone else there could reach everything — which is Secretaria.
+ * and everyone else there could reach everything — which is Administratiu/va.
  */
 function roleOf(user: User | null): Role | null {
   if (!user) return null
-  return user.role ?? (user.is_admin ? 'admin' : 'secretaria')
+  return user.role ?? (user.is_admin ? 'admin' : 'administratiu')
 }
 
 /** Swap in a fresher copy of the signed-in user, e.g. after editing the profile. */
@@ -146,7 +146,7 @@ export function useAuth() {
     role: computed(() => roleOf(state.user)),
     isAdmin: computed(() => roleOf(state.user) === 'admin'),
     /** The office: admins and Secretaria. */
-    isStaff: computed(() => ['admin', 'secretaria'].includes(roleOf(state.user) ?? '')),
+    isStaff: computed(() => ['admin', 'administratiu'].includes(roleOf(state.user) ?? '')),
     isProfessor: computed(() => roleOf(state.user) === 'professor'),
     hasRole: (roles: readonly Role[] | undefined) =>
       !roles || (roleOf(state.user) !== null && roles.includes(roleOf(state.user)!)),

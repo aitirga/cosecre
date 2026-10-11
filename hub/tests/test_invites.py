@@ -97,5 +97,5 @@ def test_the_last_admin_cannot_be_demoted(hub):
     client, _ = hub
     admin = register_admin(client)
     me = client.get(f"{API}/auth/me", headers=admin).json()
-    response = client.patch(f"{API}/users/{me['id']}", headers=admin, json={"role": "secretaria"})
+    response = client.patch(f"{API}/users/{me['id']}", headers=admin, json={"role": "administratiu"})
     assert response.status_code == 400

@@ -12,6 +12,6 @@ export const requestsModule: CosecreModule = {
   routes: [{ path: 'sollicituds', name: 'requests', component: RequestsView }],
   navGroups: [{ id: 'tasques', label: 'Tasques' }],
   nav: [
-    { name: 'requests', label: 'Sol·licituds', icon: 'inbox', group: 'tasques', roles: ['admin', 'secretaria'] },
+    { name: 'requests', label: 'Sol·licituds', icon: 'inbox', group: 'tasques', roles: ['admin', 'administratiu'] },
   ],
 }

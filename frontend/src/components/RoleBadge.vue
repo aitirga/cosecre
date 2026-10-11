@@ -30,7 +30,7 @@ const label = computed(() => ROLE_LABELS[props.role] ?? props.role)
   background: var(--accent-600);
 }
 
-.role-secretaria .badge-dot {
+.role-administratiu .badge-dot {
   background: var(--teal-700);
 }
 

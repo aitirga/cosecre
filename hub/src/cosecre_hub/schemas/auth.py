@@ -6,9 +6,9 @@ from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field
 
-#: Administrador/a runs the hub and its accounts; Secretaria runs the register,
+#: Secretari/a runs the hub and its accounts; Administratiu/va runs the register,
 #: statements and requests; Professor/a only sends requests and invoices in.
-Role = Literal["admin", "secretaria", "professor"]
+Role = Literal["admin", "administratiu", "professor"]
 AccountStatus = Literal["active", "pending", "disabled"]
 
 
@@ -17,7 +17,7 @@ class UserRead(BaseModel):
     email: EmailStr
     display_name: str | None = None
     is_admin: bool
-    role: Role = "secretaria"
+    role: Role = "administratiu"
     is_active: bool = True
     #: Computed on the row (``User.account_status``), not stored.
     status: AccountStatus = Field(
@@ -107,7 +107,7 @@ class UserCreate(BaseModel):
 
     @property
     def resolved_role(self) -> str:
-        return self.role or ("admin" if self.is_admin else "secretaria")
+        return self.role or ("admin" if self.is_admin else "administratiu")
 
 
 class UserUpdate(BaseModel):
@@ -124,7 +124,7 @@ class UserUpdate(BaseModel):
         if self.is_admin is True:
             return "admin"
         if self.is_admin is False:
-            return "secretaria"
+            return "administratiu"
         return None
 
 

@@ -42,7 +42,7 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     #: ``admin``, ``secretaria`` or ``professor``. ``is_admin`` is kept in step
     #: with it (``role == "admin"``) for tokens and clients that predate roles.
-    role: Mapped[str] = mapped_column(String(16), default="secretaria", server_default="secretaria")
+    role: Mapped[str] = mapped_column(String(16), default="administratiu", server_default="administratiu")
     # Added by the hub.
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")

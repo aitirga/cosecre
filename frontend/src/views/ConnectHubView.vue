@@ -139,7 +139,7 @@ async function connect() {
             </div>
             <p v-if="!found.has_users" class="notice notice-info">
               <AppIcon name="alert" :size="15" />
-              <span>Aquest hub encara no té comptes: crearàs el primer administrador.</span>
+              <span>Aquest hub encara no té comptes: crearàs el primer compte de secretari/a.</span>
             </p>
             <button class="btn btn-primary btn-block" type="button" :disabled="checking" @click="connect">
               Connecta amb aquest hub

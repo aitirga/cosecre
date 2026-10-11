@@ -7,7 +7,7 @@ import type { CosecreModule } from './types'
 
 export const assistantModule: CosecreModule = {
   id: 'assistant',
-  roles: ['admin', 'secretaria'],
+  roles: ['admin', 'administratiu'],
   routes: [{ path: 'assistent', name: 'assistant', component: AssistantView }],
   nav: [{ name: 'assistant', label: 'Assistent', icon: 'sparkles', badge: 'beta' }],
 }

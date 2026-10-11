@@ -69,7 +69,7 @@ def register(
     if not is_first_user and not settings.allow_open_registration:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="El registre està tancat en aquest hub. Demana un compte a un administrador.",
+            detail="El registre està tancat en aquest hub. Demana un compte al secretari o la secretària.",
         )
 
     existing_user = session.query(User).filter(User.email == payload.email).first()
@@ -81,7 +81,7 @@ def register(
         password_hash=hash_password(payload.password),
         display_name=payload.display_name,
         is_admin=is_first_user,
-        role="admin" if is_first_user else "secretaria",
+        role="admin" if is_first_user else "administratiu",
         is_active=True,
         last_login_at=utcnow(),
         password_set_at=utcnow(),

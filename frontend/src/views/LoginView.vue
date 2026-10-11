@@ -49,10 +49,10 @@ const lead = computed(() => {
     return "És el primer cop que hi entres: tria la contrasenya amb què entraràs a partir d'ara."
   }
   if (mode.value === 'register' && isFirstAccount.value) {
-    return 'Aquest hub encara no té comptes. El primer que creïs serà l\'administrador i podrà afegir la resta.'
+    return 'Aquest hub encara no té comptes. El primer que creïs serà el de secretari/a i podrà afegir la resta.'
   }
   if (mode.value === 'register') return 'Registra un compte nou en aquest hub.'
-  return "Entra amb el correu que t'ha habilitat un administrador. El primer cop, deixa la contrasenya en blanc."
+  return "Entra amb el correu que t'ha habilitat el secretari o la secretària. El primer cop, deixa la contrasenya en blanc."
 })
 
 const submitting = computed(() => auth.state.loading)

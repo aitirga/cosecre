@@ -33,10 +33,10 @@ export interface HubMeta {
 // ── Identity ────────────────────────────────────────────────────────────────
 
 /**
- * Administrador/a runs the hub and its accounts; Secretaria runs the register,
+ * Secretari/a runs the hub and its accounts; Administratiu/va runs the register,
  * statements and requests; Professor/a only sends requests and invoices in.
  */
-export type Role = 'admin' | 'secretaria' | 'professor'
+export type Role = 'admin' | 'administratiu' | 'professor'
 export type UserStatus = 'active' | 'pending' | 'disabled'
 
 export interface User {

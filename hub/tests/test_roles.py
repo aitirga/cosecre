@@ -47,7 +47,7 @@ def test_a_professor_is_refused_everywhere_outside_their_corner(hub):
 def test_secretaria_works_the_register_but_not_the_accounts(hub):
     client, _ = hub
     admin = register_admin(client)
-    secretaria = make_user(client, admin, "secretaria")
+    secretaria = make_user(client, admin, "administratiu")
 
     assert client.get(f"{API}/documents/records", headers=secretaria).status_code == 200
     assert client.get(f"{API}/statements/imports", headers=secretaria).status_code == 200
@@ -77,9 +77,9 @@ def test_promoting_takes_effect_on_the_next_request(hub):
     user_id = client.get(f"{API}/auth/me", headers=professor).json()["id"]
     assert client.get(f"{API}/documents/records", headers=professor).status_code == 403
 
-    updated = client.patch(f"{API}/users/{user_id}", headers=admin, json={"role": "secretaria"})
+    updated = client.patch(f"{API}/users/{user_id}", headers=admin, json={"role": "administratiu"})
     assert updated.status_code == 200
-    assert updated.json()["role"] == "secretaria"
+    assert updated.json()["role"] == "administratiu"
     assert client.get(f"{API}/documents/records", headers=professor).status_code == 200
 
 
@@ -112,7 +112,7 @@ def test_accounts_from_before_roles_keep_their_access(tmp_path):
             f"{API}/auth/login", json={"email": "member@example.com", "password": "member-password"}
         ).json()["access_token"]
         member = client.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {token}"}).json()
-        assert member["role"] == "secretaria"
+        assert member["role"] == "administratiu"
         assert member["status"] == "active"
         users = client.get(f"{API}/users", headers={"Authorization": f"Bearer {token}"})
         assert users.status_code == 403

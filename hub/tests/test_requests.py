@@ -9,7 +9,7 @@ API = "/api/v1"
 
 def _people(client):
     admin = register_admin(client)
-    secretaria = make_user(client, admin, "secretaria")
+    secretaria = make_user(client, admin, "administratiu")
     teacher = make_user(client, admin, "professor", email="laia@example.com")
     other = make_user(client, admin, "professor", email="pau@example.com")
     return admin, secretaria, teacher, other
@@ -94,7 +94,7 @@ def test_the_office_replying_takes_the_request(hub):
         f"{API}/requests/{asked['id']}/messages", headers=secretaria, json={"body": "Ho mirem avui."}
     ).json()
     assert replied["status"] == "en_revisio"
-    assert replied["assignee"]["role"] == "secretaria"
+    assert replied["assignee"]["role"] == "administratiu"
     assert [m["kind"] for m in replied["messages"]] == ["message", "status"]
     assert _count(client, teacher) == 1
 
@@ -173,5 +173,5 @@ def test_the_office_list_is_the_office_only(hub):
     client, _ = hub
     _admin, secretaria, teacher, _other = _people(client)
     people = client.get(f"{API}/requests/office", headers=secretaria).json()
-    assert sorted(p["role"] for p in people) == ["admin", "secretaria"]
+    assert sorted(p["role"] for p in people) == ["admin", "administratiu"]
     assert client.get(f"{API}/requests/office", headers=teacher).status_code == 403

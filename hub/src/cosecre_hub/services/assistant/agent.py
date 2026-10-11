@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 HISTORY_MESSAGES = 40
 LOCAL_TZ = ZoneInfo("Europe/Madrid")
 
-ROLE_LABEL = {"admin": "administrador/a", "secretaria": "secretaria", "professor": "professor/a"}
+ROLE_LABEL = {"admin": "secretari/a", "administratiu": "administratiu/va", "professor": "professor/a"}
 
 INSTRUCTIONS = """\
 Ets l'Assistent de Cosecre (beta), dins l'aplicació de comptabilitat d'un institut: el registre de \

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Document, Notification, Request, User
 
-STAFF_ROLES = ("admin", "secretaria")
+STAFF_ROLES = ("admin", "administratiu")
 
 KIND_LABEL = {
     "compra": "Compra",
