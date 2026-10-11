@@ -22,7 +22,7 @@ from ...models import BankMovement, Document, ExtractionJob, PaymentMatch, Uploa
 from ...schemas import AiHint, DocumentRecord, SyncResult
 from ...schemas.auth import PersonBrief
 from ...schemas.documents import PaidBy
-from ...services.extraction import DocumentExtractionService, ExtractedDocument
+from ...services.extraction import EXTRACTED_FIELDS, DocumentExtractionService, ExtractedDocument
 from ...services.sheets import (
     JUSTIFIED_KEY,
     REGISTER_COLUMNS,
@@ -187,30 +187,54 @@ def confirm_hints(document: Document, fields: list[str] | None = None) -> None:
     document.ai_hints = hints
 
 
-def apply_extraction(document: Document, extracted: ExtractedDocument, *, only_empty: bool) -> list[str]:
+def apply_extraction(
+    document: Document,
+    extracted: ExtractedDocument,
+    *,
+    only_empty: bool,
+    keep: frozenset[str] = frozenset(),
+) -> list[str]:
     """Merge a model reading into an entry.
 
     ``only_empty`` is for entries a person already worked on (migrated rows):
-    the models may fill gaps, never overwrite.
+    the models may fill gaps, never overwrite. ``keep`` names the fields a
+    person typed while the models were still reading: theirs stand, and what
+    the models read instead is kept aside in the trace for them to compare.
     """
     filled: list[str] = []
+    kept: dict[str, str] = {}
     for name, value in extracted.fields.items():
         if value in ("", None):
             continue
         current = getattr(document, name)
+        if name in keep:
+            if current != value:
+                kept[name] = value.isoformat() if hasattr(value, "isoformat") else value
+            continue
         if only_empty and current not in ("", None):
             continue
         if current != value:
             setattr(document, name, value)
             filled.append(name)
     document.transcripcio = extracted.transcription
-    document.ai_trace = {**extracted.trace, "only_empty": only_empty, "filled": filled}
+    document.ai_trace = {**extracted.trace, "only_empty": only_empty, "filled": filled, "kept": kept}
     hints = dict(document.ai_hints or {})
     for name, hint in extracted.hints.items():
+        if name in keep:
+            continue
         if not only_empty or name in filled:
             hints[name] = hint.model_dump(exclude_none=True)
     document.ai_hints = hints
     return filled
+
+
+def typed_by_hand(document: Document) -> frozenset[str]:
+    """The fields a person filled while the entry was still being read.
+
+    An upload opens its entry empty, so anything the models could fill that
+    already holds a value was typed in the meantime.
+    """
+    return frozenset(name for name in EXTRACTED_FIELDS if getattr(document, name) not in ("", None))
 
 
 # ── Drive ────────────────────────────────────────────────────────────────────
@@ -374,7 +398,10 @@ def process_job(app, job_id: str) -> None:
             model=workspace.openai_model or settings.openai_model,
             prompt_override=workspace.extraction_prompt,
         )
-        apply_extraction(document, extracted, only_empty=False)
+        # A person may have been filling the entry in while the models read it:
+        # pick up what they saved, and leave it standing.
+        session.refresh(document)
+        apply_extraction(document, extracted, only_empty=False, keep=typed_by_hand(document))
         document.origen = "Foto" if upload.capture_source == "camera" else "Original"
         job.extracted_payload = {
             **{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in extracted.fields.items()},
@@ -383,6 +410,8 @@ def process_job(app, job_id: str) -> None:
         job.status = document.status = "written_to_sheet"
         session.commit()
 
+        # Edits keep arriving while the file goes to Drive; name and push the latest.
+        session.refresh(document)
         if sheet_service.drive_ready:
             try:
                 folder_id = settings.documents_folder_id

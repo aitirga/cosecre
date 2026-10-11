@@ -42,6 +42,7 @@ from ...services import notifications, people
 from ...services.ai_filter import AiFilterUnavailable, read_filter
 from ...services.storage import save_upload_file
 from .register import (
+    IN_FLIGHT,
     confirm_hints,
     drive_name,
     extension_for,
@@ -358,12 +359,31 @@ def get_document(
     return to_record(_document(session, reference))
 
 
-def _save(app, session: Session, document: Document, changes: dict, actor: User | None = None) -> DocumentRecord:
-    if document.status in {"pending", "processing", "written_to_sheet"}:
+def _save_while_reading(session: Session, document: Document, changes: dict) -> DocumentRecord:
+    """A person filling an entry in while the models still read it.
+
+    Only the fields are stored: the reading leaves them standing (see
+    ``typed_by_hand``) and takes the entry to Drive and the sheet itself when
+    it is done. Validating has to wait for that.
+    """
+    if changes.get("validat"):
         raise HTTPException(
             status_code=409,
-            detail="El document encara s'està processant. Espera que acabi abans d'editar-lo.",
+            detail="La IA encara està llegint el document. Espera que acabi per validar-lo.",
         )
+    changes.pop("validat", None)
+    changed = [name for name, value in changes.items() if getattr(document, name) != value]
+    for name, value in changes.items():
+        setattr(document, name, "" if value is None and isinstance(getattr(document, name), str) else value)
+    if {"responsable_nom", "responsable_email"} & set(changed):
+        people.remember(session, document.responsable_nom, document.responsable_email)
+    session.commit()
+    return to_record(document)
+
+
+def _save(app, session: Session, document: Document, changes: dict, actor: User | None = None) -> DocumentRecord:
+    if document.status in IN_FLIGHT:
+        return _save_while_reading(session, document, changes)
     changed = [name for name, value in changes.items() if getattr(document, name) != value]
     for name, value in changes.items():
         setattr(document, name, "" if value is None and isinstance(getattr(document, name), str) else value)

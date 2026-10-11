@@ -458,6 +458,57 @@ def test_validation_confirms_every_model_suggestion(tmp_path):
         assert sheet.row_for(reference)["validat"] is True
 
 
+def test_what_a_person_types_while_the_models_read_stands(tmp_path):
+    class TypedMeanwhile(FakeProvider):
+        """Someone fills two fields in while the reading is still under way."""
+
+        def extract_file(self, request):
+            with client.app.state.session_factory() as session:
+                entry = session.query(Document).one()
+                entry.num_factura = "MEVA-1"
+                entry.responsable_nom = "Anna Puig"
+                session.commit()
+            return super().extract_file(request)
+
+    sheet = FakeSheets()
+    client, _ = build_client(tmp_path, provider=TypedMeanwhile(), sheet_service=sheet)
+    with client:
+        headers = register_admin(client)
+        reference = upload(client, headers)
+        record = client.get(f"{RECORDS}/{reference}", headers=headers).json()
+        assert record["num_factura"] == "MEVA-1"
+        assert record["responsable_nom"] == "Anna Puig"
+        # The rest is the models' reading, as ever.
+        assert record["import"] == 100.0
+        assert record["proveidor"]
+        # What they read instead is kept aside, and the person's field is no suggestion.
+        assert record["ai_trace"]["kept"] == {"num_factura": "F-2026/001"}
+        assert "num_factura" not in record["ai_hints"]
+        assert "num_factura" not in record["ai_trace"]["filled"]
+        # The sheet and Drive get the person's number.
+        assert sheet.row_for(reference)["num_factura"] == "MEVA-1"
+        assert list(sheet.drive.values())[0]["name"] == "2026-01-31_MEVA-1.jpg"
+
+
+def test_an_entry_being_read_takes_fields_but_not_a_validation(register):
+    client, headers, sheet, _ = register
+    reference = upload(client, headers)
+    with client.app.state.session_factory() as session:
+        entry = session.query(Document).filter_by(internal_doc_number=reference).one()
+        entry.status = "processing"
+        session.commit()
+
+    saved = client.patch(f"{RECORDS}/{reference}", headers=headers, json={"descripcio": "Escrit a mà"})
+    assert saved.status_code == 200
+    assert saved.json()["descripcio"] == "Escrit a mà"
+    # The reading still owns the entry: no status change, and the sheet waits for it.
+    assert saved.json()["extraction_status"] == "processing"
+    assert sheet.row_for(reference)["descripcio"] != "Escrit a mà"
+
+    refused = client.patch(f"{RECORDS}/{reference}", headers=headers, json={"validat": True})
+    assert refused.status_code == 409
+
+
 def test_edits_reject_bad_dates_and_values_off_the_list(register):
     client, headers, _, _ = register
     reference = upload(client, headers)

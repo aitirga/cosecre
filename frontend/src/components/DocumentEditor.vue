@@ -53,7 +53,9 @@ const payments = computed(() => paymentsQuery.data.value ?? [])
 const documentQuery = useQuery({
   queryKey: ['document', internalDocNumber],
   queryFn: () => api.getDocument(internalDocNumber),
-  refetchInterval: 10000,
+  // Closer while the models read, so their fields land as soon as they are in.
+  refetchInterval: (query) =>
+    ['pending', 'processing', 'written_to_sheet'].includes(query.state.data?.extraction_status ?? '') ? 2000 : 10000,
 })
 
 const record = computed(() => documentQuery.data.value)
@@ -62,8 +64,20 @@ const ALL_FIELDS = SECTIONS.flatMap((section) => section.fields)
 // ── Form state: everything as the text a person types ───────────────────────
 const form = reactive(Object.fromEntries(ALL_FIELDS.map((f) => [f.key, ''])) as Record<FieldKey, string>)
 
-/** True once the user has typed, so a background refetch cannot overwrite them. */
-const dirty = ref(false)
+/**
+ * Fields typed and not yet saved. A background refetch refills every other
+ * field, so the models finishing — or a sheet edit — shows up without
+ * touching what is being typed.
+ */
+const unsaved = reactive(new Set<FieldKey>())
+const dirty = computed(() => unsaved.size > 0)
+/** Bumped on every keystroke, so a save only settles the fields it carried. */
+const editVersion = ref(0)
+
+function touch(...keys: FieldKey[]) {
+  for (const key of keys) unsaved.add(key)
+  editVersion.value += 1
+}
 
 function toText(field: FieldDef, value: DocumentRecord[FieldKey]): string {
   if (value == null) return ''
@@ -73,16 +87,12 @@ function toText(field: FieldDef, value: DocumentRecord[FieldKey]): string {
 }
 
 function fillForm(value: DocumentRecord) {
-  for (const field of ALL_FIELDS) form[field.key] = toText(field, value[field.key])
+  for (const field of ALL_FIELDS) {
+    if (!unsaved.has(field.key)) form[field.key] = toText(field, value[field.key])
+  }
 }
 
-watch(
-  record,
-  (value) => {
-    if (value && !dirty.value) fillForm(value)
-  },
-  { immediate: true },
-)
+watch(record, (value) => value && fillForm(value), { immediate: true })
 
 const errors = computed(() => {
   const found: Partial<Record<FieldKey, string>> = {}
@@ -128,7 +138,7 @@ function visibleFields(fields: FieldDef[]) {
 function pickResponsable(person: Responsable) {
   if (person.nom && !form.responsable_nom.trim()) form.responsable_nom = person.nom
   if (person.email && !form.responsable_email.trim()) form.responsable_email = person.email
-  dirty.value = true
+  touch('responsable_nom', 'responsable_email')
 }
 
 // ── Hints ────────────────────────────────────────────────────────────────────
@@ -146,12 +156,12 @@ const saveError = ref('')
 const sheetWarning = ref('')
 const saved = ref(false)
 
-function afterSave(updated: DocumentRecord) {
+function afterSave(updated: DocumentRecord, version: number) {
   saveError.value = ''
   sheetWarning.value = updated.error_message ?? ''
-  dirty.value = false
+  // Typing that went on during the request is still unsaved, and stays put.
+  if (version === editVersion.value) unsaved.clear()
   queryClient.setQueryData(['document', internalDocNumber], updated)
-  fillForm(updated)
   saved.value = true
   window.setTimeout(() => (saved.value = false), 2500)
   void queryClient.invalidateQueries({ queryKey: ['documents'] })
@@ -163,9 +173,11 @@ function reportError(error: unknown) {
 }
 
 const saveMutation = useMutation({
-  mutationFn: (extra: DocumentUpdate = {}) =>
-    api.updateDocument(internalDocNumber, { ...changes(), ...extra }),
-  onSuccess: afterSave,
+  mutationFn: async (extra: DocumentUpdate = {}) => {
+    const version = editVersion.value
+    return { updated: await api.updateDocument(internalDocNumber, { ...changes(), ...extra }), version }
+  },
+  onSuccess: ({ updated, version }) => afterSave(updated, version),
   onError: reportError,
 })
 
@@ -193,6 +205,75 @@ const trackedJob = computed(() => getTrackedJob(internalDocNumber))
 const inFlight = computed(() =>
   ['pending', 'processing', 'written_to_sheet'].includes(record.value?.extraction_status ?? ''),
 )
+
+// ── Filling in alongside the AI ──────────────────────────────────────────────
+// While the models read, every field stays open. What a person types is saved
+// on its own after a pause, and the hub leaves it standing when the reading
+// lands; the fields still empty are the ones the AI is about to fill.
+let autosaveTimer: number | undefined
+
+watch(
+  () => [editVersion.value, inFlight.value, saveMutation.isPending.value] as const,
+  () => {
+    window.clearTimeout(autosaveTimer)
+    if (!inFlight.value || !dirty.value) return
+    autosaveTimer = window.setTimeout(() => {
+      if (inFlight.value && dirty.value && !hasErrors.value && !saveMutation.isPending.value) save()
+    }, 700)
+  },
+)
+onBeforeUnmount(() => window.clearTimeout(autosaveTimer))
+
+/** Whose a field is: still being read, typed by the person, or neither. */
+function ownerOf(field: FieldDef): 'reading' | 'mine' | null {
+  if (inFlight.value) {
+    if (form[field.key].trim()) return 'mine'
+    return field.ai ? 'reading' : null
+  }
+  return field.key in kept.value ? 'mine' : null
+}
+
+/** The job poll can be a beat ahead of the entry; until the entry lands, it is still reading. */
+const readingStage = computed(() => {
+  const job = trackedJob.value
+  if (job && job.progress < 100) return { label: job.stageLabel, progress: job.progress }
+  return { label: job ? 'Acabant' : 'Llegint', progress: job ? 95 : 50 }
+})
+
+const readingCount = computed(() => ALL_FIELDS.filter((field) => ownerOf(field) === 'reading').length)
+const mineCount = computed(() => ALL_FIELDS.filter((field) => ownerOf(field) === 'mine').length)
+
+/** The register calls the amount `import`; the reading names it `import_value`. */
+function readingKey(key: FieldKey) {
+  return key === 'import' ? 'import_value' : key
+}
+
+/** What the models read for the fields a person had already filled in. */
+const kept = computed(() => {
+  const found: Partial<Record<FieldKey, string>> = {}
+  const trace = record.value?.ai_trace?.kept ?? {}
+  for (const field of ALL_FIELDS) {
+    const value = trace[readingKey(field.key)]
+    if (value == null || value === '') continue
+    found[field.key] = toText(field, value as DocumentRecord[FieldKey])
+  }
+  return found
+})
+
+function useReading(field: FieldDef) {
+  const value = kept.value[field.key]
+  if (value == null) return
+  form[field.key] = value
+  touch(field.key)
+}
+
+/** The fields the reading just filled glow for a moment, so the eye finds them. */
+const justFilled = reactive(new Set<string>())
+watch(inFlight, (now, before) => {
+  if (!before || now) return
+  for (const key of record.value?.ai_trace?.filled ?? []) justFilled.add(key === 'import_value' ? 'import' : key)
+  window.setTimeout(() => justFilled.clear(), 2400)
+})
 
 // ── Original document preview ────────────────────────────────────────────────
 const photoSrc = ref<string | null>(null)
@@ -315,18 +396,26 @@ const SHEET_STATE = {
         </span>
       </p>
 
-      <section v-if="trackedJob && trackedJob.progress < 100" class="card progress-card">
-        <div class="progress-top">
-          <strong>{{ trackedJob.stageLabel }}</strong>
-          <span class="muted mono">{{ trackedJob.progress }}%</span>
+      <section v-if="inFlight" class="reading-card" aria-live="polite">
+        <div class="reading-top">
+          <AppIcon name="sparkles" :size="15" class="ai-mark" />
+          <strong>{{ readingStage.label }}</strong>
+          <span class="reading-counts">
+            <span class="count-ai"><span class="dot" />{{ readingCount }} per la IA</span>
+            <span class="count-mine"><span class="dot" />{{ mineCount }} teus</span>
+          </span>
+          <span class="mono reading-pct">{{ readingStage.progress }}%</span>
         </div>
-        <div class="progress"><span :style="{ width: `${trackedJob.progress}%` }" /></div>
-        <p class="hint">{{ trackedJob.detail }}</p>
+        <div class="reading-bar"><span :style="{ width: `${readingStage.progress}%` }" /></div>
+        <p class="reading-hint">
+          La IA està omplint els camps marcats en lila. Mentrestant, omple el que vulguis: es desa
+          sol i la IA no ho sobreescriurà.
+        </p>
       </section>
 
       <div class="columns">
         <form class="card form-card" @submit.prevent="save">
-          <fieldset :disabled="inFlight" class="sections">
+          <fieldset class="sections">
             <section v-for="section in SECTIONS" :key="section.id" class="section">
               <h2 class="section-title">{{ section.title }}</h2>
               <div class="grid">
@@ -338,12 +427,25 @@ const SHEET_STATE = {
                     wide: field.wide,
                     review: hintFor(field.key)?.review && !record.validat,
                     invalid: errors[field.key],
+                    reading: ownerOf(field) === 'reading',
+                    mine: ownerOf(field) === 'mine',
+                    filled: justFilled.has(field.key),
                   }"
                 >
                   <span class="label">
                     {{ field.label }}
+                    <span v-if="ownerOf(field) === 'reading'" class="ai-tag reading-tag" title="La IA està llegint aquest camp">
+                      <span class="pulse" />IA
+                    </span>
                     <span
-                      v-if="hintFor(field.key)"
+                      v-else-if="ownerOf(field) === 'mine'"
+                      class="mine-tag"
+                      :title="inFlight ? 'L\'has omplert tu: la IA no el tocarà' : 'L\'has omplert tu mentre la IA llegia'"
+                    >
+                      Tu
+                    </span>
+                    <span
+                      v-else-if="hintFor(field.key)"
                       class="ai-tag"
                       :class="{ warn: hintFor(field.key)?.review && !record.validat }"
                       :title="describeHint(hintFor(field.key)!)"
@@ -355,7 +457,7 @@ const SHEET_STATE = {
                     v-if="field.kind === 'choice'"
                     v-model="form[field.key]"
                     class="select"
-                    @change="dirty = true"
+                    @change="touch(field.key)"
                   >
                     <option value="">—</option>
                     <option v-for="option in field.options" :key="option" :value="option">
@@ -372,8 +474,8 @@ const SHEET_STATE = {
                     v-else-if="field.kind === 'person' || field.kind === 'email'"
                     v-model="form[field.key]"
                     :field="field.kind === 'person' ? 'nom' : 'email'"
-                    :placeholder="field.placeholder"
-                    @update:model-value="dirty = true"
+                    :placeholder="ownerOf(field) === 'reading' ? 'La IA ho està llegint…' : field.placeholder"
+                    @update:model-value="touch(field.key)"
                     @pick="pickResponsable"
                   />
                   <textarea
@@ -381,8 +483,8 @@ const SHEET_STATE = {
                     v-model="form[field.key]"
                     class="textarea"
                     rows="2"
-                    :placeholder="field.placeholder"
-                    @input="dirty = true"
+                    :placeholder="ownerOf(field) === 'reading' ? 'La IA ho està llegint…' : field.placeholder"
+                    @input="touch(field.key)"
                   />
                   <input
                     v-else
@@ -391,10 +493,15 @@ const SHEET_STATE = {
                     :class="{ 'input-mono': field.kind === 'code' || field.kind === 'date' || field.kind === 'amount' }"
                     type="text"
                     :inputmode="field.kind === 'amount' ? 'decimal' : field.kind === 'date' ? 'numeric' : undefined"
-                    :placeholder="field.kind === 'date' ? 'dd/mm/aaaa' : field.placeholder"
-                    @input="dirty = true"
+                    :placeholder="ownerOf(field) === 'reading' ? 'La IA ho està llegint…' : field.kind === 'date' ? 'dd/mm/aaaa' : field.placeholder"
+                    @input="touch(field.key)"
                   />
                   <span v-if="errors[field.key]" class="field-error">{{ errors[field.key] }}</span>
+                  <span v-else-if="!inFlight && kept[field.key] && kept[field.key] !== form[field.key]" class="kept-line">
+                    <AppIcon name="sparkles" :size="11" class="ai-mark" />
+                    <span class="truncate">La IA hi llegia <span class="mono">{{ kept[field.key] }}</span></span>
+                    <button class="kept-use" type="button" @click.prevent="useReading(field)">Usa-ho</button>
+                  </span>
                   <span
                     v-else-if="field.key === 'compte_corrent' && record.iban_valid === false && !dirty"
                     class="field-error"
@@ -407,10 +514,16 @@ const SHEET_STATE = {
           </fieldset>
 
           <div class="form-actions">
+            <span v-if="inFlight" class="autosave">
+              <template v-if="saveMutation.isPending.value">Desant…</template>
+              <template v-else-if="dirty">Es desarà en deixar d'escriure</template>
+              <template v-else>Es desa sol mentre la IA llegeix</template>
+            </span>
             <button
+              v-else
               class="btn btn-outline"
               type="submit"
-              :disabled="saveMutation.isPending.value || !dirty || hasErrors || inFlight"
+              :disabled="saveMutation.isPending.value || !dirty || hasErrors"
             >
               {{ saveMutation.isPending.value ? 'Desant…' : 'Desa' }}
             </button>
@@ -418,6 +531,7 @@ const SHEET_STATE = {
               class="btn btn-primary"
               type="button"
               :disabled="saveMutation.isPending.value || (record.validat && !dirty) || hasErrors || inFlight"
+              :title="inFlight ? 'Espera que la IA acabi de llegir-lo' : undefined"
               @click="saveAndValidate()"
             >
               <AppIcon name="check" />
@@ -438,7 +552,7 @@ const SHEET_STATE = {
               <AppIcon name="check" :size="12" />
               Desat
             </span>
-            <span class="hint kbd-hint">⌘S / Ctrl+S per desar</span>
+            <span v-if="!inFlight" class="hint kbd-hint">⌘S / Ctrl+S per desar</span>
           </div>
 
           <p v-if="saveError" class="notice notice-error">
@@ -623,18 +737,189 @@ const SHEET_STATE = {
   color: var(--gold-800);
 }
 
-.progress-card {
+.reading-card {
   display: grid;
   gap: 7px;
-  padding: 12px 14px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ai-200);
+  border-radius: var(--r-md);
+  background: var(--ai-50);
 }
 
-.progress-top {
+.reading-top {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
   font-size: var(--text-base);
+  color: var(--ai-800);
+}
+
+.reading-counts {
+  display: inline-flex;
+  gap: 10px;
+  margin-left: auto;
+  font-size: var(--text-sm);
+  color: var(--ink-500);
+}
+
+.reading-counts .dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  vertical-align: 1px;
+}
+
+.count-ai .dot {
+  background: var(--ai-500);
+}
+
+.count-mine .dot {
+  background: var(--accent-500);
+}
+
+.reading-pct {
+  font-size: var(--text-xs);
+  color: var(--ai-700);
+  font-variant-numeric: tabular-nums;
+}
+
+.reading-bar {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--ai-100);
+}
+
+.reading-bar span {
+  display: block;
+  height: 100%;
+  background: var(--ai-500);
+  transition: width 0.4s ease;
+}
+
+.reading-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--ai-800);
+  line-height: 1.45;
+}
+
+/* A field the AI is reading: violet, with a slow sheen across it. */
+.field.reading .input,
+.field.reading .select,
+.field.reading .textarea,
+.field.reading :deep(.input) {
+  border-color: var(--ai-200);
+  background: linear-gradient(100deg, var(--ai-50) 30%, var(--ai-100) 50%, var(--ai-50) 70%) 0 0 / 300% 100%;
+  animation: sheen 1.8s linear infinite;
+}
+
+.field.reading .input::placeholder,
+.field.reading .textarea::placeholder,
+.field.reading :deep(.input)::placeholder {
+  color: var(--ai-400);
+}
+
+@keyframes sheen {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+.field.mine .input,
+.field.mine .select,
+.field.mine .textarea,
+.field.mine :deep(.input) {
+  border-color: var(--accent-500);
+}
+
+.field.filled .input,
+.field.filled .select,
+.field.filled .textarea,
+.field.filled :deep(.input) {
+  animation: landed 2.4s ease-out;
+}
+
+@keyframes landed {
+  from {
+    background-color: var(--ai-100);
+    border-color: var(--ai-400);
+  }
+}
+
+.reading-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: default;
+}
+
+.pulse {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ai-500);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.mine-tag {
+  padding: 0 4px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--accent-200, var(--line));
+  background: var(--accent-100);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent-700);
+  cursor: help;
+}
+
+.kept-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--ai-700);
+}
+
+.kept-use {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ai-700);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.autosave {
+  font-size: var(--text-sm);
+  color: var(--ink-500);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .field.reading .input,
+  .field.reading .select,
+  .field.reading .textarea,
+  .field.reading :deep(.input),
+  .pulse {
+    animation: none;
+  }
 }
 
 .columns {

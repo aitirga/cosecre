@@ -27,6 +27,26 @@ from .text_format import (
     sentence_case,
 )
 
+#: The register fields a reading fills, by their names on the entry.
+EXTRACTED_FIELDS = (
+    "tipus_document",
+    "num_factura",
+    "data_factura",
+    "proveidor",
+    "cif_proveidor",
+    "carrer",
+    "codi_postal",
+    "ciutat",
+    "compte_corrent",
+    "cif_proveit",
+    "import_value",
+    "descripcio",
+    "pressupost_afectat",
+    "pagament",
+    "metode_pagament",
+    "data_pagament",
+)
+
 DEFAULT_PROMPT = """
 Ets l'assistent de comptabilitat d'un institut públic de Catalunya. Extreu les dades del
 document comptable adjunt (factura, tiquet, pressupost, albarà o rebut).

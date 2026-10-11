@@ -28,7 +28,11 @@ const props = withDefaults(
     hint: 'Factures, tiquets, pressupostos, albarans o rebuts: la IA en reconeix el tipus. Cada fitxer o foto és un document.',
   },
 )
-const emit = defineEmits<{ uploaded: [] }>()
+const emit = defineEmits<{
+  uploaded: []
+  /** The references of the entries one drop or shot just opened, in order. */
+  queued: [references: string[]]
+}>()
 
 /** An upload that has not reached the hub yet, so it has no job to poll. */
 type LocalUpload = {
@@ -113,6 +117,7 @@ async function processFiles(files: File[], source: CaptureSource) {
       // Once the hub owns the job, the tracker takes over reporting it.
       trackUpload(file.name, response)
       localUploads.value = localUploads.value.filter((item) => item.id !== localItem?.id)
+      return response.internal_doc_number
     }),
   )
 
@@ -140,8 +145,10 @@ async function processFiles(files: File[], source: CaptureSource) {
         : "Algun fitxer no s'ha pogut pujar."
   }
 
-  if (results.some((result) => result.status === 'fulfilled')) {
+  const references = results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
+  if (references.length) {
     emit('uploaded')
+    emit('queued', references)
   }
 
   loading.value = false

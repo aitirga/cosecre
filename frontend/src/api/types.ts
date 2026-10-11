@@ -158,6 +158,8 @@ export interface AiTrace {
   final?: Record<string, { value: unknown; hint: AiHint | null }>
   only_empty?: boolean
   filled?: string[]
+  /** Fields a person typed while the models read: what the models read instead. */
+  kept?: Record<string, unknown>
 }
 
 /** A bank movement a person confirmed paid a register entry, in brief. */

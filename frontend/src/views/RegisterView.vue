@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
 import type { AiFilterResult, DocumentRecord, ExtractionStatus, Movement, PaidBy } from '../api/types'
 import { useExtractionTracker } from '../composables/useExtractionTracker'
+import { usePreferences } from '../composables/usePreferences'
 import { useTableQuery } from '../composables/useTableQuery'
 import {
   COMPTES,
@@ -338,6 +339,23 @@ function openRecord(record: DocumentRecord) {
   void router.push({ query: { ...route.query, doc: record.num_doc_intern } })
 }
 
+/**
+ * A fresh photo or file opens straight away, so it can be filled in while the
+ * AI reads it. A drop of several opens the first, with the rest as its queue.
+ */
+const preferences = usePreferences()
+
+function openQueued(references: string[]) {
+  if (!preferences.openOnCapture || !references.length) return
+  queue.value = references
+  if (openId.value) {
+    void router.replace({ query: { ...route.query, doc: references[0] } })
+    return
+  }
+  pushedHere = true
+  void router.push({ query: { ...route.query, doc: references[0] } })
+}
+
 function showEntry(id: string) {
   void router.replace({ query: { ...route.query, doc: id } })
 }
@@ -470,7 +488,7 @@ const showUpload = ref(true)
       </button>
     </section>
 
-    <DocumentIntake v-if="showUpload" @uploaded="invalidate" />
+    <DocumentIntake v-if="showUpload" @uploaded="invalidate" @queued="openQueued" />
 
     <section class="card">
       <div class="toolbar">

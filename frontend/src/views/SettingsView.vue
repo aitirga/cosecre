@@ -11,9 +11,11 @@ import HistoryPanel from '../components/HistoryPanel.vue'
 import OriginalsPanel from '../components/OriginalsPanel.vue'
 import TeamPanel from '../components/TeamPanel.vue'
 import { useAuth } from '../composables/useAuth'
+import { usePreferences } from '../composables/usePreferences'
 import { usePlatform } from '../platform'
 
 const auth = useAuth()
+const preferences = usePreferences()
 const platform = usePlatform()
 const queryClient = useQueryClient()
 
@@ -127,6 +129,28 @@ const saveMutation = useMutation({
             <code class="mono">COSECRE_OPENAI_API_KEY</code> i reinicia'l.
           </span>
         </p>
+      </div>
+    </section>
+
+    <!-- ── This browser ───────────────────────────────────────────────── -->
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Preferències</h2>
+          <p class="hint">Només d'aquest navegador; no canvien res per a la resta de l'equip.</p>
+        </div>
+      </div>
+      <div class="card-body">
+        <label class="toggle">
+          <input v-model="preferences.openOnCapture" type="checkbox" />
+          <span class="toggle-text">
+            <span class="label">Obre la fitxa en fer una foto o pujar un document</span>
+            <span class="hint">
+              La fitxa s'obre de seguida i mostra en lila els camps que la IA està llegint. Pots omplir
+              els teus alhora: es desen sols i la IA no els sobreescriu.
+            </span>
+          </span>
+        </label>
       </div>
     </section>
 
@@ -296,6 +320,23 @@ const saveMutation = useMutation({
 </template>
 
 <style scoped>
+.toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.toggle input {
+  margin-top: 3px;
+  accent-color: var(--accent-600, var(--accent-500));
+}
+
+.toggle-text {
+  display: grid;
+  gap: 2px;
+}
+
 .settings {
   display: grid;
   /* minmax(0, …): wide tables scroll inside their card, not the page. */
