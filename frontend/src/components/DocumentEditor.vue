@@ -40,6 +40,12 @@ const props = defineProps<{
   embedded?: boolean
   /** Offers "Valida i següent" when the window has somewhere to go next. */
   hasNext?: boolean
+  /**
+   * `submission` is a teacher's own invoice: the same editor through the
+   * teacher's endpoints, without the office's payments or sheet details, and
+   * closed to them once validated.
+   */
+  scope?: 'register' | 'submission'
 }>()
 const emit = defineEmits<{ validated: [advance: boolean] }>()
 
@@ -47,21 +53,49 @@ const queryClient = useQueryClient()
 const internalDocNumber = props.internalDocNumber
 const { getTrackedJob } = useExtractionTracker()
 
+const own = props.scope === 'submission'
+const source = own
+  ? {
+      key: 'submission-record',
+      get: api.getSubmission,
+      update: api.updateSubmission,
+      fileBlob: api.submissionFileUrl,
+      download: api.downloadSubmissionFile,
+    }
+  : {
+      key: 'document',
+      get: api.getDocument,
+      update: api.updateDocument,
+      fileBlob: api.getDocumentFileBlob,
+      download: api.downloadDocumentFile,
+    }
+
 const paymentsQuery = useQuery({
   queryKey: ['document-payments', internalDocNumber],
   queryFn: () => api.documentPayments(internalDocNumber),
+  enabled: !own,
 })
 const payments = computed(() => paymentsQuery.data.value ?? [])
 
 const documentQuery = useQuery({
-  queryKey: ['document', internalDocNumber],
-  queryFn: () => api.getDocument(internalDocNumber),
+  queryKey: [source.key, internalDocNumber],
+  queryFn: () => source.get(internalDocNumber),
   // Closer while the models read, so their fields land as soon as they are in.
   refetchInterval: (query) =>
     ['pending', 'processing', 'written_to_sheet'].includes(query.state.data?.extraction_status ?? '') ? 2000 : 10000,
 })
 
 const record = computed(() => documentQuery.data.value)
+
+/** A teacher may only send an invoice made out to the centre. */
+const centreQuery = useQuery({ queryKey: ['centre'], queryFn: api.centre, enabled: own, staleTime: 60_000 })
+const compactCif = (text: string) => text.replace(/[\s.-]/g, '').toUpperCase()
+const centreCif = computed(() => compactCif(centreQuery.data.value?.cif ?? ''))
+const cifMismatch = computed(
+  () => own && Boolean(centreCif.value) && compactCif(form.cif_proveit) !== centreCif.value,
+)
+/** A teacher's own, once validated, is the office's to change. */
+const locked = computed(() => own && Boolean(record.value?.validat))
 const ALL_FIELDS = SECTIONS.flatMap((section) => section.fields)
 
 // ── Form state: everything as the text a person types ───────────────────────
@@ -164,10 +198,10 @@ function afterSave(updated: DocumentRecord, version: number) {
   sheetWarning.value = updated.error_message ?? ''
   // Typing that went on during the request is still unsaved, and stays put.
   if (version === editVersion.value) unsaved.clear()
-  queryClient.setQueryData(['document', internalDocNumber], updated)
+  queryClient.setQueryData([source.key, internalDocNumber], updated)
   saved.value = true
   window.setTimeout(() => (saved.value = false), 2500)
-  void queryClient.invalidateQueries({ queryKey: ['documents'] })
+  void queryClient.invalidateQueries({ queryKey: [own ? 'submissions' : 'documents'] })
 }
 
 function reportError(error: unknown) {
@@ -178,7 +212,7 @@ function reportError(error: unknown) {
 const saveMutation = useMutation({
   mutationFn: async (extra: DocumentUpdate = {}) => {
     const version = editVersion.value
-    return { updated: await api.updateDocument(internalDocNumber, { ...changes(), ...extra }), version }
+    return { updated: await source.update(internalDocNumber, { ...changes(), ...extra }), version }
   },
   onSuccess: ({ updated, version }) => afterSave(updated, version),
   onError: reportError,
@@ -312,7 +346,7 @@ watch(
     if (!isImage.value && !isPdf.value) return
     photoLoading.value = true
     try {
-      const url = await api.getDocumentFileBlob(internalDocNumber)
+      const url = await source.fileBlob(internalDocNumber)
       if (isPdf.value) pdfSrc.value = url
       else photoSrc.value = url
     } catch {
@@ -325,7 +359,7 @@ watch(
 )
 
 async function openOriginal() {
-  const url = pdfSrc.value ?? (await api.getDocumentFileBlob(internalDocNumber))
+  const url = pdfSrc.value ?? (await source.fileBlob(internalDocNumber))
   window.open(url, '_blank', 'noopener')
 }
 
@@ -360,7 +394,7 @@ async function downloadOriginal() {
   downloading.value = true
   downloadError.value = ''
   try {
-    await api.downloadDocumentFile(internalDocNumber, record.value?.file_name ?? internalDocNumber)
+    await source.download(internalDocNumber, record.value?.file_name ?? internalDocNumber)
   } catch (e) {
     downloadError.value = e instanceof ApiError ? e.message : "No s'ha pogut descarregar."
   } finally {
@@ -395,7 +429,7 @@ const SHEET_STATE = {
             <span v-if="record.import != null"> · {{ formatAmount(record.import) }}</span>
           </p>
         </div>
-        <div class="head-badges">
+        <div v-if="!own" class="head-badges">
           <span class="badge" :class="SHEET_STATE[record.sheet_state].tone">
             <AppIcon name="sheet" :size="12" />
             {{ SHEET_STATE[record.sheet_state].label }}
@@ -451,7 +485,11 @@ const SHEET_STATE = {
 
       <div class="columns">
         <form class="card form-card" @submit.prevent="save">
-          <fieldset class="sections">
+          <p v-if="locked" class="notice notice-info locked-notice">
+            <AppIcon name="check" :size="15" />
+            <span>Validat i enviat a secretaria. Per canviar-hi res, parla-hi.</span>
+          </p>
+          <fieldset class="sections" :disabled="locked">
             <section v-for="section in SECTIONS" :key="section.id" class="section">
               <h2 class="section-title">{{ section.title }}</h2>
               <div class="grid">
@@ -539,6 +577,10 @@ const SHEET_STATE = {
                     <span class="truncate">La IA hi llegia <span class="mono">{{ kept[field.key] }}</span></span>
                     <button class="kept-use" type="button" @click.prevent="useReading(field)">Usa-ho</button>
                   </span>
+                  <span v-else-if="field.key === 'cif_proveit' && cifMismatch && !inFlight" class="field-error">
+                    Ha de ser el CIF del centre, {{ centreCif }}. Si la factura no és a nom del centre, no
+                    es pot enviar.
+                  </span>
                   <span
                     v-else-if="field.key === 'compte_corrent' && record.iban_valid === false && !dirty"
                     class="field-error"
@@ -550,7 +592,7 @@ const SHEET_STATE = {
             </section>
           </fieldset>
 
-          <div class="form-actions">
+          <div v-if="!locked" class="form-actions">
             <span v-if="inFlight" class="autosave">
               <template v-if="saveMutation.isPending.value">Desant…</template>
               <template v-else-if="dirty">Es desarà en deixar d'escriure</template>
@@ -567,12 +609,18 @@ const SHEET_STATE = {
             <button
               class="btn btn-primary"
               type="button"
-              :disabled="saveMutation.isPending.value || (record.validat && !dirty) || hasErrors || inFlight"
-              :title="inFlight ? 'Espera que la IA acabi de llegir-lo' : undefined"
+              :disabled="saveMutation.isPending.value || (record.validat && !dirty) || hasErrors || inFlight || cifMismatch"
+              :title="
+                inFlight
+                  ? 'Espera que la IA acabi de llegir-lo'
+                  : cifMismatch
+                    ? `Només es poden enviar factures a nom del centre (${centreCif})`
+                    : undefined
+              "
               @click="saveAndValidate()"
             >
               <AppIcon name="check" />
-              {{ record.validat && !dirty ? 'Validat' : dirty ? 'Desa i valida' : 'Valida' }}
+              {{ record.validat && !dirty ? 'Validat' : own ? 'Valida i envia' : dirty ? 'Desa i valida' : 'Valida' }}
             </button>
             <button
               v-if="embedded && hasNext && !(record.validat && !dirty)"
@@ -667,7 +715,7 @@ const SHEET_STATE = {
             </div>
           </section>
 
-          <section class="card">
+          <section v-if="!own" class="card">
             <div class="card-head"><h2 class="card-title">Registre</h2></div>
             <dl class="card-body meta">
               <dt>Referència</dt>
@@ -728,6 +776,10 @@ const SHEET_STATE = {
 </template>
 
 <style scoped>
+.locked-notice {
+  margin: 14px 14px 0;
+}
+
 .editor {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

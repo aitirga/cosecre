@@ -451,6 +451,7 @@ class WorkspaceSettingsRead(BaseModel):
     polling_interval_seconds: int = 30
     classifier_configured: bool = False
     drive_folder_configured: bool = False
+    school_cif: str = ""
     iban_general: str = ""
     iban_material: str = ""
     iban_menjador: str = ""
@@ -468,8 +469,9 @@ class WorkspaceSettingsUpdate(BaseModel):
     openai_model: str = Field(min_length=1, max_length=120)
     extraction_prompt: str = ""
     polling_interval_seconds: int = Field(default=30, ge=10, le=300)
-    #: Bank statements. ``None`` leaves the stored value alone, so a client that
-    #: predates them can still save the rest.
+    #: The centre and its bank. ``None`` leaves the stored value alone, so a
+    #: client that predates them can still save the rest.
+    school_cif: str | None = Field(default=None, max_length=32)
     iban_general: str | None = Field(default=None, max_length=64)
     iban_material: str | None = Field(default=None, max_length=64)
     iban_menjador: str | None = Field(default=None, max_length=64)

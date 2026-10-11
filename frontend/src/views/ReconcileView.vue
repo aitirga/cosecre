@@ -1102,7 +1102,7 @@ function showOriginal(doc: DocumentBrief) {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
-  max-width: 1320px;
+  max-width: var(--page-w-data);
 }
 
 /* ── Toolbar ─────────────────────────────────────────────────────────────── */

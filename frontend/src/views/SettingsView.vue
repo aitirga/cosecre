@@ -68,7 +68,7 @@ const modelOptions = computed(() => {
 })
 
 // ── Workspace settings ───────────────────────────────────────────────────────
-// One form, edited from three tabs. It is saved as a whole, so the save bar
+// One form, edited from several sections. It is saved as a whole, so the save bar
 // floats over every tab while anything differs from what the hub holds.
 const settingsQuery = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
 
@@ -83,6 +83,7 @@ function fromSettings(settings: WorkspaceSettings): EditableSettings {
     openai_model: settings.openai_model,
     extraction_prompt: settings.extraction_prompt,
     polling_interval_seconds: settings.polling_interval_seconds,
+    school_cif: settings.school_cif ?? '',
     iban_general: settings.iban_general ?? '',
     iban_material: settings.iban_material ?? '',
     iban_menjador: settings.iban_menjador ?? '',
@@ -99,6 +100,7 @@ const form = reactive<EditableSettings>({
   openai_model: 'gpt-6-luna',
   extraction_prompt: '',
   polling_interval_seconds: 30,
+  school_cif: '',
   iban_general: '',
   iban_material: '',
   iban_menjador: '',
@@ -119,6 +121,7 @@ watch(
 
 const SHEET_FIELDS = ['spreadsheet_url', 'registry_sheet_name', 'sheet_name', 'ticket_sheet_name'] as const
 const AI_FIELDS = ['openai_model', 'polling_interval_seconds', 'extraction_prompt'] as const
+const CENTRE_FIELDS = ['school_cif'] as const
 const BANK_FIELDS = [
   'iban_general',
   'iban_material',
@@ -134,11 +137,17 @@ function changed(fields: readonly (keyof EditableSettings)[]) {
 
 const sheetDirty = computed(() => changed(SHEET_FIELDS))
 const aiDirty = computed(() => changed(AI_FIELDS))
+const centreDirty = computed(() => changed(CENTRE_FIELDS))
 const bankDirty = computed(() => changed(BANK_FIELDS))
-const dirty = computed(() => sheetDirty.value || aiDirty.value || bankDirty.value)
+const dirty = computed(() => sheetDirty.value || aiDirty.value || centreDirty.value || bankDirty.value)
 
 const dirtyWhere = computed(() =>
-  [sheetDirty.value && 'full de càlcul', aiDirty.value && 'lectura', bankDirty.value && 'banc']
+  [
+    sheetDirty.value && 'full de càlcul',
+    aiDirty.value && 'lectura',
+    centreDirty.value && 'dades del centre',
+    bankDirty.value && 'banc',
+  ]
     .filter(Boolean)
     .join(', '),
 )
@@ -174,9 +183,12 @@ const usersQuery = useQuery({ queryKey: ['users'], queryFn: api.listUsers })
 const activeUsers = computed(() => (usersQuery.data.value ?? []).filter((user) => user.is_active).length)
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
-// The active tab lives in `?tab=`, so a link (or the register's "restore from
-// Configuració") can land on the right one and a reload keeps it.
-type TabId = 'general' | 'sheet' | 'ai' | 'bank' | 'data' | 'history' | 'team' | 'app'
+// Two levels: a few groups along the top, and inside a group with more than
+// one section, a second, quieter bar. The open section lives in `?tab=`, so a
+// link (or the register's "restore from Configuració") can land on the right
+// one and a reload keeps it; old links to a section keep working.
+type TabId = 'general' | 'sheet' | 'ai' | 'data' | 'history' | 'centre' | 'bank' | 'team' | 'app'
+type GroupId = 'general' | 'centre' | 'team' | 'app'
 
 interface Tab {
   id: TabId
@@ -187,16 +199,27 @@ interface Tab {
   count?: number
 }
 
-const tabs = computed<Tab[]>(() => {
+interface Group {
+  id: GroupId
+  label: string
+  icon: IconName
+  tabs: Tab[]
+  dot?: 'gold' | 'accent'
+  count?: number
+}
+
+/** A group shows its most urgent section's dot: unsaved edits first. */
+function groupDot(tabs: Tab[]) {
+  if (tabs.some((tab) => tab.dot === 'accent')) return 'accent'
+  if (tabs.some((tab) => tab.dot === 'gold')) return 'gold'
+  return undefined
+}
+
+const groups = computed<Group[]>(() => {
   const hub = auth.state.hub
   const settings = settingsQuery.data.value
-  const list: Tab[] = [
-    {
-      id: 'general',
-      label: 'General',
-      icon: 'server',
-      dot: hub && !hub.capabilities.llm ? 'gold' : undefined,
-    },
+  const general: Tab[] = [
+    { id: 'general', label: 'Hub', icon: 'server', dot: hub && !hub.capabilities.llm ? 'gold' : undefined },
     {
       id: 'sheet',
       label: 'Full de càlcul',
@@ -208,53 +231,100 @@ const tabs = computed<Tab[]>(() => {
           : undefined,
     },
     { id: 'ai', label: 'Lectura amb IA', icon: 'sparkles', dot: aiDirty.value ? 'accent' : undefined },
-    { id: 'bank', label: 'Banc', icon: 'bank', dot: bankDirty.value ? 'accent' : undefined },
     { id: 'data', label: 'Còpies', icon: 'database' },
     { id: 'history', label: 'Historial', icon: 'activity' },
-    { id: 'team', label: 'Equip', icon: 'users', count: usersQuery.data.value ? activeUsers.value : undefined },
   ]
-  if (platform.settingsPanel) list.push({ id: 'app', label: 'Aplicació', icon: 'monitor' })
+  const centre: Tab[] = [
+    {
+      id: 'centre',
+      label: 'Dades generals',
+      icon: 'home',
+      dot: centreDirty.value ? 'accent' : settings && !settings.school_cif ? 'gold' : undefined,
+    },
+    { id: 'bank', label: 'Banc', icon: 'bank', dot: bankDirty.value ? 'accent' : undefined },
+  ]
+  const teamCount = usersQuery.data.value ? activeUsers.value : undefined
+  const list: Group[] = [
+    { id: 'general', label: 'General', icon: 'server', tabs: general, dot: groupDot(general) },
+    { id: 'centre', label: 'Dades del centre', icon: 'bank', tabs: centre, dot: groupDot(centre) },
+    {
+      id: 'team',
+      label: 'Equip',
+      icon: 'users',
+      tabs: [{ id: 'team', label: 'Equip', icon: 'users' }],
+      count: teamCount,
+    },
+  ]
+  if (platform.settingsPanel) {
+    list.push({ id: 'app', label: 'Aplicació', icon: 'monitor', tabs: [{ id: 'app', label: 'Aplicació', icon: 'monitor' }] })
+  }
   return list
 })
 
-const active = computed<TabId>(() => tabs.value.find((tab) => tab.id === route.query.tab)?.id ?? 'general')
+const allTabs = computed(() => groups.value.flatMap((group) => group.tabs))
+const active = computed<TabId>(() => allTabs.value.find((tab) => tab.id === route.query.tab)?.id ?? 'general')
+const activeGroup = computed(
+  () => groups.value.find((group) => group.tabs.some((tab) => tab.id === active.value)) ?? groups.value[0],
+)
 
 function select(id: TabId) {
   if (id === active.value) return
   void router.replace({ query: { ...route.query, tab: id === 'general' ? undefined : id } })
 }
 
-const tabRefs = ref<HTMLButtonElement[]>([])
+function selectGroup(id: GroupId) {
+  if (id === activeGroup.value.id) return
+  const first = groups.value.find((group) => group.id === id)?.tabs[0]
+  if (first) select(first.id)
+}
 
-// On a phone the bar scrolls sideways; keep the open tab in sight.
+const tabRefs = ref<HTMLButtonElement[]>([])
+const subtabRefs = ref<HTMLButtonElement[]>([])
+
+// On a phone the bars scroll sideways; keep the open tab in sight.
+function keepInSight(button: HTMLElement | undefined) {
+  const bar = button?.parentElement
+  // Scrolls the bar alone: scrollIntoView would drag the page along with it.
+  if (button && bar) bar.scrollLeft = button.offsetLeft - (bar.clientWidth - button.offsetWidth) / 2
+}
+
 watch(
   active,
   async (id) => {
     await nextTick()
-    const index = tabs.value.findIndex((tab) => tab.id === id)
-    const button = tabRefs.value[index]
-    const bar = button?.parentElement
-    // Scrolls the bar alone: scrollIntoView would drag the page along with it.
-    if (button && bar) bar.scrollLeft = button.offsetLeft - (bar.clientWidth - button.offsetWidth) / 2
+    keepInSight(tabRefs.value[groups.value.findIndex((group) => group.id === activeGroup.value.id)])
+    keepInSight(subtabRefs.value[activeGroup.value.tabs.findIndex((tab) => tab.id === id)])
   },
   { immediate: true },
 )
 
-// Arrow keys move between tabs, as the WAI-ARIA tabs pattern expects.
-function onTabKey(event: KeyboardEvent) {
-  const ids = tabs.value.map((tab) => tab.id)
-  const index = ids.indexOf(active.value)
+/** Arrow keys move along a bar, as the WAI-ARIA tabs pattern expects. */
+function arrowTo(event: KeyboardEvent, count: number, index: number): number | null {
   const moves: Record<string, number> = {
     ArrowRight: index + 1,
     ArrowLeft: index - 1,
     Home: 0,
-    End: ids.length - 1,
+    End: count - 1,
   }
-  if (!(event.key in moves)) return
+  if (!(event.key in moves)) return null
   event.preventDefault()
-  const next = (moves[event.key] + ids.length) % ids.length
-  select(ids[next])
+  return (moves[event.key] + count) % count
+}
+
+function onTabKey(event: KeyboardEvent) {
+  const index = groups.value.findIndex((group) => group.id === activeGroup.value.id)
+  const next = arrowTo(event, groups.value.length, index)
+  if (next === null) return
+  selectGroup(groups.value[next].id)
   void nextTick(() => tabRefs.value[next]?.focus())
+}
+
+function onSubtabKey(event: KeyboardEvent) {
+  const tabs = activeGroup.value.tabs
+  const next = arrowTo(event, tabs.length, tabs.findIndex((tab) => tab.id === active.value))
+  if (next === null) return
+  select(tabs[next].id)
+  void nextTick(() => subtabRefs.value[next]?.focus())
 }
 </script>
 
@@ -263,36 +333,69 @@ function onTabKey(event: KeyboardEvent) {
     <header class="page-head">
       <div>
         <h1 class="page-title">Configuració</h1>
-        <p class="page-lead">El hub, el full de càlcul, la lectura amb IA, el banc, les còpies i l'equip.</p>
+        <p class="page-lead">El hub i el full de càlcul, les dades del centre i el banc, i l'equip.</p>
       </div>
     </header>
 
-    <nav class="tabs" role="tablist" aria-label="Seccions de la configuració" @keydown="onTabKey">
-      <button
-        v-for="tab in tabs"
-        :id="`tab-${tab.id}`"
-        :key="tab.id"
-        ref="tabRefs"
-        class="tab"
-        :class="{ 'is-active': tab.id === active }"
-        type="button"
-        role="tab"
-        :aria-selected="tab.id === active"
-        :aria-controls="`panel-${tab.id}`"
-        :tabindex="tab.id === active ? 0 : -1"
-        @click="select(tab.id)"
+    <div class="tabbars">
+      <nav class="tabs" role="tablist" aria-label="Seccions de la configuració" @keydown="onTabKey">
+        <button
+          v-for="group in groups"
+          :id="`tab-${group.id}`"
+          :key="group.id"
+          ref="tabRefs"
+          class="tab"
+          :class="{ 'is-active': group.id === activeGroup.id }"
+          type="button"
+          role="tab"
+          :aria-selected="group.id === activeGroup.id"
+          :tabindex="group.id === activeGroup.id ? 0 : -1"
+          @click="selectGroup(group.id)"
+        >
+          <AppIcon :name="group.icon" :size="15" />
+          <span>{{ group.label }}</span>
+          <span v-if="group.count !== undefined" class="tab-count">{{ group.count }}</span>
+          <span
+            v-if="group.dot"
+            class="tab-dot"
+            :class="`tab-dot-${group.dot}`"
+            :title="group.dot === 'accent' ? 'Canvis sense desar' : 'Cal revisar-ho'"
+          />
+        </button>
+      </nav>
+
+      <nav
+        v-if="activeGroup.tabs.length > 1"
+        class="subtabs"
+        role="tablist"
+        :aria-label="activeGroup.label"
+        @keydown="onSubtabKey"
       >
-        <AppIcon :name="tab.icon" :size="15" />
-        <span>{{ tab.label }}</span>
-        <span v-if="tab.count !== undefined" class="tab-count">{{ tab.count }}</span>
-        <span
-          v-if="tab.dot"
-          class="tab-dot"
-          :class="`tab-dot-${tab.dot}`"
-          :title="tab.dot === 'accent' ? 'Canvis sense desar' : 'Cal revisar-ho'"
-        />
-      </button>
-    </nav>
+        <button
+          v-for="tab in activeGroup.tabs"
+          :id="`subtab-${tab.id}`"
+          :key="tab.id"
+          ref="subtabRefs"
+          class="subtab"
+          :class="{ 'is-active': tab.id === active }"
+          type="button"
+          role="tab"
+          :aria-selected="tab.id === active"
+          :aria-controls="`panel-${tab.id}`"
+          :tabindex="tab.id === active ? 0 : -1"
+          @click="select(tab.id)"
+        >
+          <AppIcon :name="tab.icon" :size="13" />
+          <span>{{ tab.label }}</span>
+          <span
+            v-if="tab.dot"
+            class="tab-dot"
+            :class="`tab-dot-${tab.dot}`"
+            :title="tab.dot === 'accent' ? 'Canvis sense desar' : 'Cal revisar-ho'"
+          />
+        </button>
+      </nav>
+    </div>
 
     <!-- ── General ────────────────────────────────────────────────────── -->
     <div
@@ -300,7 +403,7 @@ function onTabKey(event: KeyboardEvent) {
       id="panel-general"
       class="panel"
       role="tabpanel"
-      aria-labelledby="tab-general"
+      aria-labelledby="subtab-general"
     >
       <p v-if="auth.state.hub && !auth.state.hub.capabilities.llm" class="notice notice-gold">
         <AppIcon name="alert" :size="15" />
@@ -384,7 +487,7 @@ function onTabKey(event: KeyboardEvent) {
       id="panel-sheet"
       class="panel"
       role="tabpanel"
-      aria-labelledby="tab-sheet"
+      aria-labelledby="subtab-sheet"
     >
       <section class="card">
         <div class="card-head">
@@ -480,7 +583,7 @@ function onTabKey(event: KeyboardEvent) {
     </div>
 
     <!-- ── AI reading ─────────────────────────────────────────────────── -->
-    <div v-else-if="active === 'ai'" id="panel-ai" class="panel" role="tabpanel" aria-labelledby="tab-ai">
+    <div v-else-if="active === 'ai'" id="panel-ai" class="panel" role="tabpanel" aria-labelledby="subtab-ai">
       <section class="card">
         <div class="card-head">
           <div>
@@ -552,8 +655,46 @@ function onTabKey(event: KeyboardEvent) {
       </section>
     </div>
 
+    <!-- ── The centre ─────────────────────────────────────────────────── -->
+    <div
+      v-else-if="active === 'centre'"
+      id="panel-centre"
+      class="panel"
+      role="tabpanel"
+      aria-labelledby="subtab-centre"
+    >
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">Dades generals</h2>
+            <p class="hint">Qui és el centre als documents que arriben.</p>
+          </div>
+        </div>
+
+        <p v-if="settingsQuery.isLoading.value" class="empty">Carregant…</p>
+        <form v-else class="rows" @submit.prevent="saveMutation.mutate()">
+          <div class="row">
+            <div class="row-label">
+              <label class="label" for="set-cif">CIF del centre</label>
+              <span class="hint">
+                El professorat només pot enviar factures fetes a nom d'aquest CIF. Buit, no es
+                comprova.
+              </span>
+            </div>
+            <input
+              id="set-cif"
+              v-model="form.school_cif"
+              class="input input-mono"
+              type="text"
+              placeholder="S0800000A"
+            />
+          </div>
+        </form>
+      </section>
+    </div>
+
     <!-- ── Bank ───────────────────────────────────────────────────────── -->
-    <div v-else-if="active === 'bank'" id="panel-bank" class="panel" role="tabpanel" aria-labelledby="tab-bank">
+    <div v-else-if="active === 'bank'" id="panel-bank" class="panel" role="tabpanel" aria-labelledby="subtab-bank">
       <section class="card">
         <div class="card-head">
           <div>
@@ -628,7 +769,7 @@ function onTabKey(event: KeyboardEvent) {
       id="panel-data"
       class="panel"
       role="tabpanel"
-      aria-labelledby="tab-data"
+      aria-labelledby="subtab-data"
     >
       <BackupsPanel />
       <OriginalsPanel />
@@ -640,7 +781,7 @@ function onTabKey(event: KeyboardEvent) {
       id="panel-history"
       class="panel"
       role="tabpanel"
-      aria-labelledby="tab-history"
+      aria-labelledby="subtab-history"
     >
       <HistoryPanel />
       <DuplicatesPanel />
@@ -712,16 +853,23 @@ function onTabKey(event: KeyboardEvent) {
   /* minmax(0, …): wide tables scroll inside their card, not the page. */
   grid-template-columns: minmax(0, 1fr);
   gap: 14px;
-  max-width: 920px;
+  max-width: var(--page-w-panel);
 }
 
 /* ── Tab bar ─────────────────────────────────────────────────────────── */
 /* Sticks under the top of the page so switching section never needs a
    scroll back up; scrolls sideways on a phone instead of wrapping. */
-.tabs {
+.tabbars {
   position: sticky;
   top: 0;
   z-index: 5;
+  display: grid;
+  gap: 8px;
+  padding-bottom: 2px;
+  background: var(--surface-1);
+}
+
+.tabs {
   display: flex;
   gap: 2px;
   margin: 0 -2px;
@@ -810,6 +958,53 @@ function onTabKey(event: KeyboardEvent) {
 
 .tab-dot-accent {
   background: var(--accent-500);
+}
+
+/* The second level: quieter than the first, a row of small pills. */
+.subtabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.subtabs::-webkit-scrollbar {
+  display: none;
+}
+
+.subtab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--ink-500);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    background-color 0.12s ease;
+}
+
+.subtab:hover {
+  background: var(--surface-2);
+  color: var(--ink-900);
+}
+
+.subtab.is-active {
+  border-color: var(--line);
+  background: var(--surface-0);
+  color: var(--ink-900);
+  box-shadow: var(--shadow-xs);
+}
+
+.subtab.is-active svg {
+  color: var(--accent-700);
 }
 
 /* ── Panels ──────────────────────────────────────────────────────────── */

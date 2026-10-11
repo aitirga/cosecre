@@ -121,6 +121,15 @@
   /* ── Layout ──────────────────────────────────────────────────────────── */
   --sidebar-w: 224px;
   --topbar-h: 52px;
+  /* Page widths. Data pages (tables, ledgers, the reconcile board) take the
+     whole window: on a wide screen more columns and longer descriptions fit
+     before anything truncates. Form-like pages keep a measure so labels and
+     fields stay close together. The side gutter grows with the window so a
+     full-width table never runs into the edges of a 2560px screen. */
+  --page-w-data: none;
+  --page-w-panel: 1280px;
+  --page-w-form: 920px;
+  --page-gutter: clamp(24px, 1.6vw, 40px);
   /* Room at the top of the shell for a host-drawn title bar. Zero in a browser
      tab; the desktop app raises it so macOS's traffic lights are not sitting on
      the brand. A variable rather than an override, because Vue's scoped rules

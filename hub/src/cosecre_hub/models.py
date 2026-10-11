@@ -33,11 +33,6 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-#: Wrong codes an invitation survives. Six digits is a small space, so a guesser
-#: gets a handful of tries and then the admin has to issue a new one.
-INVITE_MAX_ATTEMPTS = 5
-
-
 class User(Base):
     __tablename__ = "users"
 
@@ -52,16 +47,9 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    #: When the account's owner chose its password. ``None`` while an invitation
-    #: is pending — such an account has an empty ``password_hash`` and cannot sign in.
+    #: When the account's owner chose its password. ``None`` while the account is
+    #: pending — its ``password_hash`` is empty and the first sign-in chooses one.
     password_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # A pending invitation: only hashes are stored, like refresh tokens. The
-    # token goes in a link; the short code is the same invitation typed by hand.
-    invite_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    invite_code_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    invite_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    #: Wrong codes typed against this invitation; enough of them spends it.
-    invite_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -72,22 +60,11 @@ class User(Base):
     jobs: Mapped[list["ExtractionJob"]] = relationship(back_populates="user")
 
     @property
-    def invite_is_live(self) -> bool:
-        if self.invite_token_hash is None or self.invite_expires_at is None:
-            return False
-        expires_at = self.invite_expires_at
-        if expires_at.tzinfo is None:  # SQLite hands back naive datetimes.
-            expires_at = expires_at.replace(tzinfo=UTC)
-        return expires_at > utcnow() and (self.invite_attempts or 0) < INVITE_MAX_ATTEMPTS
-
-    @property
     def account_status(self) -> str:
-        """``disabled``, ``active``, ``pending`` (invitation usable) or ``expired``."""
+        """``disabled``, ``active`` or ``pending`` (no password chosen yet)."""
         if not self.is_active:
             return "disabled"
-        if self.password_hash:
-            return "active"
-        return "pending" if self.invite_is_live else "expired"
+        return "active" if self.password_hash else "pending"
 
 
 class RefreshSession(Base):
@@ -160,6 +137,9 @@ class WorkspaceSetting(Base):
     openai_model: Mapped[str] = mapped_column(String(120), default="gpt-6-luna")
     extraction_prompt: Mapped[str] = mapped_column(Text, default="")
     polling_interval_seconds: Mapped[int] = mapped_column(Integer, default=30)
+    #: The school's own tax id. A teacher's invoice must be made out to it
+    #: (``cif_proveit``) before the teacher may validate it themselves.
+    school_cif: Mapped[str] = mapped_column(String(32), default="", server_default="")
     #: The three CaixaBank accounts, by IBAN: a dropped statement names its own
     #: IBAN in its title, and this is what turns that into a ``compte``.
     iban_general: Mapped[str] = mapped_column(String(64), default="", server_default="")

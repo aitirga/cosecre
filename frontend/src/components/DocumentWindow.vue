@@ -17,10 +17,18 @@ import StatusPill from './StatusPill.vue'
  * you work through it, so validating an entry under "Per revisar" does not
  * pull the next one out from under "Següent".
  */
+/** What the header needs of an entry: the register's records, or a teacher's own. */
+export type WindowEntry = Pick<
+  DocumentRecord,
+  'num_doc_intern' | 'num_factura' | 'proveidor' | 'tipus_document' | 'data_factura' | 'import' | 'extraction_status'
+>
+
 const props = defineProps<{
   id: string
   queue: string[]
-  documents: DocumentRecord[]
+  documents: WindowEntry[]
+  /** See DocumentEditor; a teacher has no full page to open. */
+  scope?: 'register' | 'submission'
 }>()
 const emit = defineEmits<{ open: [id: string]; close: [] }>()
 
@@ -166,6 +174,7 @@ onBeforeUnmount(() => {
           <StatusPill v-if="record" :status="record.extraction_status" />
 
           <RouterLink
+            v-if="scope !== 'submission'"
             class="icon-btn"
             :to="{ name: 'document', params: { internalDocNumber: id } }"
             title="Obre a pàgina completa"
@@ -185,6 +194,7 @@ onBeforeUnmount(() => {
             :key="id"
             :internal-doc-number="id"
             embedded
+            :scope="scope"
             :has-next="Boolean(next)"
             @validated="onValidated"
           />

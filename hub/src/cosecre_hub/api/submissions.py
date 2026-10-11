@@ -1,9 +1,9 @@
 """Invoices and tickets a teacher sends in — open to every role.
 
-Each upload becomes an ordinary register entry, read by the same models and
-validated by the office in the register. What this router adds is the
-teacher's side of it: sending one, optionally for one of their requests, and
-following their own — and nobody else's.
+Each upload becomes an ordinary register entry, read by the same models. What
+this router adds is the teacher's side of it: sending one, optionally for one
+of their requests, filling it in and validating it themselves — their own, and
+nobody else's. Once validated it is the office's to change.
 """
 
 from __future__ import annotations
@@ -16,13 +16,14 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..deps import get_current_user, get_db, get_settings
+from ..deps import get_current_user, get_db, get_settings, get_workspace_setting
 from ..models import Document, ExtractionJob, Request as OfficeRequest, User
-from ..schemas import JobRead, UploadResponse
+from ..schemas import DocumentRecord, DocumentUpdate, JobRead, UploadResponse
 from ..schemas.common import UtcDatetime
 from ..schemas.documents import CaptureSource, ExtractionStatus
-from .documents.register import drive_name, extension_for
-from .documents.routes import queue_upload
+from .documents.register import drive_name, extension_for, sync_register, to_record
+from .documents.routes import _save, queue_upload
+from ..services.text_format import compact_code
 from .requests import is_office
 
 router = APIRouter()
@@ -140,3 +141,55 @@ def my_file(reference: str, session: Session = Depends(get_db), user: User = Dep
         media_type=upload.source_file_type,
         filename=drive_name(document, extension_for(document)),
     )
+
+
+class CentreRead(BaseModel):
+    """What a teacher needs of the centre: the tax id their invoices must name."""
+
+    cif: str
+
+
+@router.get("/centre", response_model=CentreRead)
+def centre(session: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    return CentreRead(cif=get_workspace_setting(session).school_cif or "")
+
+
+@router.get("/{reference}/record", response_model=DocumentRecord)
+def my_record(
+    reference: str,
+    request: Request,
+    session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """The whole entry, as the register's editor shows it."""
+    sync_register(request.app, session)
+    return to_record(_own(session, reference, user))
+
+
+@router.patch("/{reference}", response_model=DocumentRecord)
+def update_mine(
+    reference: str,
+    payload: DocumentUpdate,
+    request: Request,
+    session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Fill in or correct one of your own, and validate it — no office review needed."""
+    document = _own(session, reference, user)
+    if document.validat:
+        raise HTTPException(
+            status_code=409,
+            detail="Aquest document ja està validat. Per canviar-lo, parla amb secretaria.",
+        )
+    changes = payload.model_dump(exclude_unset=True, by_alias=False)
+    if changes.get("validat"):
+        # Only an invoice made out to the centre is the centre's to pay. With no
+        # CIF configured there is nothing to check against.
+        school_cif = compact_code(get_workspace_setting(session).school_cif)
+        cif = compact_code(changes.get("cif_proveit", document.cif_proveit) or "")
+        if school_cif and cif != school_cif:
+            raise HTTPException(
+                status_code=409,
+                detail=f"El CIF proveït ha de ser el del centre ({school_cif}). Si la factura no és a nom del centre, no es pot enviar.",
+            )
+    return _save(request.app, session, document, changes, user)

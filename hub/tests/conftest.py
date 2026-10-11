@@ -221,7 +221,7 @@ def make_user(
     email: str | None = None,
     password: str = "member-password",
 ) -> dict[str, str]:
-    """Invite an account with ``role``, open the invitation, and return its headers."""
+    """Enable an account with ``role``, choose its password, and return its headers."""
     invited = client.post(
         "/api/v1/users",
         headers=admin_headers,
@@ -229,7 +229,7 @@ def make_user(
     )
     assert invited.status_code == 201, invited.text
     activated = client.post(
-        "/api/v1/auth/activate", json={"token": invited.json()["token"], "password": password}
+        "/api/v1/auth/activate", json={"email": invited.json()["email"], "password": password}
     )
     assert activated.status_code == 200, activated.text
     return {"Authorization": f"Bearer {activated.json()['access_token']}"}

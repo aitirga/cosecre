@@ -98,7 +98,7 @@ async function authenticate(
   }
 }
 
-/** Opens an invitation and signs in with the password just chosen. */
+/** Chooses a pending account's password and signs in with it. */
 async function activate(payload: Parameters<typeof api.activate>[0]) {
   state.loading = true
   state.error = null
@@ -122,6 +122,11 @@ async function activate(payload: Parameters<typeof api.activate>[0]) {
 function roleOf(user: User | null): Role | null {
   if (!user) return null
   return user.role ?? (user.is_admin ? 'admin' : 'secretaria')
+}
+
+/** Swap in a fresher copy of the signed-in user, e.g. after editing the profile. */
+function setUser(user: User) {
+  state.user = user
 }
 
 async function logout() {
@@ -149,6 +154,7 @@ export function useAuth() {
     bootstrap,
     authenticate,
     activate,
+    setUser,
     logout,
   }
 }

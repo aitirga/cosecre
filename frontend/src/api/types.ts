@@ -37,7 +37,7 @@ export interface HubMeta {
  * statements and requests; Professor/a only sends requests and invoices in.
  */
 export type Role = 'admin' | 'secretaria' | 'professor'
-export type UserStatus = 'active' | 'pending' | 'expired' | 'disabled'
+export type UserStatus = 'active' | 'pending' | 'disabled'
 
 export interface User {
   id: number
@@ -51,20 +51,6 @@ export interface User {
   created_at: string
   last_login_at: string | null
   password_set_at: string | null
-}
-
-/** A fresh invitation. Shown once: the hub only keeps hashes of both. */
-export interface InviteIssued {
-  user: User
-  token: string
-  code: string
-  expires_at: string
-}
-
-export interface InvitePreview {
-  email: string
-  display_name: string | null
-  role: Role
 }
 
 export interface AuthTokens {
@@ -285,6 +271,7 @@ export interface WorkspaceSettings {
   polling_interval_seconds: number
   classifier_configured?: boolean
   drive_folder_configured?: boolean
+  school_cif?: string
   iban_general?: string
   iban_material?: string
   iban_menjador?: string

@@ -126,3 +126,60 @@ def test_jobs_are_followed_by_their_owner_only(school):
     job_id = submit(client, teacher).json()["job_id"]
     assert client.get(f"{API}/submissions/jobs/{job_id}", headers=teacher).status_code == 200
     assert client.get(f"{API}/submissions/jobs/{job_id}", headers=other).status_code == 404
+
+
+def test_a_teacher_fills_in_and_validates_their_own(school):
+    client, _admin, secretaria, teacher, other = school
+    reference = submit(client, teacher).json()["internal_doc_number"]
+
+    record = client.get(f"{API}/submissions/{reference}/record", headers=teacher)
+    assert record.status_code == 200
+    assert record.json()["num_doc_intern"] == reference
+    assert client.get(f"{API}/submissions/{reference}/record", headers=other).status_code == 404
+
+    edited = client.patch(
+        f"{API}/submissions/{reference}",
+        headers=teacher,
+        json={"proveidor": "Llibreria Puig", "validat": True},
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["proveidor"] == "Llibreria Puig"
+    assert edited.json()["validat"] is True
+
+    # Straight into the register as validated; no office review, and nobody told it to themselves.
+    office = client.get(f"{API}/documents/records/{reference}", headers=secretaria).json()
+    assert office["validat"] is True
+    assert [n for n in _notes(client, teacher) if n["kind"] == "document_validated"] == []
+
+    # From then on it is the office's to change.
+    again = client.patch(f"{API}/submissions/{reference}", headers=teacher, json={"proveidor": "Una altra"})
+    assert again.status_code == 409
+
+
+def test_nobody_edits_someone_elses(school):
+    client, _admin, _secretaria, teacher, other = school
+    reference = submit(client, teacher).json()["internal_doc_number"]
+    response = client.patch(f"{API}/submissions/{reference}", headers=other, json={"proveidor": "X"})
+    assert response.status_code == 404
+
+
+def test_only_an_invoice_made_out_to_the_centre_can_be_validated(school):
+    client, admin, _secretaria, teacher, _other = school
+    settings = client.get(f"{API}/documents/settings", headers=admin).json()
+    saved = client.put(f"{API}/documents/settings", headers=admin, json={**settings, "school_cif": "s-0800636 c"})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["school_cif"] == "S0800636C"
+    assert client.get(f"{API}/submissions/centre", headers=teacher).json() == {"cif": "S0800636C"}
+
+    reference = submit(client, teacher).json()["internal_doc_number"]
+    wrong = client.patch(
+        f"{API}/submissions/{reference}", headers=teacher, json={"cif_proveit": "B12345678", "validat": True}
+    )
+    assert wrong.status_code == 409
+    assert "S0800636C" in wrong.json()["detail"]
+
+    right = client.patch(
+        f"{API}/submissions/{reference}", headers=teacher, json={"cif_proveit": "S 0800636-C", "validat": True}
+    )
+    assert right.status_code == 200, right.text
+    assert right.json()["validat"] is True

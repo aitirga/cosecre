@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from ..deps import get_current_user, get_db, require_admin
 from ..models import User
-from ..schemas import InviteIssued, MessageResponse, UserCreate, UserRead, UserUpdate
-from ..security import clear_invite, hash_password, issue_invite, revoke_all_sessions, utcnow
+from ..schemas import MessageResponse, UserCreate, UserRead, UserUpdate
+from ..security import hash_password, revoke_all_sessions, utcnow
 
 router = APIRouter()
 
@@ -17,14 +17,6 @@ router = APIRouter()
 def list_users(session: Session = Depends(get_db), _: User = Depends(require_admin)):
     users = session.query(User).order_by(User.created_at.asc()).all()
     return [UserRead.model_validate(user) for user in users]
-
-
-def _invited(session: Session, user: User) -> InviteIssued:
-    token, code = issue_invite(user)
-    session.flush()
-    return InviteIssued(
-        user=UserRead.model_validate(user), token=token, code=code, expires_at=user.invite_expires_at
-    )
 
 
 def _is_last_admin(session: Session, user: User) -> bool:
@@ -38,7 +30,7 @@ def _is_last_admin(session: Session, user: User) -> bool:
     return others == 0
 
 
-@router.post("", response_model=UserRead | InviteIssued, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 def create_user(
     payload: UserCreate,
     session: Session = Depends(get_db),
@@ -46,9 +38,8 @@ def create_user(
 ):
     """Enable an e-mail address.
 
-    Without a password the account is invited: the response carries the link
-    token and code once, and the account cannot sign in until its owner opens
-    one of them and chooses a password.
+    Without a password the account is pending: the first time its owner signs
+    in with that e-mail, they choose the password.
     """
     if session.query(User).filter(User.email == payload.email).first() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aquest correu ja està registrat.")
@@ -63,28 +54,24 @@ def create_user(
         is_active=True,
     )
     session.add(user)
-    if payload.password is None:
-        issued = _invited(session, user)
-        session.commit()
-        return issued
-
-    user.password_hash = hash_password(payload.password)
-    user.password_set_at = utcnow()
+    if payload.password is not None:
+        user.password_hash = hash_password(payload.password)
+        user.password_set_at = utcnow()
     session.commit()
     session.refresh(user)
     return UserRead.model_validate(user)
 
 
-@router.post("/{user_id}/invite", response_model=InviteIssued)
-def reinvite_user(
+@router.post("/{user_id}/reset", response_model=UserRead)
+def reset_user(
     user_id: int,
     session: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    """Issue a new invitation — also how an account is reset.
+    """Forget an account's password.
 
-    The password stops working and every session is signed out; the owner
-    chooses a new password through the new link or code.
+    Every session is signed out, and the owner chooses a new password the next
+    time they sign in.
     """
     user = session.get(User, user_id)
     if user is None:
@@ -95,10 +82,12 @@ def reinvite_user(
             detail="Per canviar la teva contrasenya, fes-ho des del teu compte.",
         )
     user.is_active = True
+    user.password_hash = ""
+    user.password_set_at = None
     revoke_all_sessions(session, user)
-    issued = _invited(session, user)
     session.commit()
-    return issued
+    session.refresh(user)
+    return UserRead.model_validate(user)
 
 
 @router.patch("/{user_id}", response_model=UserRead)
@@ -137,7 +126,6 @@ def update_user(
     if payload.password is not None:
         user.password_hash = hash_password(payload.password)
         user.password_set_at = utcnow()
-        clear_invite(user)
         revoke_all_sessions(session, user)
 
     session.commit()
@@ -171,7 +159,6 @@ def remove_user(
         return MessageResponse(message=f"{user.email} was removed.")
 
     user.is_active = False
-    clear_invite(user)
     revoke_all_sessions(session, user)
     session.commit()
     return MessageResponse(message=f"{user.email} was disabled.")

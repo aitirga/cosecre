@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, nextTick, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useMutation, useQuery } from '@tanstack/vue-query'
 
@@ -22,6 +22,41 @@ const initials = computed(() => {
   const parts = source.split(/[\s._-]+/).filter(Boolean)
   return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?'
 })
+
+// ── Name ─────────────────────────────────────────────────────────────────────
+const editingName = ref(false)
+const nameDraft = ref('')
+const nameError = ref('')
+const nameInput = ref<HTMLInputElement | null>(null)
+
+async function startName() {
+  nameDraft.value = user.value?.display_name ?? ''
+  nameError.value = ''
+  editingName.value = true
+  await nextTick()
+  nameInput.value?.select()
+}
+
+function closeName() {
+  editingName.value = false
+  nameError.value = ''
+}
+
+const saveName = useMutation({
+  mutationFn: () => api.updateMe({ display_name: nameDraft.value.trim() || null }),
+  onSuccess: (fresh) => {
+    auth.setUser(fresh)
+    closeName()
+  },
+  onError: (error) => {
+    nameError.value = error instanceof ApiError ? error.message : "No s'ha pogut desar el nom."
+  },
+})
+
+function submitName() {
+  if ((nameDraft.value.trim() || null) === (user.value?.display_name ?? null)) closeName()
+  else saveName.mutate()
+}
 
 // ── Dates ────────────────────────────────────────────────────────────────────
 /** The hub writes UTC without an offset; read bare, it would pass for local time. */
@@ -123,8 +158,36 @@ const changePassword = useMutation({
     <section class="card">
       <div class="profile">
         <span class="avatar" :class="auth.role.value && `role-${auth.role.value}`" aria-hidden="true">{{ initials }}</span>
-        <div class="profile-text">
-          <h2 class="profile-name truncate">{{ user?.display_name || user?.email }}</h2>
+        <form v-if="editingName" class="profile-text name-form" @submit.prevent="submitName">
+          <div class="name-row">
+            <input
+              ref="nameInput"
+              v-model="nameDraft"
+              class="input name-input"
+              maxlength="255"
+              autocomplete="name"
+              placeholder="El teu nom"
+              aria-label="Nom"
+              @keydown.esc.prevent="closeName"
+            />
+            <button class="btn btn-ghost btn-sm" type="button" @click="closeName">Cancel·la</button>
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="saveName.isPending.value">
+              {{ saveName.isPending.value ? 'Desant…' : 'Desa' }}
+            </button>
+          </div>
+          <p v-if="nameError" class="notice notice-error">
+            <AppIcon name="alert" :size="15" />
+            <span>{{ nameError }}</span>
+          </p>
+          <p v-else class="muted truncate">{{ user?.email }} · Si el deixes buit es mostra el correu.</p>
+        </form>
+        <div v-else class="profile-text">
+          <div class="name-row">
+            <h2 class="profile-name truncate">{{ user?.display_name || user?.email }}</h2>
+            <button class="btn btn-ghost btn-icon btn-sm" type="button" title="Canvia el nom" aria-label="Canvia el nom" @click="startName">
+              <AppIcon name="pencil" />
+            </button>
+          </div>
           <p v-if="user?.display_name" class="muted truncate">{{ user?.email }}</p>
         </div>
         <RoleBadge v-if="auth.role.value" :role="auth.role.value" />
@@ -151,12 +214,12 @@ const changePassword = useMutation({
 
       <p v-if="auth.isAdmin.value" class="profile-foot">
         <AppIcon name="users" :size="14" />
-        <span>El nom i el rol es canvien des de</span>
+        <span>El rol es canvia des de</span>
         <RouterLink class="link" :to="{ name: 'settings', query: { tab: 'team' } }">Configuració · Equip</RouterLink>
       </p>
       <p v-else class="profile-foot">
         <AppIcon name="users" :size="14" />
-        <span>Per canviar el nom o el rol, demana-ho a un administrador/a.</span>
+        <span>Per canviar el rol, demana-ho a un administrador/a.</span>
       </p>
     </section>
 
@@ -342,7 +405,7 @@ const changePassword = useMutation({
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 14px;
-  max-width: 920px;
+  max-width: var(--page-w-form);
 }
 
 /* ── Profile ─────────────────────────────────────────────────────────── */
@@ -395,6 +458,24 @@ const changePassword = useMutation({
   font-size: var(--text-lg);
   font-weight: 650;
   letter-spacing: -0.01em;
+}
+
+.name-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.name-form {
+  gap: 6px;
+}
+
+.name-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 360px;
+  margin-right: 4px;
 }
 
 .profile-foot {
@@ -657,6 +738,16 @@ const changePassword = useMutation({
 
   .pair {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .name-form .name-row {
+    flex-wrap: wrap;
+  }
+
+  .name-input {
+    flex-basis: 100%;
+    max-width: none;
+    margin-right: 0;
   }
 
   .session-expiry {

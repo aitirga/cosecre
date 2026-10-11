@@ -1,52 +1,24 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch, watchEffect } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { computed, reactive, ref, watchEffect } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
 
-import { api, ApiError } from '../api/client'
-import type { InvitePreview } from '../api/types'
+import { ApiError } from '../api/client'
 import AppIcon from '../components/AppIcon.vue'
 import BrandMark from '../components/BrandMark.vue'
-import RoleBadge from '../components/RoleBadge.vue'
 import { useAuth } from '../composables/useAuth'
 import { usePlatform } from '../platform'
 
-const route = useRoute()
 const router = useRouter()
 const auth = useAuth()
 const platform = usePlatform()
 
 /**
- * `invite` opens an account with the e-mail and six-digit code an admin handed
- * over; `link` is the same, arrived at through the invitation link, so the
- * hub already knows who it is for.
+ * `activate` is an account an admin enabled that has no password yet: signing
+ * in with its e-mail lands here, and the password chosen opens it.
  */
-type Mode = 'login' | 'register' | 'invite' | 'link'
+type Mode = 'login' | 'register' | 'activate'
 const mode = ref<Mode>('login')
-const form = reactive({ email: '', password: '', confirm: '', code: '' })
-
-const inviteToken = computed(() =>
-  typeof route.params.token === 'string' ? route.params.token : null,
-)
-const invite = ref<InvitePreview | null>(null)
-const inviteError = ref<string | null>(null)
-
-watch(
-  inviteToken,
-  async (token) => {
-    if (!token) return
-    mode.value = 'link'
-    invite.value = null
-    inviteError.value = null
-    try {
-      invite.value = await api.invitePreview(token)
-      form.email = invite.value.email
-    } catch (error) {
-      inviteError.value =
-        error instanceof ApiError ? error.message : "No s'ha pogut llegir la invitació."
-    }
-  },
-  { immediate: true },
-)
+const form = reactive({ email: '', password: '', confirm: '' })
 
 /**
  * The hub only accepts registration while it has no accounts, so the very
@@ -61,14 +33,10 @@ watchEffect(() => {
 
 const isFirstAccount = computed(() => auth.state.hub?.has_users === false)
 const choosingPassword = computed(() => mode.value !== 'login')
-const opensInvite = computed(() => mode.value === 'invite' || mode.value === 'link')
+const activating = computed(() => mode.value === 'activate')
 
 const heading = computed(() => {
-  if (mode.value === 'link') {
-    const name = invite.value?.display_name?.split(' ')[0]
-    return name ? `Benvingut/da, ${name}` : 'Activa el teu compte'
-  }
-  if (mode.value === 'invite') return 'Activa el teu compte'
+  if (mode.value === 'activate') return 'Tria la teva contrasenya'
   if (mode.value === 'register') {
     return isFirstAccount.value ? 'Crea el primer compte' : 'Crea un compte'
   }
@@ -77,22 +45,19 @@ const heading = computed(() => {
 
 const lead = computed(() => {
   if (auth.state.hubError) return auth.state.hubError
-  if (mode.value === 'link') {
-    return inviteError.value ?? 'Tria la contrasenya amb què entraràs a partir d\'ara.'
-  }
-  if (mode.value === 'invite') {
-    return 'Escriu el correu i el codi de 6 xifres que t\'ha donat l\'administrador, i tria una contrasenya.'
+  if (mode.value === 'activate') {
+    return "És el primer cop que hi entres: tria la contrasenya amb què entraràs a partir d'ara."
   }
   if (mode.value === 'register' && isFirstAccount.value) {
     return 'Aquest hub encara no té comptes. El primer que creïs serà l\'administrador i podrà afegir la resta.'
   }
   if (mode.value === 'register') return 'Registra un compte nou en aquest hub.'
-  return 'Fes servir el compte que t\'ha creat un administrador.'
+  return "Entra amb el correu que t'ha habilitat un administrador. El primer cop, deixa la contrasenya en blanc."
 })
 
 const submitting = computed(() => auth.state.loading)
 const mismatch = computed(
-  () => opensInvite.value && form.confirm.length > 0 && form.confirm !== form.password,
+  () => activating.value && form.confirm.length > 0 && form.confirm !== form.password,
 )
 
 function switchTo(next: Mode) {
@@ -105,10 +70,8 @@ function switchTo(next: Mode) {
 async function submit() {
   if (mismatch.value) return
   try {
-    if (mode.value === 'link' && inviteToken.value) {
-      await auth.activate({ token: inviteToken.value, password: form.password })
-    } else if (mode.value === 'invite') {
-      await auth.activate({ email: form.email, code: form.code, password: form.password })
+    if (mode.value === 'activate') {
+      await auth.activate({ email: form.email, password: form.password })
     } else {
       await auth.authenticate(mode.value === 'register' ? 'register' : 'login', {
         email: form.email,
@@ -119,8 +82,12 @@ async function submit() {
     // registry where this particular person belongs, which is not knowable here
     // — their modules have not resolved their membership yet.
     await router.replace('/')
-  } catch {
-    // The message is already on auth.state.error.
+  } catch (error) {
+    // An enabled account that has never been used: straight to choosing its password.
+    if (error instanceof ApiError && (error.data as { code?: string } | null)?.code === 'password_not_set') {
+      switchTo('activate')
+    }
+    // Anything else: the message is already on auth.state.error.
   }
 }
 </script>
@@ -141,13 +108,12 @@ async function submit() {
           <h1 class="title">{{ heading }}</h1>
           <p class="lead">{{ lead }}</p>
 
-          <p v-if="mode === 'link' && invite" class="invite-for">
-            <span class="truncate">{{ invite.email }}</span>
-            <RoleBadge :role="invite.role" />
+          <p v-if="activating" class="invite-for">
+            <span class="truncate">{{ form.email }}</span>
           </p>
 
           <div
-            v-if="auth.canRegister.value && !isFirstAccount && !opensInvite"
+            v-if="auth.canRegister.value && !isFirstAccount && !activating"
             class="segmented"
             role="tablist"
           >
@@ -171,8 +137,8 @@ async function submit() {
             </button>
           </div>
 
-          <form v-if="!(mode === 'link' && !invite)" class="form" @submit.prevent="submit">
-            <label v-if="mode !== 'link'" class="field">
+          <form class="form" @submit.prevent="submit">
+            <label v-if="!activating" class="field">
               <span class="label">Correu electrònic</span>
               <input
                 v-model="form.email"
@@ -184,34 +150,20 @@ async function submit() {
               />
             </label>
 
-            <label v-if="mode === 'invite'" class="field">
-              <span class="label">Codi d'invitació</span>
-              <input
-                v-model="form.code"
-                class="input input-mono code-input"
-                inputmode="numeric"
-                autocomplete="one-time-code"
-                pattern="[0-9]{6}"
-                maxlength="6"
-                placeholder="000000"
-                required
-              />
-            </label>
-
             <label class="field">
-              <span class="label">{{ opensInvite ? 'Nova contrasenya' : 'Contrasenya' }}</span>
+              <span class="label">{{ activating ? 'Nova contrasenya' : 'Contrasenya' }}</span>
               <input
                 v-model="form.password"
                 class="input"
                 type="password"
                 :autocomplete="choosingPassword ? 'new-password' : 'current-password'"
                 :minlength="choosingPassword ? 8 : undefined"
-                required
+                :required="choosingPassword"
               />
               <span v-if="choosingPassword" class="hint">Mínim 8 caràcters.</span>
             </label>
 
-            <label v-if="opensInvite" class="field">
+            <label v-if="activating" class="field">
               <span class="label">Repeteix-la</span>
               <input
                 v-model="form.confirm"
@@ -232,7 +184,7 @@ async function submit() {
               {{
                 submitting
                   ? 'Un moment…'
-                  : opensInvite
+                  : activating
                     ? 'Activa el compte'
                     : mode === 'register'
                       ? 'Crea el compte'
@@ -246,18 +198,9 @@ async function submit() {
             </p>
           </form>
 
-          <p v-if="mode === 'login'" class="switch">
-            Primer cop?
-            <button type="button" class="link-btn" @click="switchTo('invite')">
-              Tinc un codi d'invitació
-            </button>
-          </p>
-          <p v-else-if="opensInvite" class="switch">
-            <RouterLink v-if="mode === 'link'" class="link-btn" :to="{ name: 'login' }">
-              Ja tinc contrasenya
-            </RouterLink>
-            <button v-else type="button" class="link-btn" @click="switchTo('login')">
-              Ja tinc contrasenya
+          <p v-if="activating" class="switch">
+            <button type="button" class="link-btn" @click="switchTo('login')">
+              Torna a l'inici de sessió
             </button>
           </p>
         </div>
@@ -368,11 +311,6 @@ async function submit() {
   background: var(--surface-1);
   font-size: var(--text-base);
   color: var(--ink-700);
-}
-
-.code-input {
-  letter-spacing: 0.3em;
-  font-size: var(--text-md);
 }
 
 .hint-error {

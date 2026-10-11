@@ -1,16 +1,18 @@
 <script setup lang="ts">
 /**
  * Les meves factures: send an invoice or a ticket to the office — a PDF, or a
- * photo straight from the phone — and see where each one you sent is.
+ * photo straight from the phone — fill it in and validate it in the same
+ * window the office uses, and see where each one you sent is.
  */
 import { computed, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { api } from '../api/client'
 import type { RequestSummary, Submission } from '../api/types'
 import AppIcon from '../components/AppIcon.vue'
 import DocumentIntake from '../components/DocumentIntake.vue'
+import DocumentWindow, { type WindowEntry } from '../components/DocumentWindow.vue'
 import ImageViewer from '../components/ImageViewer.vue'
 import SearchInput from '../components/SearchInput.vue'
 import SortTh from '../components/SortTh.vue'
@@ -21,6 +23,7 @@ import { KIND_LABEL, OPEN_STATUSES } from '../requests'
 import { SUBMISSION_STATUS } from '../submissions'
 
 const route = useRoute()
+const router = useRouter()
 const queryClient = useQueryClient()
 const { activeTrackedJobs } = useExtractionTracker()
 
@@ -83,7 +86,62 @@ function closePreview() {
   preview.value = null
 }
 
-const highlighted = computed(() => (typeof route.query.doc === 'string' ? route.query.doc : null))
+// ── The open entry ───────────────────────────────────────────────────────────
+// In the address (`?doc=`), like the register: a notification's link opens it
+// and Back closes it. A fresh photo or file opens straight away, so it can be
+// filled in while the AI reads it.
+const openId = computed(() => (typeof route.query.doc === 'string' ? route.query.doc : null))
+const queue = ref<string[] | null>(null)
+let pushedHere = false
+
+const entries = computed<WindowEntry[]>(() =>
+  submissions.value.map((s) => ({
+    num_doc_intern: s.num_doc_intern,
+    num_factura: s.num_factura,
+    proveidor: s.proveidor,
+    tipus_document: s.tipus_document,
+    data_factura: s.data_factura,
+    import: s.import_value,
+    extraction_status: s.status,
+  })),
+)
+
+function openEntry(references: string[]) {
+  if (!references.length) return
+  queue.value = references
+  if (openId.value) {
+    void router.replace({ query: { ...route.query, doc: references[0] } })
+    return
+  }
+  pushedHere = true
+  void router.push({ query: { ...route.query, doc: references[0] } })
+}
+
+function openRow(item: Submission) {
+  openEntry([item.num_doc_intern])
+  queue.value = table.visible.value.map((s) => s.num_doc_intern)
+}
+
+function showEntry(id: string) {
+  void router.replace({ query: { ...route.query, doc: id } })
+}
+
+function closeEntry() {
+  if (pushedHere) {
+    pushedHere = false
+    router.back()
+  } else {
+    const { doc: _doc, ...rest } = route.query
+    void router.replace({ query: rest })
+  }
+  refresh()
+}
+
+watch(openId, (id) => {
+  if (id) return
+  pushedHere = false
+  queue.value = null
+})
 </script>
 
 <template>
@@ -93,7 +151,7 @@ const highlighted = computed(() => (typeof route.query.doc === 'string' ? route.
         <h1 class="page-title">Les meves factures</h1>
         <p class="page-lead">
           Envia a secretaria les factures i els tiquets del que has comprat. La IA en llegeix les
-          dades i secretaria les valida.
+          dades; revisa-les, completa el que calgui i valida-la.
         </p>
       </div>
     </header>
@@ -104,6 +162,7 @@ const highlighted = computed(() => (typeof route.query.doc === 'string' ? route.
       title="Envia una factura o un tiquet"
       hint="Un PDF o una foto per document. Des del mòbil, fes-hi la foto directament."
       @uploaded="refresh"
+      @queued="openEntry"
     >
       <template #head>
         <label v-if="linkable.length" class="link-request">
@@ -149,7 +208,9 @@ const highlighted = computed(() => (typeof route.query.doc === 'string' ? route.
             <tr
               v-for="item in table.visible.value"
               :key="item.num_doc_intern"
-              :class="{ current: item.num_doc_intern === highlighted }"
+              class="clickable"
+              :class="{ current: item.num_doc_intern === openId }"
+              @click="openRow(item)"
             >
               <td>
                 <div class="doc">
@@ -173,6 +234,7 @@ const highlighted = computed(() => (typeof route.query.doc === 'string' ? route.
                   v-if="item.request_id"
                   class="request-link mono"
                   :to="{ name: 'requests', query: { sol: String(item.request_id) } }"
+                  @click.stop
                 >
                   {{ item.request_code }}
                 </RouterLink>
@@ -185,7 +247,7 @@ const highlighted = computed(() => (typeof route.query.doc === 'string' ? route.
                   class="btn btn-ghost btn-icon btn-sm"
                   type="button"
                   title="Mostra l'original"
-                  @click="openOriginal(item)"
+                  @click.stop="openOriginal(item)"
                 >
                   <AppIcon :name="item.source_file_type?.startsWith('image/') ? 'image' : 'file'" />
                   <span class="sr-only">Mostra l'original</span>
@@ -196,6 +258,16 @@ const highlighted = computed(() => (typeof route.query.doc === 'string' ? route.
         </table>
       </div>
     </section>
+
+    <DocumentWindow
+      v-if="openId"
+      :id="openId"
+      :queue="queue ?? table.visible.value.map((item) => item.num_doc_intern)"
+      :documents="entries"
+      scope="submission"
+      @open="showEntry"
+      @close="closeEntry"
+    />
 
     <ImageViewer v-if="preview" :src="preview.url" :alt="preview.name" @close="closePreview" />
   </div>
@@ -244,6 +316,14 @@ const highlighted = computed(() => (typeof route.query.doc === 'string' ? route.
 
 .nowrap {
   white-space: nowrap;
+}
+
+tr.clickable {
+  cursor: pointer;
+}
+
+tr.clickable:hover td {
+  background: var(--surface-1);
 }
 
 tr.current td {

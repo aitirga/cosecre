@@ -296,7 +296,7 @@ async function handleLogout() {
 /* ── Content ─────────────────────────────────────────────────────────────── */
 .content {
   min-width: 0;
-  padding: 20px 24px 40px;
+  padding: 20px var(--page-gutter) 40px;
 }
 
 .platform-note {

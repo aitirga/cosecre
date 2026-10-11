@@ -27,8 +27,6 @@ import type {
   DocumentUpdate,
   HistoryState,
   HubMeta,
-  InviteIssued,
-  InvitePreview,
   JobRead,
   LlmProvider,
   MatchRun,
@@ -69,7 +67,6 @@ const NO_RETRY_PATHS = [
   '/auth/register',
   '/auth/logout',
   '/auth/activate',
-  '/auth/invite',
 ]
 
 export class ApiError extends Error {
@@ -436,14 +433,11 @@ export const api = {
     persistTokens(tokens)
     return tokens
   },
-  /** Who an invitation link is for — unauthenticated, it is the way in. */
-  invitePreview(token: string) {
-    return request<InvitePreview>(`/auth/invite/${encodeURIComponent(token)}`)
-  },
-  /** Open an invitation by its link or by e-mail and code; signs straight in. */
-  async activate(
-    payload: { password: string } & ({ token: string } | { email: string; code: string }),
-  ) {
+  /**
+   * First sign-in of an account an admin enabled: choose its password; signs
+   * straight in. `login` answers 409 `code: 'password_not_set'` for such accounts.
+   */
+  async activate(payload: { email: string; password: string }) {
     const tokens = await request<AuthTokens>('/auth/activate', {
       method: 'POST',
       body: JSON.stringify({ ...payload, client: clientName, client_label: clientLabel }),
@@ -465,6 +459,10 @@ export const api = {
   },
   me() {
     return request<User>('/auth/me')
+  },
+  /** The signed-in user's own profile: only the name, the role is an admin's call. */
+  updateMe(payload: { display_name: string | null }) {
+    return request<User>('/auth/me', { method: 'PATCH', body: JSON.stringify(payload) })
   },
   sessions() {
     return request<SessionInfo[]>('/auth/sessions')
@@ -494,13 +492,13 @@ export const api = {
   listUsers() {
     return request<User[]>('/users')
   },
-  /** Enables an address; the account waits on the invitation it returns. */
+  /** Enables an address; its owner chooses the password on first sign-in. */
   inviteUser(payload: UserCreate) {
-    return request<InviteIssued>('/users', { method: 'POST', body: JSON.stringify(payload) })
+    return request<User>('/users', { method: 'POST', body: JSON.stringify(payload) })
   },
-  /** A new invitation — also how an account is reset: its password stops working. */
-  reinviteUser(userId: number) {
-    return request<InviteIssued>(`/users/${userId}/invite`, { method: 'POST' })
+  /** Forgets the password and signs the account out; the owner chooses a new one. */
+  resetUser(userId: number) {
+    return request<User>(`/users/${userId}/reset`, { method: 'POST' })
   },
   updateUser(userId: number, payload: UserUpdate) {
     return request<User>(`/users/${userId}`, { method: 'PATCH', body: JSON.stringify(payload) })
@@ -828,6 +826,24 @@ export const api = {
   },
   submissionFileUrl(reference: string) {
     return fetchBlobUrl(`/submissions/${reference}/file`)
+  },
+  /** The centre's CIF: a teacher validates only invoices made out to it. */
+  centre() {
+    return request<{ cif: string }>('/submissions/centre')
+  },
+  /** One of your own, whole, for the editor. */
+  getSubmission(reference: string) {
+    return request<DocumentRecord>(`/submissions/${reference}/record`)
+  },
+  /** Fill in or validate one of your own; once validated it is the office's. */
+  updateSubmission(reference: string, payload: DocumentUpdate) {
+    return request<DocumentRecord>(`/submissions/${reference}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+  downloadSubmissionFile(reference: string, fallbackName: string): Promise<void> {
+    return saveFile(`/submissions/${reference}/file`, fallbackName)
   },
 
   // ── Notifications ───────────────────────────────────────────────────────

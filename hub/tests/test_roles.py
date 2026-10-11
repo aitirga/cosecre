@@ -100,8 +100,7 @@ def test_accounts_from_before_roles_keep_their_access(tmp_path):
         database = client.app.state.settings.database_url.removeprefix("sqlite:///")
 
     connection = sqlite3.connect(database)
-    added = ("role", "password_set_at", "invite_token_hash", "invite_code_hash")
-    for column in (*added, "invite_expires_at", "invite_attempts"):
+    for column in ("role", "password_set_at"):
         connection.execute(f"DROP INDEX IF EXISTS ix_users_{column}")
         connection.execute(f"ALTER TABLE users DROP COLUMN {column}")
     connection.commit()

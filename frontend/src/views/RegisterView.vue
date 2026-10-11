@@ -731,7 +731,7 @@ const showUpload = ref(true)
      the page past the viewport. */
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
-  max-width: 1280px;
+  max-width: var(--page-w-data);
 }
 
 .head-actions {

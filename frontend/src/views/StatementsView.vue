@@ -661,7 +661,7 @@ function amountClass(m: Movement) {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
-  max-width: 1280px;
+  max-width: var(--page-w-data);
 }
 
 .sources {

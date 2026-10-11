@@ -1,28 +1,26 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from ..config import Settings
 from ..deps import get_current_user, get_db, get_settings
 from ..models import RefreshSession, User
 from ..schemas import (
-    ActivateRequest,
     AuthTokens,
-    InvitePreview,
     LoginRequest,
     MessageResponse,
     PasswordChangeRequest,
+    ProfileUpdate,
     RefreshRequest,
     RegisterRequest,
     SessionRead,
+    SetPasswordRequest,
     UserRead,
 )
 from ..security import (
-    check_invite_code,
-    clear_invite,
     create_access_token,
-    find_invited_user,
     hash_password,
     issue_refresh_token,
     revoke_all_sessions,
@@ -105,9 +103,10 @@ def login(
 ):
     user = session.query(User).filter(User.email == payload.email).first()
     if user is not None and user.is_active and not user.password_hash:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Aquest compte encara no està activat. Fes servir l'enllaç o el codi d'invitació.",
+        # Enabled but never used: the client asks its owner to choose a password.
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"code": "password_not_set", "detail": "Tria la contrasenya del teu compte."},
         )
     # One message for "no such account" and "wrong password" alike, so the
     # endpoint cannot be used to enumerate who has an account here.
@@ -124,40 +123,23 @@ def login(
     return tokens
 
 
-_INVITE_GONE = "Aquesta invitació no és vàlida o ha caducat. Demana'n una de nova a l'administrador."
-
-
-@router.get("/invite/{token}", response_model=InvitePreview)
-def invite_preview(token: str, session: Session = Depends(get_db)):
-    """Who an invitation link is for, so the activation page can greet them."""
-    user = find_invited_user(session, token)
-    if user is None or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_INVITE_GONE)
-    return InvitePreview(email=user.email, display_name=user.display_name, role=user.role)
-
-
 @router.post("/activate", response_model=AuthTokens)
 def activate(
-    payload: ActivateRequest,
+    payload: SetPasswordRequest,
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    """Open an invitation and choose the account's password; signs straight in."""
-    if payload.token:
-        user = find_invited_user(session, payload.token)
-    else:
-        user = session.query(User).filter(User.email == payload.email).first()
-        if user is not None and not check_invite_code(user, payload.code or ""):
-            # The failed attempt is counted on the row, so it is kept.
-            session.commit()
-            user = None
-    if user is None or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_INVITE_GONE)
+    """First sign-in of an account an admin enabled: choose its password; signs straight in."""
+    user = session.query(User).filter(User.email == payload.email).first()
+    if user is None or not user.is_active or user.password_hash:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aquest compte ja té contrasenya o no està habilitat.",
+        )
 
     user.password_hash = hash_password(payload.password)
     user.password_set_at = utcnow()
     user.last_login_at = utcnow()
-    clear_invite(user)
     tokens = _tokens(
         session, user, settings, client=payload.client, client_label=payload.client_label
     )
@@ -207,6 +189,19 @@ def logout_all(session: Session = Depends(get_db), user: User = Depends(get_curr
 
 @router.get("/me", response_model=UserRead)
 def me(user: User = Depends(get_current_user)):
+    return UserRead.model_validate(user)
+
+
+@router.patch("/me", response_model=UserRead)
+def update_me(
+    payload: ProfileUpdate,
+    session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    # A blank name falls back to the email everywhere, so store it as none.
+    user.display_name = (payload.display_name or "").strip() or None
+    session.commit()
+    session.refresh(user)
     return UserRead.model_validate(user)
 
 

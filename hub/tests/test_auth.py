@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from conftest import ADMIN_EMAIL, ADMIN_PASSWORD, build_client, register_admin
+from conftest import ADMIN_EMAIL, ADMIN_PASSWORD, build_client, make_user, register_admin
 
 
 def test_register_login_and_me(hub):
@@ -216,3 +216,22 @@ def test_a_broken_seed_file_does_not_stop_the_hub(tmp_path: Path):
     client, _ = build_client(tmp_path, seed_users_file=seed_file)
     with client:
         assert client.get("/healthz").status_code == 200
+
+
+def test_anyone_can_rename_themselves_but_not_change_their_role(hub):
+    client, _ = hub
+    admin = register_admin(client)
+    professor = make_user(client, admin, "professor")
+
+    renamed = client.patch(
+        "/api/v1/auth/me",
+        headers=professor,
+        json={"display_name": "  Marta Puig  ", "role": "admin"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["display_name"] == "Marta Puig"
+    assert renamed.json()["role"] == "professor"
+    assert client.get("/api/v1/auth/me", headers=professor).json()["display_name"] == "Marta Puig"
+
+    cleared = client.patch("/api/v1/auth/me", headers=professor, json={"display_name": "   "})
+    assert cleared.json()["display_name"] is None

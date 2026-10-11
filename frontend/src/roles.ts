@@ -12,5 +12,5 @@ export const ROLES: Role[] = ['professor', 'secretaria', 'admin']
 export const ROLE_HINTS: Record<Role, string> = {
   admin: 'Tot, inclosos els comptes i la configuració.',
   secretaria: 'Registre, extractes i sol·licituds. No gestiona comptes.',
-  professor: 'Només envia sol·licituds i factures a secretaria.',
+  professor: 'Envia sol·licituds i valida les factures que puja.',
 }

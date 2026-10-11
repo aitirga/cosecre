@@ -1,15 +1,14 @@
 <script setup lang="ts">
 /**
- * Settings → Equip. An admin enables an e-mail with a role; the hub answers
- * with an invitation — a link and a six-digit code — that is shown here once
- * and handed over by whatever channel the school already trusts. Reissuing it
- * is also how an account is reset.
+ * Settings → Equip. An admin enables an e-mail with a role; the first time its
+ * owner signs in with it, they choose the password. Resetting an account
+ * forgets the password, so the next sign-in chooses a new one.
  */
 import { computed, reactive, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 
-import { api, ApiError, getApiBaseUrl } from '../api/client'
-import type { UserStatus, InviteIssued, Role, User } from '../api/types'
+import { api, ApiError } from '../api/client'
+import type { UserStatus, Role, User } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import { useTableQuery } from '../composables/useTableQuery'
 import { ROLE_HINTS, ROLE_LABELS, ROLES } from '../roles'
@@ -27,14 +26,13 @@ const usersQuery = useQuery({ queryKey: ['users'], queryFn: api.listUsers })
 const STATUS: Record<UserStatus, { label: string; tone: string }> = {
   active: { label: 'Actiu', tone: 'badge-olive' },
   pending: { label: 'Pendent', tone: 'badge-gold' },
-  expired: { label: 'Invitació caducada', tone: 'badge-danger' },
   disabled: { label: 'Desactivat', tone: 'badge-neutral' },
 }
 
 /** Pending first — they are the ones waiting on someone — then by name. */
 const users = computed(() =>
   [...(usersQuery.data.value ?? [])].sort((a, b) => {
-    const order = (u: User) => (u.status === 'pending' || u.status === 'expired' ? 0 : u.status === 'active' ? 1 : 2)
+    const order = (u: User) => (u.status === 'pending' ? 0 : u.status === 'active' ? 1 : 2)
     return (
       order(a) - order(b) ||
       (a.display_name || a.email).localeCompare(b.display_name || b.email, 'ca', { sensitivity: 'base' })
@@ -73,26 +71,21 @@ const draft = reactive<{ email: string; display_name: string; role: Role }>({
   display_name: '',
   role: 'professor',
 })
-/** The invitation just issued. Only ever held here: the hub keeps hashes. */
-const issued = ref<InviteIssued | null>(null)
-
 const inviteMutation = useMutation({
   mutationFn: () =>
     api.inviteUser({ email: draft.email, display_name: draft.display_name || null, role: draft.role }),
-  onSuccess: (result) => {
+  onSuccess: () => {
     showInvite.value = false
     Object.assign(draft, { email: '', display_name: '', role: 'professor' })
-    issued.value = result
     refresh()
   },
   onError: report,
 })
 
-const reinviteMutation = useMutation({
-  mutationFn: (user: User) => api.reinviteUser(user.id),
-  onSuccess: (result) => {
+const resetMutation = useMutation({
+  mutationFn: (user: User) => api.resetUser(user.id),
+  onSuccess: () => {
     confirmReset.value = null
-    issued.value = result
     refresh()
   },
   onError: report,
@@ -121,40 +114,6 @@ const removeMutation = useMutation({
 const confirmReset = ref<User | null>(null)
 const confirmRemove = ref<User | null>(null)
 
-/**
- * The page that opens an invitation lives on the hub's own web app, which the
- * desktop app also talks to — so the link is built from the API's origin, not
- * from wherever this screen happens to be running.
- */
-function inviteLink(token: string) {
-  const base = getApiBaseUrl()
-  const origin = /^https?:\/\//.test(base) ? new URL(base).origin : window.location.origin
-  return `${origin}/activar/${token}`
-}
-
-const copied = ref<'link' | 'code' | 'message' | null>(null)
-async function copy(kind: 'link' | 'code' | 'message', text: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    copied.value = kind
-    window.setTimeout(() => (copied.value = copied.value === kind ? null : copied.value), 1800)
-  } catch {
-    // Clipboard can be blocked; the text is selectable on screen anyway.
-  }
-}
-
-/** Ready to paste into an e-mail or a chat. */
-const message = computed(() => {
-  if (!issued.value) return ''
-  const who = issued.value.user.display_name?.split(' ')[0] ?? ''
-  return [
-    `Hola${who ? ` ${who}` : ''}! T'he donat accés a Cosecre com a ${ROLE_LABELS[issued.value.user.role]}.`,
-    `Obre aquest enllaç i tria la teva contrasenya: ${inviteLink(issued.value.token)}`,
-    `També pots entrar amb el correu ${issued.value.user.email} i el codi ${issued.value.code}.`,
-    `Caduca el ${formatDate(issued.value.expires_at)}.`,
-  ].join('\n')
-})
-
 function formatDate(value: string | null) {
   return value ? new Date(value).toLocaleDateString('ca-ES', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Mai'
 }
@@ -166,8 +125,7 @@ function formatDate(value: string | null) {
       <div>
         <h2 class="card-title">Equip</h2>
         <p class="hint">
-          Habilita un correu i passa-li l'enllaç o el codi: la persona tria la seva contrasenya en
-          entrar.
+          Habilita un correu: el primer cop que hi entri, la persona tria la seva contrasenya.
         </p>
       </div>
       <button class="btn btn-primary btn-sm" type="button" @click="showInvite = true">
@@ -240,20 +198,21 @@ function formatDate(value: string | null) {
                   Reactiva
                 </button>
                 <button
+                  v-if="user.status === 'active'"
                   class="btn btn-ghost btn-sm"
                   type="button"
-                  :title="user.status === 'active' ? 'Nova invitació: la contrasenya actual deixa de funcionar' : 'Nova invitació'"
-                  @click="user.status === 'active' ? (confirmReset = user) : reinviteMutation.mutate(user)"
+                  title="La contrasenya actual deixa de funcionar i en tria una de nova en entrar"
+                  @click="confirmReset = user"
                 >
-                  <AppIcon :name="user.status === 'active' ? 'lock' : 'refresh'" />
-                  {{ user.status === 'active' ? 'Restableix' : 'Nova invitació' }}
+                  <AppIcon name="lock" />
+                  Restableix
                 </button>
                 <button
                   v-if="user.status !== 'disabled'"
                   class="btn btn-ghost btn-sm btn-icon danger"
                   type="button"
-                  :title="user.password_set_at ? 'Desactiva el compte' : 'Elimina la invitació'"
-                  :aria-label="user.password_set_at ? 'Desactiva el compte' : 'Elimina la invitació'"
+                  :title="user.password_set_at ? 'Desactiva el compte' : 'Elimina el compte'"
+                  :aria-label="user.password_set_at ? 'Desactiva el compte' : 'Elimina el compte'"
                   @click="confirmRemove = user"
                 >
                   <AppIcon name="trash" />
@@ -299,52 +258,10 @@ function formatDate(value: string | null) {
         <div class="dialog-actions">
           <button class="btn btn-outline" type="button" @click="showInvite = false">Cancel·la</button>
           <button class="btn btn-primary" type="submit" :disabled="inviteMutation.isPending.value">
-            {{ inviteMutation.isPending.value ? 'Creant…' : 'Crea la invitació' }}
+            {{ inviteMutation.isPending.value ? 'Creant…' : 'Habilita el compte' }}
           </button>
         </div>
       </form>
-    </div>
-  </Teleport>
-
-  <!-- ── The invitation, shown once ───────────────────────────────────── -->
-  <Teleport to="body">
-    <div v-if="issued" class="overlay">
-      <div class="dialog invite-dialog" role="dialog" aria-labelledby="issued-title">
-        <h2 id="issued-title" class="dialog-title">Invitació per a {{ issued.user.display_name || issued.user.email }}</h2>
-        <p class="subtle">
-          Passa-li l'enllaç o el codi. Només es mostren ara: si es perden, crea'n una de nova.
-          Caduca el {{ formatDate(issued.expires_at) }}.
-        </p>
-
-        <div class="secret">
-          <span class="label">Enllaç</span>
-          <div class="secret-row">
-            <code class="secret-value truncate">{{ inviteLink(issued.token) }}</code>
-            <button class="btn btn-outline btn-sm" type="button" @click="copy('link', inviteLink(issued.token))">
-              <AppIcon :name="copied === 'link' ? 'check' : 'file'" />
-              {{ copied === 'link' ? 'Copiat' : 'Copia' }}
-            </button>
-          </div>
-        </div>
-        <div class="secret">
-          <span class="label">Codi (amb el correu {{ issued.user.email }})</span>
-          <div class="secret-row">
-            <code class="secret-value code">{{ issued.code }}</code>
-            <button class="btn btn-outline btn-sm" type="button" @click="copy('code', issued.code)">
-              <AppIcon :name="copied === 'code' ? 'check' : 'file'" />
-              {{ copied === 'code' ? 'Copiat' : 'Copia' }}
-            </button>
-          </div>
-        </div>
-
-        <div class="dialog-actions">
-          <button class="btn btn-outline" type="button" @click="copy('message', message)">
-            <AppIcon :name="copied === 'message' ? 'check' : 'file'" />
-            {{ copied === 'message' ? 'Missatge copiat' : 'Copia un missatge per enviar' }}
-          </button>
-          <button class="btn btn-primary" type="button" @click="issued = null">Fet</button>
-        </div>
-      </div>
     </div>
   </Teleport>
 
@@ -355,15 +272,15 @@ function formatDate(value: string | null) {
         <h2 class="dialog-title">Restablir el compte?</h2>
         <p class="subtle">
           La contrasenya de <strong>{{ confirmReset.email }}</strong> deixarà de funcionar i se'n
-          tancaran totes les sessions. Rebràs una invitació nova per passar-li.
+          tancaran totes les sessions. El proper cop que entri, en triarà una de nova.
         </p>
         <div class="dialog-actions">
           <button class="btn btn-outline" type="button" @click="confirmReset = null">Cancel·la</button>
           <button
             class="btn btn-danger"
             type="button"
-            :disabled="reinviteMutation.isPending.value"
-            @click="reinviteMutation.mutate(confirmReset)"
+            :disabled="resetMutation.isPending.value"
+            @click="resetMutation.mutate(confirmReset)"
           >
             Restableix
           </button>
@@ -376,7 +293,7 @@ function formatDate(value: string | null) {
     <div v-if="confirmRemove" class="overlay" @click.self="confirmRemove = null">
       <div class="dialog" role="dialog">
         <h2 class="dialog-title">
-          {{ confirmRemove.password_set_at ? 'Desactivar el compte?' : 'Eliminar la invitació?' }}
+          {{ confirmRemove.password_set_at ? 'Desactivar el compte?' : 'Eliminar el compte?' }}
         </h2>
         <p class="subtle">
           <template v-if="confirmRemove.password_set_at">
@@ -384,8 +301,8 @@ function formatDate(value: string | null) {
             i el pots reactivar quan vulguis.
           </template>
           <template v-else>
-            L'enllaç i el codi enviats a <strong>{{ confirmRemove.email }}</strong> deixaran de
-            funcionar.
+            <strong>{{ confirmRemove.email }}</strong> ja no podrà entrar. Encara no l'havia fet
+            servir.
           </template>
         </p>
         <div class="dialog-actions">
@@ -492,38 +409,5 @@ tr.dim td {
 .role-hint {
   font-size: var(--text-sm);
   color: var(--ink-500);
-}
-
-.invite-dialog {
-  width: min(520px, calc(100vw - 32px));
-}
-
-.secret {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 5px;
-}
-
-.secret-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.secret-value {
-  flex: 1;
-  min-width: 0;
-  padding: 7px 9px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--surface-1);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  user-select: all;
-}
-
-.secret-value.code {
-  font-size: var(--text-lg);
-  letter-spacing: 0.3em;
 }
 </style>

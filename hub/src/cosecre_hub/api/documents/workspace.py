@@ -9,7 +9,7 @@ from ...deps import get_current_user, get_db, get_workspace_setting, require_adm
 from ...models import User, WorkspaceSetting
 from ...schemas import WorkspaceSettingsRead, WorkspaceSettingsUpdate
 from ...services.sheets import parse_spreadsheet_id
-from ...services.text_format import iban_is_valid, normalize_iban
+from ...services.text_format import compact_code, iban_is_valid, normalize_iban
 
 router = APIRouter()
 
@@ -25,6 +25,7 @@ def _read(request: Request, workspace: WorkspaceSetting) -> WorkspaceSettingsRea
         polling_interval_seconds=workspace.polling_interval_seconds,
         classifier_configured=request.app.state.classifier.configured,
         drive_folder_configured=request.app.state.settings.documents_folder_id is not None,
+        school_cif=workspace.school_cif or "",
         iban_general=workspace.iban_general or "",
         iban_material=workspace.iban_material or "",
         iban_menjador=workspace.iban_menjador or "",
@@ -75,6 +76,8 @@ def update_settings(
             if iban and not iban_is_valid(iban):
                 raise HTTPException(status_code=400, detail=f"L'IBAN {value} no és vàlid.")
             setattr(workspace, name, iban)
+    if payload.school_cif is not None:
+        workspace.school_cif = compact_code(payload.school_cif)
     if payload.prepaid_card_number is not None:
         workspace.prepaid_card_number = payload.prepaid_card_number.strip()
     if payload.caixeta_spreadsheet_url is not None:

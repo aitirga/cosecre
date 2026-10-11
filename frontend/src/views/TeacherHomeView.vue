@@ -45,7 +45,7 @@ const waitingCount = computed(
         <span class="action-icon"><AppIcon name="camera" :size="20" /></span>
         <span class="action-text">
           <strong>Envia una factura o un tiquet</strong>
-          <span>Fes-hi una foto o puja el PDF. Secretaria el validarà.</span>
+          <span>Fes-hi una foto o puja el PDF, revisa'n les dades i valida-la.</span>
         </span>
         <AppIcon name="chevron" :size="16" class="go" />
       </RouterLink>
@@ -118,7 +118,7 @@ const waitingCount = computed(
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
-  max-width: 980px;
+  max-width: var(--page-w-form);
 }
 
 .actions {

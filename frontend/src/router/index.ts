@@ -44,9 +44,6 @@ export function createAppRouter(options: RouterOptions = {}): Router {
         name: 'login',
         component: LoginView,
       },
-      // Where an invitation link lands. Public: it is how an account first gets in.
-      // Same screen as sign-in, opened on the invitation.
-      { path: '/activar/:token', name: 'activate', component: LoginView },
       ...routes.root,
       {
         path: '/',
@@ -94,7 +91,7 @@ export function createAppRouter(options: RouterOptions = {}): Router {
       return homeRoute.value
     }
 
-    if ((to.name === 'login' || to.name === 'activate') && auth.isAuthenticated.value) {
+    if (to.name === 'login' && auth.isAuthenticated.value) {
       return homeRoute.value
     }
 
