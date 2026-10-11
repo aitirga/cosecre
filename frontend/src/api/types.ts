@@ -799,6 +799,14 @@ export interface Submission {
 }
 
 /** A plain-words question read as register filters. */
+export interface AiAnswer {
+  sql: string
+  columns: string[]
+  rows: unknown[][]
+  truncated: boolean
+  error: string | null
+}
+
 export interface AiFilterResult {
   /** Register filter name → value; only what the question asked for. */
   filters: Record<string, string>
@@ -809,5 +817,7 @@ export interface AiFilterResult {
   sources: Record<string, { source: 'jev' | 'openai' | 'jev+openai'; confidence: number | null }>
   /** `skipped`: Jev settled it alone, so the language model was never asked. */
   models: Record<'jev' | 'openai', 'ok' | 'off' | 'error' | 'skipped'>
+  /** For a question asking for a figure: the read-only query and what it returned. */
+  answer: AiAnswer | null
 }
 

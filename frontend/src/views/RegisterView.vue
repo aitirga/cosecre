@@ -222,6 +222,8 @@ const AI_EXAMPLES = [
   'Menjador del mes passat',
   'Per revisar enviades pel professorat',
   'Més de 500 € sense extracte',
+  'Quant hem gastat per compte aquest curs?',
+  'Quins proveïdors ens han facturat més?',
 ]
 /** What the filters were before the AI touched them, for "Desfés". */
 let beforeAi: { filters: Record<string, string>; search: string } | null = null

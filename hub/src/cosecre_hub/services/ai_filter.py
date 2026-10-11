@@ -2,7 +2,10 @@
 
 "Factures pendents de la Papereria Pérez d'aquest curs" becomes the filters the
 register already has — tipus, pagament, compte, estat, a date range — plus the
-words to search for and an amount range.
+words to search for and an amount range. A question that wants a figure rather
+than a list — "quant hem gastat en material aquest curs?" — also gets a SQL
+query, run read-only over a copy of the register (see :mod:`.register_sql`),
+and the filters that show the documents behind the figure.
 
 Two models share the work, in a pipeline:
 
@@ -33,6 +36,7 @@ from pydantic import BaseModel, Field
 from .classification import JevClient, JevError, Question
 from .llm import LLMError, LLMRegistry
 from .llm.base import Message, StructuredRequest
+from .register_sql import schema_text
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +142,20 @@ FIELDS: dict[str, Question] = {
 
 CLOSED = tuple(name for name in FIELDS if name != "periode")
 
+#: Not a filter: whether the question wants a list of documents or a figure.
+MODE = "mode"
+_MODE_QUESTION = Question(
+    instructions="Vol veure una llista de documents, o vol una xifra o un resum calculat?",
+    options={
+        "llista": ("llista", "Una llista: «factures pendents», «què tinc per revisar», «tiquets del menjador»."),
+        "xifra": (
+            "xifra",
+            "Una xifra o un resum: quant s'ha gastat, quants n'hi ha, quin proveïdor és el que més, "
+            "totals per compte o per mes, mitjanes, comparacions.",
+        ),
+    },
+)
+
 #: Not a filter: whether the question needs reading beyond the closed lists.
 OPEN = "obert"
 _OPEN_QUESTION = Question(
@@ -210,6 +228,12 @@ class ModelReading(BaseModel):
     date_to: str = Field(description="Data final explícita AAAA-MM-DD, o buit.")
     amount_min: float | None = Field(description="Import mínim en euros, o null.")
     amount_max: float | None = Field(description="Import màxim en euros, o null.")
+    kind: Literal["filtre", "pregunta"] = Field(
+        description="'filtre' si vol una llista de documents; 'pregunta' si vol una xifra o un resum calculat."
+    )
+    sql: str = Field(
+        description="Només si kind és 'pregunta': una sola consulta SELECT de SQLite sobre la taula documents. Si no, buit."
+    )
     text: str = Field(
         description=(
             "Les paraules mínimes i distintives per cercar: el nom propi d'un proveïdor "
@@ -229,7 +253,16 @@ INSTRUCTIONS = (
     "Els tiquets de caixa (súper, botiga, bar, benzinera) són 'factura_simplificada'; "
     "'tiquet_rebut' és només un rebut o justificant de pagament. A 'text' només hi van "
     "noms que surtin escrits al document: «súper», «botiga» o «llibreria» no són noms de "
-    "proveïdor i no s'hi posen."
+    "proveïdor i no s'hi posen.\n\n"
+    "Si la persona vol una xifra o un resum (quant, quants, quin és el que més, totals, "
+    "mitjanes…), posa kind='pregunta' i escriu a 'sql' una sola consulta SELECT de SQLite "
+    "sobre la taula documents que la respongui. Àlies de columna curts i en català "
+    "(«Total (€)», «Proveïdor», «Documents»); ROUND(…, 2) per als imports; ordena els "
+    "rànquings i posa-hi LIMIT 20. Les dates són text AAAA-MM-DD; el curs escolar va de "
+    "setembre a agost. Omple igualment els filtres que delimiten els documents de la "
+    "resposta (compte, període, pagament…), perquè la llista mostri els que hi ha darrere "
+    "la xifra; a 'explanation' digues què es calcula. Si vol una llista, kind='filtre' i "
+    "sql buit.\n\n" + schema_text()
 )
 
 
@@ -254,6 +287,8 @@ class AiFilter:
     sources: dict[str, FieldReading] = field(default_factory=dict)
     #: ``ok``, ``off`` or ``error`` per model; ``skipped`` when Jev was enough.
     models: dict[str, str] = field(default_factory=dict)
+    #: The query that answers a question asking for a figure; "" for a plain filter.
+    sql: str = ""
 
 
 class AiFilterUnavailable(RuntimeError):
@@ -272,7 +307,7 @@ def _ask_jev(jev: JevClient | None, query: str, today: date):
     if jev is None:
         return None, "off"
     try:
-        return jev.decide(_state(query, today), {**FIELDS, OPEN: _OPEN_QUESTION}), "ok"
+        return jev.decide(_state(query, today), {**FIELDS, MODE: _MODE_QUESTION, OPEN: _OPEN_QUESTION}), "ok"
     except JevError:
         logger.warning("Jev could not read the filter question", exc_info=True)
         return None, "error"
@@ -328,16 +363,17 @@ def jev_is_enough(query: str, answers: dict | None) -> bool:
     """Whether Jev's answers settle the question without the language model.
 
     Every closed question must be answered confidently, and Jev must be sure
-    there is nothing open to read. A digit always means something open — an
-    amount, a date, a number — so it goes on regardless.
+    the question wants a plain list with nothing open to read. A figure needs
+    a query only the language model can write. A digit always means something
+    open — an amount, a date, a number — so it goes on regardless.
     """
     if not answers or any(char.isdigit() for char in query):
         return False
-    for name in (*FIELDS, OPEN):
+    for name in (*FIELDS, MODE, OPEN):
         answer = answers.get(name)
         if answer is None or answer.confidence < JEV_DECIDES:
             return False
-    return answers[OPEN].label == "no"
+    return answers[MODE].label == "llista" and answers[OPEN].label == "no"
 
 
 _TIPUS_TEXT = {
@@ -432,6 +468,8 @@ def read_filter(query: str, registry: LLMRegistry, jev: JevClient | None, today:
                 result.sources[key] = FieldReading(value, "openai")
         result.search = reading.text.strip()
         result.explanation = reading.explanation.strip()
+        if reading.kind == "pregunta":
+            result.sql = reading.sql.strip()
     else:
         period = jev_answers.get("periode")
         result.explanation = _describe(result.filters, period.label if period else None)

@@ -49,6 +49,22 @@ function undo() {
   input.value?.focus()
 }
 
+/** Euros where the column says so, plain numbers otherwise, text as it is. */
+function cell(value: unknown, column: string) {
+  if (value == null || value === '') return '—'
+  if (typeof value !== 'number') return String(value)
+  const money = /€|import|total|gast/i.test(column)
+  return value.toLocaleString('ca-ES', {
+    minimumFractionDigits: money ? 2 : 0,
+    maximumFractionDigits: 2,
+    ...(money ? { style: 'currency', currency: 'EUR' } : {}),
+  })
+}
+
+function isNumber(value: unknown) {
+  return typeof value === 'number'
+}
+
 function usedJev(result: AiFilterResult) {
   return Object.values(result.sources).some((s) => s.source.includes('jev'))
 }
@@ -110,6 +126,45 @@ function usedJev(result: AiFilterResult) {
         <AppIcon name="close" :size="12" />
       </button>
     </div>
+
+    <!-- A question for a figure: the answer above, the documents behind it in the list below. -->
+    <section v-if="understood?.answer" class="answer">
+      <p v-if="understood.answer.error" class="answer-error">
+        <AppIcon name="alert" :size="13" />
+        <span>No s'ha pogut calcular: {{ understood.answer.error }}</span>
+      </p>
+      <p v-else-if="!understood.answer.rows.length" class="answer-empty">Cap resultat.</p>
+      <div
+        v-else-if="understood.answer.rows.length === 1 && understood.answer.columns.length === 1"
+        class="figure"
+      >
+        <span class="figure-label">{{ understood.answer.columns[0] }}</span>
+        <span class="figure-value">{{ cell(understood.answer.rows[0]?.[0], understood.answer.columns[0] ?? '') }}</span>
+      </div>
+      <div v-else class="answer-table">
+        <table>
+          <thead>
+            <tr>
+              <th v-for="(column, c) in understood.answer.columns" :key="c" :class="{ num: isNumber(understood.answer.rows[0]?.[c]) }">
+                {{ column }}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, r) in understood.answer.rows" :key="r">
+              <td v-for="(value, c) in row" :key="c" :class="{ num: isNumber(value) }">
+                {{ cell(value, understood.answer.columns[c] ?? '') }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-if="understood.answer.truncated" class="answer-note">Només es mostren les 100 primeres files.</p>
+      </div>
+      <details class="sql">
+        <summary>Consulta SQL</summary>
+        <pre class="mono">{{ understood.answer.sql }}</pre>
+      </details>
+    </section>
   </div>
 </template>
 
@@ -230,6 +285,97 @@ function usedJev(result: AiFilterResult) {
 .example:hover {
   border-color: var(--ai-200);
   background: var(--ai-100);
+}
+
+.answer {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--ai-100);
+  border-radius: var(--r-md);
+  background: var(--surface-0);
+  font-size: var(--text-sm);
+}
+
+.figure {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.figure-label {
+  color: var(--ink-500);
+}
+
+.figure-value {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-900);
+}
+
+.answer-table {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.answer-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.answer-table th,
+.answer-table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.answer-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-0);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--ink-500);
+}
+
+.answer-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.answer-error,
+.answer-empty,
+.answer-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--ink-500);
+}
+
+.answer-error {
+  color: var(--danger-700);
+}
+
+.sql summary {
+  width: max-content;
+  font-size: var(--text-xs);
+  color: var(--ink-400);
+  cursor: pointer;
+}
+
+.sql pre {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  overflow-x: auto;
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  color: var(--ink-700);
 }
 
 .said {

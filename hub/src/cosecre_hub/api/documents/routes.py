@@ -15,6 +15,7 @@ import zipfile
 from datetime import date, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pathlib import Path
+from typing import Any
 
 from fastapi import (
     APIRouter,
@@ -40,6 +41,7 @@ from ...schemas.documents import CaptureSource
 from ...services.sheets import GoogleSheetsService, SheetDocumentNotFound
 from ...services import notifications, people
 from ...services.ai_filter import AiFilterUnavailable, read_filter
+from ...services.register_sql import QueryRefused, run_query
 from ...services.storage import save_upload_file
 from .register import (
     IN_FLIGHT,
@@ -158,21 +160,34 @@ class AiFieldRead(BaseModel):
     confidence: float | None = None
 
 
+class AiAnswerRead(BaseModel):
+    """The figure a question asked for: its query, and what the query returned."""
+
+    sql: str
+    columns: list[str] = []
+    rows: list[list[Any]] = []
+    truncated: bool = False
+    error: str | None = None
+
+
 class AiFilterRead(BaseModel):
     filters: dict[str, str]
     search: str
     explanation: str
     sources: dict[str, AiFieldRead]
     models: dict[str, str]
+    answer: AiAnswerRead | None = None
 
 
 @router.post("/ai-filter", response_model=AiFilterRead)
 def ai_filter(
     payload: AiFilterRequest,
     request: Request,
+    session: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Read a question in plain words as the register's own filters."""
+    """Read a question in plain words as the register's own filters — and,
+    when it asks for a figure, answer it with a read-only query."""
     jev = getattr(request.app.state.classifier, "jev", None)
     try:
         result = read_filter(
@@ -183,6 +198,13 @@ def ai_filter(
         )
     except AiFilterUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    answer = None
+    if result.sql:
+        try:
+            ran = run_query(session, result.sql)
+            answer = AiAnswerRead(sql=result.sql, columns=ran.columns, rows=ran.rows, truncated=ran.truncated)
+        except QueryRefused as exc:
+            answer = AiAnswerRead(sql=result.sql, error=str(exc))
     return AiFilterRead(
         filters=result.filters,
         search=result.search,
@@ -192,6 +214,7 @@ def ai_filter(
             for name, reading in result.sources.items()
         },
         models=result.models,
+        answer=answer,
     )
 
 

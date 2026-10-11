@@ -24,6 +24,8 @@ READING = {
     "date_to": "",
     "amount_min": 100,
     "amount_max": None,
+    "kind": "filtre",
+    "sql": "",
     "text": "Pérez",
     "explanation": "Factures pendents de Pérez de més de 100 € d'aquest curs.",
 }
@@ -55,6 +57,7 @@ def _client(tmp_path, *, reading=None, jev=None, configured=True, provider=None)
 def sure(**labels):
     """Jev confident on every question; ``labels`` set the ones that say something."""
     answers = {name: JevAnswer(label="", confidence=0.97) for name in ("tipus", "pagament", "compte", "estat", "enviat", "periode")}
+    answers["mode"] = JevAnswer(label="llista", confidence=0.95)
     answers["obert"] = JevAnswer(label="no", confidence=0.95)
     answers.update({name: JevAnswer(label=label, confidence=0.95) for name, label in labels.items()})
     return answers
@@ -94,7 +97,7 @@ def test_a_confident_jev_overrules_the_language_model(tmp_path):
     # An unsure Jev does not add a filter the language model did not see.
     assert "tipus" not in result["filters"]
     # Jev is only ever asked closed questions — the filters, and whether there is more to read.
-    assert set(jev.questions) == {"tipus", "pagament", "compte", "estat", "enviat", "periode", "obert"}
+    assert set(jev.questions) == {"tipus", "pagament", "compte", "estat", "enviat", "periode", "mode", "obert"}
 
 
 def test_jev_alone_still_filters_when_the_language_model_is_down(tmp_path):
@@ -131,6 +134,8 @@ def test_a_question_jev_settles_never_reaches_the_language_model(tmp_path):
         ("material", {**sure(), "compte": JevAnswer(label="Material i Sortides", confidence=0.7)}),
         # A digit is an amount, a date or a number, whatever Jev thinks.
         ("més de 100 €", sure()),
+        # A figure needs a query only the language model can write.
+        ("quant hem gastat", sure(mode="xifra")),
     ],
 )
 def test_the_language_model_steps_in_when_jev_cannot_finish(tmp_path, query, answers):
@@ -141,6 +146,72 @@ def test_the_language_model_steps_in_when_jev_cannot_finish(tmp_path, query, ans
     assert len(provider.structures) == 1
     assert result["models"] == {"jev": "ok", "openai": "ok"}
     assert result["search"] == "Pérez"
+
+
+def _entry(session, ref, **fields):
+    from cosecre_hub.models import Document
+
+    session.add(Document(internal_doc_number=ref, status="needs_validation", **fields))
+
+
+def test_a_question_for_a_figure_is_answered_with_a_query_and_its_filters(tmp_path):
+    reading = {
+        **READING,
+        "kind": "pregunta",
+        "pagament": "cap",
+        "text": "",
+        "sql": (
+            "SELECT proveidor AS \"Proveïdor\", ROUND(SUM(import), 2) AS \"Total (€)\" "
+            "FROM documents WHERE compte = 'Material i Sortides' GROUP BY proveidor ORDER BY 2 DESC LIMIT 20"
+        ),
+        "explanation": "Despesa per proveïdor al compte de Material i Sortides aquest curs.",
+    }
+    with _client(tmp_path, reading=reading) as client:
+        headers = register_admin(client)
+        with client.app.state.session_factory() as session:
+            _entry(session, "DOC-1", proveidor="Pérez", import_value=40.0, pressupost_afectat="Material i Sortides")
+            _entry(session, "DOC-2", proveidor="Pérez", import_value=60.5, pressupost_afectat="Material i Sortides")
+            _entry(session, "DOC-3", proveidor="Abacus", import_value=20.0, pressupost_afectat="Material i Sortides")
+            _entry(session, "DOC-4", proveidor="Càtering", import_value=900.0, pressupost_afectat="Menjador")
+            session.commit()
+        result = client.post(URL, headers=headers, json={"query": "a qui hem comprat més material aquest curs"}).json()
+
+    answer = result["answer"]
+    assert answer["error"] is None
+    assert answer["columns"] == ["Proveïdor", "Total (€)"]
+    assert answer["rows"] == [["Pérez", 100.5], ["Abacus", 20.0]]
+    # The list underneath shows the documents behind the figure.
+    assert result["filters"]["compte"] == "Material i Sortides"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT email, hashed_password FROM users",
+        "DELETE FROM documents",
+        "SELECT 1; DROP TABLE documents",
+        "ATTACH DATABASE '/tmp/x.db' AS x",
+        "PRAGMA table_info(documents)",
+        "SELECT load_extension('x')",
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n",
+    ],
+)
+def test_a_query_reads_the_register_and_nothing_else(tmp_path, sql):
+    from cosecre_hub.services.register_sql import QueryRefused, run_query
+
+    with _client(tmp_path) as client:
+        with client.app.state.session_factory() as session:
+            with pytest.raises(QueryRefused):
+                run_query(session, sql)
+
+
+def test_a_query_that_fails_still_leaves_the_filters(tmp_path):
+    reading = {**READING, "kind": "pregunta", "sql": "SELECT nope FROM documents"}
+    with _client(tmp_path, reading=reading) as client:
+        headers = register_admin(client)
+        result = client.post(URL, headers=headers, json={"query": "quants pendents de Pérez"}).json()
+    assert result["answer"]["error"].startswith("La consulta no és vàlida")
+    assert result["filters"]["pagament"] == "Pendent de pagament"
 
 
 def test_no_model_at_all_is_said_plainly(tmp_path):
