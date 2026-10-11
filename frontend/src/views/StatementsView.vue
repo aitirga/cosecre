@@ -519,7 +519,6 @@ function amountClass(m: Movement) {
                   <div v-else class="movement-tools">
                     <AiSearchInput
                       v-model="movementTable.search.value"
-                      class="movement-search"
                       :ask="askMovements"
                       placeholder="Cerca concepte, import, factura… o pregunta: «pagaments sense factura del març»"
                       label="Cerca moviments"
@@ -945,11 +944,6 @@ function amountClass(m: Movement) {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-}
-
-.movement-search {
-  /* A row of its own; the chips wrap beneath it. */
-  flex: 1 1 100%;
 }
 
 .movements-row > td {

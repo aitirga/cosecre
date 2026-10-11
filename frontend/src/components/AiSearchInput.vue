@@ -21,6 +21,9 @@ import type { AiFilterResult } from '../api/types'
 import AnchoredPopover from './AnchoredPopover.vue'
 import AppIcon from './AppIcon.vue'
 
+// Two roots (the box and its floating panel): the list's class and attributes go on the box.
+defineOptions({ inheritAttrs: false })
+
 const model = defineModel<string>({ required: true })
 const props = withDefaults(
   defineProps<{
@@ -183,7 +186,7 @@ function usedJev(result: AiFilterResult) {
 </script>
 
 <template>
-  <span ref="root" class="ai-search" :class="{ ai: aiMode, busy: askMutation.isPending.value, pill: understood && !showResult }">
+  <span ref="root" v-bind="$attrs" class="ai-search" :class="{ ai: aiMode, busy: askMutation.isPending.value, pill: understood && !showResult }">
     <AppIcon :name="aiMode ? 'sparkles' : 'search'" :size="14" class="lead" />
     <input
       ref="input"
@@ -314,9 +317,11 @@ function usedJev(result: AiFilterResult) {
 </template>
 
 <style scoped>
+/* The list's whole search row: the box fills it, the chips wrap beneath. */
 .ai-search {
   position: relative;
-  display: inline-flex;
+  display: flex;
+  flex: 1 1 100%;
   align-items: center;
   min-width: 0;
 }

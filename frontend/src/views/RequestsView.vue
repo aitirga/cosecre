@@ -213,7 +213,6 @@ function ago(iso: string) {
           <div class="filters">
             <AiSearchInput
               v-model="table.search.value"
-              class="search"
               :ask="askRequests"
               placeholder="Cerca per títol, persona, proveïdor… o pregunta: «compres pendents»"
               @apply="applyAi"
@@ -410,10 +409,6 @@ function ago(iso: string) {
   gap: 8px;
   flex: 1;
   min-width: 0;
-}
-
-.search {
-  flex: 1 1 100%;
 }
 
 .count {

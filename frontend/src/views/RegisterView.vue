@@ -488,7 +488,6 @@ const showUpload = ref(true)
         <div class="filters-top">
           <AiSearchInput
             v-model="table.search.value"
-            class="search"
             :ask="api.aiFilter"
             placeholder="Cerca per proveïdor, número, import… o pregunta: «pendents de pagament d'aquest curs»"
             label="Cerca documents"
@@ -871,11 +870,6 @@ const showUpload = ref(true)
 .count-sep {
   margin: 0 5px;
   color: var(--ink-400);
-}
-
-.search {
-  flex: 1 1 auto;
-  min-width: 0;
 }
 
 .origin {
