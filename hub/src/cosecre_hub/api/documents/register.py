@@ -18,8 +18,9 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ...deps import get_workspace_setting
-from ...models import BankMovement, Document, ExtractionJob, PaymentMatch, Upload
+from ...models import BankMovement, Document, ExtractionJob, PaymentMatch, Upload, User
 from ...schemas import AiHint, DocumentRecord, SyncResult
+from ...schemas.auth import PersonBrief
 from ...schemas.documents import PaidBy
 from ...services.extraction import DocumentExtractionService, ExtractedDocument
 from ...services.sheets import (
@@ -30,6 +31,7 @@ from ...services.sheets import (
     file_cell,
     snapshot_values,
 )
+from ...services import notifications
 from ...services.text_format import iban_is_valid
 
 logger = logging.getLogger(__name__)
@@ -118,15 +120,25 @@ def paid_by(session: Session, document_ids: list[int]) -> dict[int, list[PaidBy]
     return found
 
 
-def to_record(document: Document, payments: list[PaidBy] | None = None) -> DocumentRecord:
-    """``payments`` saves a query per entry when a whole list is being read."""
+def to_record(
+    document: Document,
+    payments: list[PaidBy] | None = None,
+    people: dict[int, User] | None = None,
+) -> DocumentRecord:
+    """``payments`` and ``people`` save queries per entry when a whole list is read."""
+    session = Session.object_session(document)
     if payments is None:
-        session = Session.object_session(document)
         payments = (
             paid_by(session, [document.id]).get(document.id, [])
             if session is not None and document.id is not None
             else []
         )
+    creator = None
+    if document.created_by_id is not None:
+        if people is not None:
+            creator = people.get(document.created_by_id)
+        elif session is not None:
+            creator = session.get(User, document.created_by_id)
     upload = document.upload
     file_url = file_name = file_size = None
     stored = Path(upload.stored_path) if upload is not None else None
@@ -160,6 +172,9 @@ def to_record(document: Document, payments: list[PaidBy] | None = None) -> Docum
         created_at=document.created_at,
         updated_at=document.updated_at,
         error_message=document.error_message,
+        created_by=PersonBrief.of(creator),
+        request_id=document.request_id,
+        request_code=f"SOL-{document.request_id:04d}" if document.request_id else None,
     )
 
 
@@ -315,6 +330,16 @@ def sync_register(app, session: Session, *, force: bool = False) -> SyncResult:
 # ── Extraction pipeline ──────────────────────────────────────────────────────
 
 
+def _tell_office(session: Session, document: Document) -> None:
+    """Let the office know a teacher's document is in. Never fails the job."""
+    try:
+        notifications.document_submitted(session, document)
+        session.commit()
+    except Exception:  # noqa: BLE001
+        session.rollback()
+        logger.warning("Could not notify about %s", document.internal_doc_number, exc_info=True)
+
+
 def process_job(app, job_id: str) -> None:
     """Extract, file on Drive, then write to the database and the sheet.
 
@@ -383,6 +408,7 @@ def process_job(app, job_id: str) -> None:
         job.error_message = sheet_error
         upload.status = "written_to_sheet" if document.sheet_state == "synced" else "extracted"
         session.commit()
+        _tell_office(session, document)
     except Exception as exc:  # noqa: BLE001
         session.rollback()
         logger.warning("Extraction job %s failed", job_id, exc_info=True)
@@ -398,5 +424,7 @@ def process_job(app, job_id: str) -> None:
                 failed_document.status = "error"
                 failed_document.error_message = str(exc)
             session.commit()
+            if failed_document is not None:
+                _tell_office(session, failed_document)
     finally:
         session.close()

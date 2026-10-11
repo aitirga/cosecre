@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .auth import Role
+from .auth import PersonBrief, Role  # noqa: F401 — PersonBrief is re-exported
 from .common import UtcDatetime
 from .documents import COMPTES
 
@@ -14,18 +14,6 @@ RequestStatus = Literal["oberta", "en_revisio", "aprovada", "rebutjada", "resolt
 
 #: Kinds that are about money: they carry an amount, a supplier and an account.
 SPENDING_KINDS = {"compra", "pressupost", "reemborsament"}
-
-
-class PersonBrief(BaseModel):
-    id: int
-    name: str
-    role: Role
-
-    @classmethod
-    def of(cls, user: Any) -> PersonBrief | None:
-        if user is None:
-            return None
-        return cls(id=user.id, name=user.display_name or user.email, role=user.role)
 
 
 class RequestCreate(BaseModel):

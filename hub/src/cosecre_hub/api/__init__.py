@@ -14,6 +14,7 @@ from .reconciliation import router as reconciliation_router
 from .requests import router as requests_router
 from .statements import router as statements_router
 from .statements_mirror import router as statements_mirror_router
+from .submissions import router as submissions_router
 from .status import router as status_router
 from .tools import router as tools_router
 from .users import router as users_router
@@ -32,6 +33,7 @@ api_router.include_router(users_router, prefix="/users", tags=["users"])
 # Open to every role; each checks ownership itself.
 api_router.include_router(requests_router, prefix="/requests", tags=["requests"])
 api_router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
+api_router.include_router(submissions_router, prefix="/submissions", tags=["submissions"])
 
 staff = [Depends(require_staff)]
 api_router.include_router(app_settings_router, prefix="/apps", tags=["apps"], dependencies=staff)

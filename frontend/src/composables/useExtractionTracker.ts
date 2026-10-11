@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 
 import { api } from '../api/client'
 import type { DocumentRecord, ExtractionStatus, JobRead, UploadResponse } from '../api/types'
+import { useAuth } from './useAuth'
 
 // v2: entries no longer carry a document type, so v1 state is not reused.
 const STORAGE_KEY = 'cosecre.extractionTracker.v2'
@@ -161,7 +162,10 @@ async function pollActiveJobs() {
   polling = true
   try {
     const results = await Promise.allSettled(
-      activeJobs.map((job) => api.getJob(job.jobId)),
+      // A teacher follows their own jobs; the register's are the office's.
+      activeJobs.map((job) =>
+        useAuth().isStaff.value ? api.getJob(job.jobId) : api.getSubmissionJob(job.jobId),
+      ),
     )
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') {
@@ -233,6 +237,13 @@ function syncFromDocuments(documents: DocumentRecord[]) {
     return
   }
   stopPolling()
+}
+
+/** Forget every tracked job — on sign-out, so the next person starts clean. */
+export function resetExtractionTracker() {
+  stopPolling()
+  trackedJobs.value = []
+  if (isClient()) window.localStorage.removeItem(STORAGE_KEY)
 }
 
 function dismissTrackedJob(jobId: string) {

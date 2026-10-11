@@ -36,7 +36,7 @@ from ...schemas import DocumentRecord, DocumentUpdate, JobRead, SyncResult, Uplo
 from ...schemas.documents import DiffEntryRead, FieldChangeRead, SyncApplied, SyncApply, SyncDiff
 from ...schemas.documents import CaptureSource
 from ...services.sheets import GoogleSheetsService, SheetDocumentNotFound
-from ...services import people
+from ...services import notifications, people
 from ...services.storage import save_upload_file
 from .register import (
     confirm_hints,
@@ -78,17 +78,22 @@ async def process_job_in_background(app, job_id: str) -> None:
         await run_in_threadpool(process_job, app, job_id)
 
 
-@router.post("/upload", response_model=UploadResponse)
-async def upload_document(
+async def queue_upload(
     request: Request,
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    source: CaptureSource = Form("file"),
-    session: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-    settings=Depends(get_settings),
-):
-    """Queue one file. Several can be in flight at once; they are read in order."""
+    session: Session,
+    user: User,
+    settings,
+    file: UploadFile,
+    source: CaptureSource,
+    *,
+    request_id: int | None = None,
+) -> UploadResponse:
+    """Store one file, open its register entry, and queue it to be read.
+
+    The office's upload and a teacher's submission are the same thing from here
+    on; only who may call it, and what they may see afterwards, differs.
+    """
     reference = generate_reference()
     stored_path = await save_upload_file(file, reference, settings)
 
@@ -107,6 +112,7 @@ async def upload_document(
         internal_doc_number=reference,
         upload=upload,
         created_by_id=user.id,
+        request_id=request_id,
         origen="Foto" if source == "camera" else "Original",
         status="pending",
         sheet_state="pending",
@@ -115,6 +121,20 @@ async def upload_document(
     session.commit()
     background_tasks.add_task(process_job_in_background, request.app, job.id)
     return UploadResponse(job_id=job.id, internal_doc_number=reference, status="pending")
+
+
+@router.post("/upload", response_model=UploadResponse)
+async def upload_document(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    source: CaptureSource = Form("file"),
+    session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    settings=Depends(get_settings),
+):
+    """Queue one file. Several can be in flight at once; they are read in order."""
+    return await queue_upload(request, background_tasks, session, user, settings, file, source)
 
 
 @router.post("/sync", response_model=SyncResult)
@@ -205,7 +225,11 @@ def list_documents(
     sync_register(request.app, session)
     documents = session.query(Document).all()
     payments = paid_by(session, [d.id for d in documents])
-    return [to_record(d, payments.get(d.id, [])) for d in sorted(documents, key=_sort_key, reverse=True)]
+    people = {person.id: person for person in session.query(User).all()}
+    return [
+        to_record(d, payments.get(d.id, []), people)
+        for d in sorted(documents, key=_sort_key, reverse=True)
+    ]
 
 
 @router.get("/files.zip")
@@ -277,7 +301,7 @@ def get_document(
     return to_record(_document(session, reference))
 
 
-def _save(app, session: Session, document: Document, changes: dict) -> DocumentRecord:
+def _save(app, session: Session, document: Document, changes: dict, actor: User | None = None) -> DocumentRecord:
     if document.status in {"pending", "processing", "written_to_sheet"}:
         raise HTTPException(
             status_code=409,
@@ -295,6 +319,8 @@ def _save(app, session: Session, document: Document, changes: dict) -> DocumentR
     # A person saving an entry has the document in hand — even one the models
     # could not read becomes an ordinary entry to review.
     document.status = status_after_review(document)
+    if "validat" in changed and document.validat:
+        notifications.document_validated(session, document, actor)
     document.error_message = None
     # Database first: from here on the edit survives whatever Google does.
     document.sheet_state = "pending"
@@ -316,10 +342,10 @@ def update_document(
     payload: DocumentUpdate,
     request: Request,
     session: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     changes = payload.model_dump(exclude_unset=True, by_alias=False)
-    return _save(request.app, session, _document(session, reference), changes)
+    return _save(request.app, session, _document(session, reference), changes, user)
 
 
 @router.post("/{reference}/validate", response_model=DocumentRecord)
@@ -327,9 +353,9 @@ def validate_document(
     reference: str,
     request: Request,
     session: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
-    return _save(request.app, session, _document(session, reference), {"validat": True})
+    return _save(request.app, session, _document(session, reference), {"validat": True}, user)
 
 
 @router.get("/{reference}/file")

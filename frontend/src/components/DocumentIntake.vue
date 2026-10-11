@@ -8,6 +8,26 @@ import type { CaptureSource } from '../api/types'
 import AppIcon from './AppIcon.vue'
 import CameraCapture from './CameraCapture.vue'
 
+/**
+ * `register` is the office adding to the register; `submission` is a teacher
+ * sending one in for the office to validate — optionally for one of their
+ * requests. Same reading, different door, and a teacher has no register entry
+ * to open afterwards.
+ */
+const props = withDefaults(
+  defineProps<{
+    target?: 'register' | 'submission'
+    requestId?: number | null
+    title?: string
+    hint?: string
+  }>(),
+  {
+    target: 'register',
+    requestId: null,
+    title: 'Afegeix documents',
+    hint: 'Factures, tiquets, pressupostos, albarans o rebuts: la IA en reconeix el tipus. Cada fitxer o foto és un document.',
+  },
+)
 const emit = defineEmits<{ uploaded: [] }>()
 
 /** An upload that has not reached the hub yet, so it has no job to poll. */
@@ -86,7 +106,10 @@ async function processFiles(files: File[], source: CaptureSource) {
           progress: 28,
         })
       }
-      const response = await api.uploadDocument(file, source)
+      const response =
+        props.target === 'submission'
+          ? await api.submitDocument(file, source, props.requestId)
+          : await api.uploadDocument(file, source)
       // Once the hub owns the job, the tracker takes over reporting it.
       trackUpload(file.name, response)
       localUploads.value = localUploads.value.filter((item) => item.id !== localItem?.id)
@@ -172,12 +195,10 @@ function dismiss(itemId: string) {
   >
     <div class="card-head">
       <div>
-        <h2 class="card-title">Afegeix documents</h2>
-        <p class="hint">
-          Factures, tiquets, pressupostos, albarans o rebuts: la IA en reconeix el tipus. Cada
-          fitxer o foto és un document.
-        </p>
+        <h2 class="card-title">{{ title }}</h2>
+        <p class="hint">{{ hint }}</p>
       </div>
+      <slot name="head" />
     </div>
 
     <div class="card-body">
@@ -208,7 +229,7 @@ function dismiss(itemId: string) {
             <span class="queue-name truncate">{{ item.name }}</span>
             <span class="queue-status">{{ item.status }}</span>
             <RouterLink
-              v-if="item.reference && !item.failed"
+              v-if="item.reference && !item.failed && target === 'register'"
               class="btn btn-ghost btn-sm"
               :to="{ name: 'document', params: { internalDocNumber: item.reference } }"
             >

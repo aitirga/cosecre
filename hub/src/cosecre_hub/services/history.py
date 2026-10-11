@@ -64,6 +64,7 @@ TABLE_LABEL = {
 #: ``(method, path suffix)`` → what people see. The first match wins.
 LABELS: list[tuple[str, str, str]] = [
     ("POST", "/documents/records/upload", "Document pujat"),
+    ("POST", "/submissions/upload", "Factura enviada pel professorat"),
     ("POST", "/documents/records/sync/pull", "Canvis del full integrats"),
     ("POST", "/documents/records/sync/push", "Registre enviat al full"),
     ("POST", "/documents/records/sync", "Sincronització amb el full"),

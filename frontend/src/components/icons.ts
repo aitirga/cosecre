@@ -114,6 +114,7 @@ export const ICONS = {
     'M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z',
   ],
   search: ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z', 'm21 21-4.3-4.3'],
+  home: ['m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z', 'M9 22V12h6v10'],
   /** Sort markers for a table header: up for ascending, down for descending. */
   sortAsc: ['m7 14 5-5 5 5'],
   sortDesc: ['m7 10 5 5 5-5'],

@@ -14,6 +14,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..services.text_format import parse_amount, parse_date
+from .auth import PersonBrief
 
 #: The only addresses accepted for an entry's responsible person.
 RESPONSABLE_DOMAIN = "@xtec.cat"
@@ -279,6 +280,11 @@ class DocumentRecord(DocumentFields):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     error_message: str | None = None
+    #: Who brought it in — a teacher's submission reads differently from the office's own.
+    created_by: PersonBrief | None = None
+    #: The request it answers, if any.
+    request_id: int | None = None
+    request_code: str | None = None
 
 
 class DocumentUpdate(BaseModel):

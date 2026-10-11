@@ -41,6 +41,7 @@ import type {
   SessionInfo,
   Statement,
   StatusOverview,
+  Submission,
   SyncApplied,
   SyncDiff,
   SyncResult,
@@ -784,6 +785,24 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ assignee_id: assigneeId }),
     })
+  },
+
+  // ── Submissions: a teacher's own invoices ───────────────────────────────
+  submitDocument(file: File, source: CaptureSource, requestId?: number | null) {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('source', source)
+    if (requestId) formData.append('request_id', String(requestId))
+    return request<UploadResponse>('/submissions/upload', { method: 'POST', body: formData })
+  },
+  mySubmissions() {
+    return request<Submission[]>('/submissions')
+  },
+  getSubmissionJob(jobId: string) {
+    return request<JobRead>(`/submissions/jobs/${jobId}`)
+  },
+  submissionFileUrl(reference: string) {
+    return fetchBlobUrl(`/submissions/${reference}/file`)
   },
 
   // ── Notifications ───────────────────────────────────────────────────────

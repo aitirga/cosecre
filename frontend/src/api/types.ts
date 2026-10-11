@@ -196,6 +196,10 @@ export interface DocumentRecord extends DocumentFields {
   created_at: string | null
   updated_at: string | null
   error_message: string | null
+  /** Who brought it in: a teacher's submission reads differently from the office's own. */
+  created_by: PersonBrief | null
+  request_id: number | null
+  request_code: string | null
 }
 
 /** Someone already named as an entry's responsible person. */
@@ -771,5 +775,24 @@ export interface AppNotification {
   actor: PersonBrief | null
   read: boolean
   created_at: string
+}
+
+/** A teacher's own view of an invoice or ticket they sent in. */
+export interface Submission {
+  num_doc_intern: string
+  tipus_document: string
+  num_factura: string
+  proveidor: string
+  data_factura: string | null
+  import_value: number | null
+  status: ExtractionStatus
+  validat: boolean
+  request_id: number | null
+  request_code: string | null
+  has_file: boolean
+  file_name: string | null
+  source_file_type: string | null
+  created_at: string | null
+  updated_at: string | null
 }
 

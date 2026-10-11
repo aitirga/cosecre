@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useQueryClient } from '@tanstack/vue-query'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
 import { useAuth } from '../composables/useAuth'
+import { resetExtractionTracker } from '../composables/useExtractionTracker'
 import { useHistory, useHistoryShortcuts } from '../composables/useHistory'
 import { useModules } from '../modules/registry'
 import { usePlatform } from '../platform'
@@ -13,6 +15,7 @@ import NotificationBell from './NotificationBell.vue'
 import RoleBadge from './RoleBadge.vue'
 
 const auth = useAuth()
+const queryClient = useQueryClient()
 const router = useRouter()
 const route = useRoute()
 const platform = usePlatform()
@@ -52,6 +55,9 @@ const initials = computed(() => {
 
 async function handleLogout() {
   menuOpen.value = false
+  // What this browser was following belongs to whoever signs out.
+  resetExtractionTracker()
+  queryClient.clear()
   await auth.logout()
   await router.push({ name: 'login' })
 }

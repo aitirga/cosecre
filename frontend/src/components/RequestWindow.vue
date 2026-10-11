@@ -6,6 +6,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { RouterLink } from 'vue-router'
 
 import { api, ApiError } from '../api/client'
 import type { RequestDetail, RequestStatus } from '../api/types'
@@ -375,6 +376,14 @@ onBeforeUnmount(() => {
               <h3 class="side-title">Documents</h3>
               <ul v-if="request.documents.length" class="docs">
                 <li v-for="doc in request.documents" :key="doc.num_doc_intern" class="doc">
+                  <RouterLink
+                    v-if="isOffice"
+                    class="doc-open"
+                    :to="{ name: 'register', query: { doc: doc.num_doc_intern } }"
+                    title="Obre-la al registre"
+                  >
+                    <AppIcon name="external" :size="12" />
+                  </RouterLink>
                   <span class="truncate">
                     <strong>{{ doc.num_factura || 'Sense número' }}</strong>
                     <span class="muted"> · {{ doc.proveidor || 'Proveïdor per llegir' }}</span>
@@ -386,6 +395,14 @@ onBeforeUnmount(() => {
                 </li>
               </ul>
               <p v-else class="muted small">Cap factura ni tiquet adjunt.</p>
+              <RouterLink
+                v-if="auth.isProfessor.value && request.kind !== 'consulta' && request.status !== 'cancellada'"
+                class="btn btn-outline btn-sm btn-block"
+                :to="{ name: 'my-invoices', query: { sol: String(request.id) } }"
+              >
+                <AppIcon name="upload" :size="13" />
+                {{ request.kind === 'reemborsament' ? 'Adjunta el tiquet' : 'Adjunta la factura' }}
+              </RouterLink>
             </section>
 
             <p v-if="error" class="notice notice-error">
@@ -719,6 +736,7 @@ onBeforeUnmount(() => {
 }
 
 .doc {
+  position: relative;
   display: grid;
   gap: 4px;
   padding: 7px 9px;
@@ -726,6 +744,17 @@ onBeforeUnmount(() => {
   border-radius: var(--r-md);
   background: var(--surface-0);
   font-size: var(--text-sm);
+}
+
+.doc-open {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  color: var(--ink-400);
+}
+
+.doc-open:hover {
+  color: var(--accent-700);
 }
 
 .doc-meta {

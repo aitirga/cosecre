@@ -3,7 +3,7 @@
  * Sol·licituds. One screen, two readings: the office sees every request as an
  * inbox to work through; a teacher sees their own, and asks for more.
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -113,6 +113,17 @@ const windowQueue = computed(() =>
 
 // ── Asking ──────────────────────────────────────────────────────────────────
 const asking = ref<RequestKind | null>(null)
+// `?nova=compra` (from a teacher's home) opens the form on that kind.
+watch(
+  () => route.query.nova,
+  (value) => {
+    if (typeof value !== 'string' || !KINDS.includes(value as RequestKind)) return
+    asking.value = value as RequestKind
+    const { nova: _nova, ...rest } = route.query
+    void router.replace({ query: rest })
+  },
+  { immediate: true },
+)
 function created(request: RequestDetail) {
   asking.value = null
   void queryClient.invalidateQueries({ queryKey: ['requests'] })

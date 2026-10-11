@@ -172,6 +172,7 @@ const table = useTableQuery({
     tipus: (item, value) => item.tipus_document === value,
     compte: (item, value) => (value === '—' ? !item.pressupost_afectat : item.pressupost_afectat === value),
     pagament: (item, value) => (value === '—' ? !item.pagament : item.pagament === value),
+    enviat: (item, value) => (value === 'professorat' ? item.created_by?.role === 'professor' : true),
     // ISO dates compare as text.
     des: (item, value) => !!item.data_factura && item.data_factura >= value,
     fins: (item, value) => !!item.data_factura && item.data_factura <= value,
@@ -187,10 +188,12 @@ const visible = table.visible
 
 /** Filters beyond the stat cards and the search, shown in the "more" row. */
 const showMoreFilters = ref(
-  Boolean(table.filters.compte || table.filters.des || table.filters.fins),
+  Boolean(table.filters.compte || table.filters.des || table.filters.fins || table.filters.enviat),
 )
 const extraFilterCount = computed(
-  () => [table.filters.compte, table.filters.des, table.filters.fins].filter(Boolean).length,
+  () =>
+    [table.filters.compte, table.filters.des, table.filters.fins, table.filters.enviat].filter(Boolean)
+      .length,
 )
 
 const visibleTotal = computed(() =>
@@ -476,6 +479,13 @@ const showUpload = ref(true)
           </select>
         </label>
         <label class="inline-field">
+          <span class="label">Enviat per</span>
+          <select v-model="table.filters.enviat" class="select">
+            <option value="">Tothom</option>
+            <option value="professorat">El professorat</option>
+          </select>
+        </label>
+        <label class="inline-field">
           <span class="label">Data des de</span>
           <input v-model="table.filters.des" class="input" type="date" :max="table.filters.fins || undefined" />
         </label>
@@ -543,6 +553,17 @@ const showUpload = ref(true)
                           : 'Pendent d\'escriure al full'
                       "
                     />
+                  </span>
+                  <span
+                    v-if="record.created_by?.role === 'professor' || record.request_code"
+                    class="sub origin"
+                    :title="record.created_by?.role === 'professor' ? `Enviat per ${record.created_by.name}` : undefined"
+                  >
+                    <template v-if="record.created_by?.role === 'professor'">
+                      <AppIcon name="user" :size="11" />
+                      <span class="truncate">{{ record.created_by.name }}</span>
+                    </template>
+                    <span v-if="record.request_code" class="mono">{{ record.request_code }}</span>
                   </span>
                 </a>
               </td>
@@ -800,6 +821,14 @@ const showUpload = ref(true)
 .search {
   flex: 1 1 220px;
   max-width: 320px;
+}
+
+.origin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  color: var(--gold-800);
 }
 
 .more-filters.on {

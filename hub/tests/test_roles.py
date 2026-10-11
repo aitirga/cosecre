@@ -17,6 +17,7 @@ OPEN_TO_EVERYONE = (
     # Every role's own corner; these check ownership themselves (see their tests).
     f"{API}/requests",
     f"{API}/notifications",
+    f"{API}/submissions",
 )
 
 

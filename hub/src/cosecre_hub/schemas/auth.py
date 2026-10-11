@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, model_validator
 
@@ -28,6 +28,20 @@ class UserRead(BaseModel):
     password_set_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PersonBrief(BaseModel):
+    """Who someone is, as far as another person needs to know: a name and a role."""
+
+    id: int
+    name: str
+    role: Role
+
+    @classmethod
+    def of(cls, user: Any) -> PersonBrief | None:
+        if user is None:
+            return None
+        return cls(id=user.id, name=user.display_name or user.email, role=user.role)
 
 
 class LoginRequest(BaseModel):

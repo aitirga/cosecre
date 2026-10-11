@@ -12,7 +12,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..models import Notification, Request, User
+from ..models import Document, Notification, Request, User
 
 STAFF_ROLES = ("admin", "secretaria")
 
@@ -153,4 +153,60 @@ def request_assigned(session: Session, request: Request, actor: User) -> None:
         body=f"De {name_of(request.requester)}",
         link=request_link(request),
         request=request,
+    )
+
+
+# ── Invoices sent in by teachers ─────────────────────────────────────────────
+
+
+def _submitted_by_teacher(session: Session, document: Document) -> User | None:
+    creator = session.get(User, document.created_by_id) if document.created_by_id else None
+    return creator if creator is not None and creator.role == "professor" else None
+
+
+def _describe(document: Document) -> str:
+    parts = [document.proveidor or "Proveïdor per llegir"]
+    if document.import_value is not None:
+        parts.append(f"{document.import_value:,.2f} €".replace(",", "X").replace(".", ",").replace("X", "."))
+    return " · ".join(parts)
+
+
+def document_submitted(session: Session, document: Document) -> None:
+    """A teacher's invoice has been read and waits for the office."""
+    teacher = _submitted_by_teacher(session, document)
+    if teacher is None:
+        return
+    request = session.get(Request, document.request_id) if document.request_id else None
+    failed = document.status == "error"
+    title = (
+        f"{name_of(teacher)} ha enviat un document que no s'ha pogut llegir"
+        if failed
+        else f"{name_of(teacher)} ha enviat una factura per validar"
+    )
+    body = _describe(document) + (f" · per a {request.code}" if request else "")
+    notify(
+        session,
+        office_for(session, request) if request else staff(session),
+        actor=teacher,
+        kind="document_submitted",
+        title=title,
+        body=body,
+        link={"name": "register", "query": {"doc": document.internal_doc_number}},
+        request=request,
+    )
+
+
+def document_validated(session: Session, document: Document, actor: User | None) -> None:
+    """Tell the teacher who sent it that the office has validated it."""
+    teacher = _submitted_by_teacher(session, document)
+    if teacher is None:
+        return
+    notify(
+        session,
+        [teacher],
+        actor=actor,
+        kind="document_validated",
+        title=f"Secretaria ha validat la teva factura: {document.num_factura or document.proveidor or document.internal_doc_number}",
+        body=_describe(document),
+        link={"name": "my-invoices", "query": {"doc": document.internal_doc_number}},
     )
