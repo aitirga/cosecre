@@ -17,6 +17,15 @@
         "dev:web"
       ],
       "port": 5173
+    },
+    {
+      "name": "parallel-fill-scratch",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "set -a; . /private/tmp/claude-501/-Users-aitoriraolagalarza-dev-personal-cosecre/78ceab13-431a-454b-b0b9-78dd2597a9dc/scratchpad/hub.env; set +a; cd ../cosecre-main; trap 'kill 0' EXIT; python3 /private/tmp/claude-501/-Users-aitoriraolagalarza-dev-personal-cosecre/78ceab13-431a-454b-b0b9-78dd2597a9dc/scratchpad/fake_openai.py & (cd hub && uv run cosecre-hub) & npm run dev:web"
+      ],
+      "port": 5181
     }
   ]
 }
