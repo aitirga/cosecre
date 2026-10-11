@@ -6,16 +6,51 @@
  * desktop app can reach. In a browser tab the page says so and points at the
  * installer, rather than the tool silently not being there.
  */
-import { defineAsyncComponent } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 
 import AppIcon from '../components/AppIcon.vue'
+import { useAuth } from '../composables/useAuth'
+import { DESKTOP_OS_LABELS, type DesktopOs, usePreferences } from '../composables/usePreferences'
 import { usePlatform } from '../platform'
 
 const PrintWorkbench = defineAsyncComponent(() => import('../components/print/PrintWorkbench.vue'))
 
 const platform = usePlatform()
+const preferences = usePreferences()
+const auth = useAuth()
 
 const RELEASES_URL = 'https://github.com/aitirga/cosecre/releases/latest'
+const LATEST_API = 'https://api.github.com/repos/aitirga/cosecre/releases/latest'
+
+// Installer names carry the version, so the latest release is asked which file
+// is which. The update zips and blockmaps sit beside them and must not match.
+const INSTALLER: Record<DesktopOs, RegExp> = {
+  windows: /^Cosecre-Setup-.+\.exe$/,
+  'mac-arm64': /^Cosecre-.+-arm64\.dmg$/,
+  'mac-x64': /^Cosecre-\d+\.\d+\.\d+\.dmg$/,
+  linux: /^Cosecre-.+\.AppImage$/,
+}
+
+const os = computed<DesktopOs>(() => (preferences.desktopOs in INSTALLER ? preferences.desktopOs : 'windows'))
+const downloading = ref(false)
+
+/** Starts the installer download; if GitHub can't be asked, the releases page does the job. */
+async function download() {
+  downloading.value = true
+  try {
+    const response = await fetch(LATEST_API, { headers: { Accept: 'application/vnd.github+json' } })
+    if (!response.ok) throw new Error(String(response.status))
+    const release = (await response.json()) as { assets: { name: string; browser_download_url: string }[] }
+    const asset = release.assets.find((item) => INSTALLER[os.value].test(item.name))
+    if (!asset) throw new Error('no installer')
+    window.location.href = asset.browser_download_url
+  } catch {
+    window.open(RELEASES_URL, '_blank', 'noopener')
+  } finally {
+    downloading.value = false
+  }
+}
 </script>
 
 <template>
@@ -46,10 +81,21 @@ const RELEASES_URL = 'https://github.com/aitirga/cosecre/releases/latest'
             <li>Impressora, còpies, pàgines, doble cara i color per a cada document.</li>
             <li>Diverses impressores alhora, i un historial de tot el que s'ha imprès.</li>
           </ul>
-          <a class="btn btn-primary" :href="RELEASES_URL" target="_blank" rel="noopener">
-            <AppIcon name="download" />
-            Descarrega l'aplicació
-          </a>
+          <div class="actions">
+            <button class="btn btn-primary" type="button" :disabled="downloading" @click="download">
+              <AppIcon name="download" />
+              Descarrega per a {{ DESKTOP_OS_LABELS[os] }}
+            </button>
+            <span class="muted">
+              Un altre sistema?
+              <template v-if="auth.isAdmin.value">
+                Tria'l a <RouterLink :to="{ name: 'settings', query: { tab: 'general' } }">Configuració</RouterLink>
+                o mira
+              </template>
+              <template v-else>Mira</template>
+              <a :href="RELEASES_URL" target="_blank" rel="noopener">totes les versions</a>.
+            </span>
+          </div>
         </div>
       </div>
     </section>
@@ -85,6 +131,14 @@ const RELEASES_URL = 'https://github.com/aitirga/cosecre/releases/latest'
   gap: 10px;
   justify-items: start;
   font-size: var(--text-base);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  font-size: var(--text-sm);
 }
 
 .points {

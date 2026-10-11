@@ -14,7 +14,7 @@ import OriginalsPanel from '../components/OriginalsPanel.vue'
 import TeamPanel from '../components/TeamPanel.vue'
 import type { IconName } from '../components/icons'
 import { useAuth } from '../composables/useAuth'
-import { usePreferences } from '../composables/usePreferences'
+import { DESKTOP_OS_LABELS, usePreferences } from '../composables/usePreferences'
 import { usePlatform } from '../platform'
 
 const auth = useAuth()
@@ -477,6 +477,15 @@ function onSubtabKey(event: KeyboardEvent) {
               els teus alhora: es desen sols i la IA no els sobreescriu.
             </span>
           </span>
+        </label>
+        <label class="pref-row">
+          <span class="toggle-text">
+            <strong>Sistema de l'aplicació d'escriptori</strong>
+            <span class="hint">L'instal·lador que es baixa des d'Eines → Impressió.</span>
+          </span>
+          <select v-model="preferences.desktopOs" class="select">
+            <option v-for="(label, os) in DESKTOP_OS_LABELS" :key="os" :value="os">{{ label }}</option>
+          </select>
         </label>
       </section>
     </div>
@@ -1193,6 +1202,20 @@ function onSubtabKey(event: KeyboardEvent) {
 .toggle input {
   margin-top: 3px;
   accent-color: var(--accent-700);
+}
+
+.pref-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px 14px 39px;
+  border-top: 1px solid var(--line);
+}
+
+.pref-row .select {
+  width: auto;
+  flex-shrink: 0;
 }
 
 .toggle-text {

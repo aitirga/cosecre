@@ -8,10 +8,21 @@ import { reactive, watch } from 'vue'
 export interface Preferences {
   /** A new photo or file opens its entry straight away, to fill in alongside the AI. */
   openOnCapture: boolean
+  /** Which installer "Descarrega l'aplicació" fetches. Most of the school is on Windows. */
+  desktopOs: DesktopOs
+}
+
+export type DesktopOs = 'windows' | 'mac-arm64' | 'mac-x64' | 'linux'
+
+export const DESKTOP_OS_LABELS: Record<DesktopOs, string> = {
+  windows: 'Windows',
+  'mac-arm64': 'macOS (Apple Silicon)',
+  'mac-x64': 'macOS (Intel)',
+  linux: 'Linux',
 }
 
 const STORAGE_KEY = 'cosecre.preferences.v1'
-const DEFAULTS: Preferences = { openOnCapture: true }
+const DEFAULTS: Preferences = { openOnCapture: true, desktopOs: 'windows' }
 
 function load(): Preferences {
   try {
