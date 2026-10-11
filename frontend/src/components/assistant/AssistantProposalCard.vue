@@ -153,7 +153,7 @@ async function undo() {
     <p v-if="proposal.detail" class="detail">{{ proposal.detail }}</p>
     <p v-if="error" class="detail error">{{ error }}</p>
 
-    <footer v-if="proposal.status === 'pending'" class="foot">
+    <footer v-if="proposal.status === 'pending'" class="foot action-bar action-bar-ai">
       <button class="btn btn-ai btn-sm" type="button" :disabled="busy !== null" @click="run('apply')">
         <AppIcon name="check" :size="13" />
         {{ busy === 'apply' ? 'Aplicant…' : `Aplica ${proposal.actions.length === 1 ? 'el canvi' : `els ${proposal.actions.length} canvis`}` }}
@@ -165,7 +165,7 @@ async function undo() {
     </footer>
     <footer
       v-else-if="['applied', 'partial'].includes(proposal.status) && proposal.history_action_id != null"
-      class="foot"
+      class="foot action-bar"
     >
       <button v-if="!undone" class="btn btn-outline btn-sm" type="button" :disabled="busy !== null" @click="undo">
         <AppIcon name="undo" :size="13" />
@@ -340,11 +340,7 @@ async function undo() {
 }
 
 .foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   padding: 9px 12px;
-  border-top: 1px solid var(--line);
 }
 
 .hint-line {

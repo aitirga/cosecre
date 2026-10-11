@@ -608,7 +608,7 @@ const SHEET_STATE = {
             </section>
           </fieldset>
 
-          <div v-if="!locked" class="form-actions">
+          <div v-if="!locked" class="form-actions action-bar">
             <span v-if="inFlight" class="autosave">
               <template v-if="saveMutation.isPending.value">Desant…</template>
               <template v-else-if="dirty">Es desarà en deixar d'escriure</template>
@@ -813,25 +813,10 @@ const SHEET_STATE = {
   top: 0;
 }
 
-.embedded .form-card {
-  padding-bottom: 0;
-}
-
 .embedded .form-actions {
   position: sticky;
   bottom: 0;
   z-index: 2;
-  padding: 10px 16px;
-  border-top: 1px solid var(--line);
-  background: var(--surface-0);
-}
-
-.embedded .form-actions:last-child {
-  border-radius: 0 0 var(--r-lg) var(--r-lg);
-}
-
-.embedded .form-card > .notice:last-child {
-  margin-bottom: 12px;
 }
 
 .head-badges {
@@ -1078,8 +1063,12 @@ const SHEET_STATE = {
 /* ── Form ────────────────────────────────────────────────────────────────── */
 .form-card {
   display: grid;
-  gap: 12px;
-  padding-bottom: 14px;
+}
+
+/* The action bar's rule (or the card's own edge, when locked) closes the last
+   section; a second line would leave an empty white strip between the two. */
+.form-card .section:last-child {
+  border-bottom: 0;
 }
 
 .sections {
@@ -1213,19 +1202,16 @@ const SHEET_STATE = {
   color: var(--danger-700);
 }
 
-.form-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 16px;
-}
-
 .kbd-hint {
   margin-left: auto;
 }
 
 .form-card > .notice {
-  margin: 0 16px;
+  margin: 12px 16px 0;
+}
+
+.form-card > .notice:last-child {
+  margin-bottom: 12px;
 }
 
 /* ── Side ────────────────────────────────────────────────────────────────── */

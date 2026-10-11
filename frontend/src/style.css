@@ -267,6 +267,31 @@ button {
   font-weight: 600;
 }
 
+/* ── Action bars ───────────────────────────────────────────────────────── */
+/* The strip where a card's work is committed: save, validate, apply. It sits
+   flush at the card's foot on a tinted ground under a rule that reads, so it
+   never passes for one more white section of fields. `-ai` is the same strip
+   for committing an AI proposal. Put it last in a `.card` with no bottom
+   padding; it rounds its own corners to match. */
+.action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line-strong);
+  background: var(--surface-2);
+}
+
+.action-bar:last-child {
+  border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
+}
+
+.action-bar-ai {
+  border-top-color: var(--ai-200);
+  background: var(--ai-50);
+}
+
 /* ── Page headers ──────────────────────────────────────────────────────── */
 /* Title on the left, actions on the right. Four views had defined this
    identically in their own scoped blocks, which is the drift the note above

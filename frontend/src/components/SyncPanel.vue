@@ -197,7 +197,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           </p>
         </div>
 
-        <footer v-if="entries.length" class="panel-foot">
+        <footer v-if="entries.length" class="panel-foot action-bar">
           <button class="btn btn-primary" type="button" :disabled="!toPull.length || working" @click="confirming = 'pull'">
             <AppIcon name="download" />
             Integra al registre ({{ toPull.length }})
@@ -277,14 +277,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   gap: 12px;
   padding: 14px 16px;
   overflow: auto;
-}
-
-.panel-foot {
-  display: flex;
-  gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--line);
-  background: var(--surface-1);
 }
 
 .direction {

@@ -1250,7 +1250,7 @@ code {
   padding: 6px 6px 6px 14px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-lg);
-  background: var(--surface-0);
+  background: var(--surface-2);
   box-shadow: var(--shadow-lg);
   font-size: var(--text-base);
 }
