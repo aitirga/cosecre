@@ -19,6 +19,15 @@
       "port": 5173
     },
     {
+      "name": "cosecre-main",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd ../cosecre-main && exec just dev"
+      ],
+      "port": 5173
+    },
+    {
       "name": "parallel-fill-scratch",
       "runtimeExecutable": "bash",
       "runtimeArgs": [
