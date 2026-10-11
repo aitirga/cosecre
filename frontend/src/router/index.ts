@@ -20,6 +20,16 @@ export interface RouterOptions {
 /** Stands in for routes the guard always sends somewhere else. */
 const Placeholder = { render: () => null }
 
+const RELOAD_KEY = 'cosecre:chunk-reload'
+
+/** The browser's wording varies; these cover Chrome, Firefox and Safari. */
+function isChunkLoadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /dynamically imported module|module script failed|Importing a module script failed/i.test(
+    message,
+  )
+}
+
 export function createAppRouter(options: RouterOptions = {}): Router {
   const withHubPicker = options.withHubPicker ?? false
   const { homeRoute } = useModules()
@@ -94,6 +104,19 @@ export function createAppRouter(options: RouterOptions = {}): Router {
 
     return moduleGuard(to) ?? true
   })
+
+  // A tab opened before a deploy still asks for the old hash of a lazy route
+  // (Eines → Impressió), gets a 404, and the router quietly stays put — a
+  // click that does nothing. Load the page fresh at the target instead; the
+  // flag stops a chunk that is really broken from reloading forever.
+  router.onError((error, to) => {
+    if (!isChunkLoadError(error)) return
+    const href = router.resolve(to).href
+    if (sessionStorage.getItem(RELOAD_KEY) === href) return
+    sessionStorage.setItem(RELOAD_KEY, href)
+    window.location.assign(href)
+  })
+  router.afterEach(() => sessionStorage.removeItem(RELOAD_KEY))
 
   return router
 }
