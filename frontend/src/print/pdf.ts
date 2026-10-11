@@ -1,8 +1,9 @@
 /**
- * pdf.js, for the print preview.
+ * pdf.js, for the print preview and the PDF originals beside a register entry.
  *
- * Imported only by the preview, which only the desktop shell ever renders, so
- * a browser tab never downloads it.
+
+ * Imported only by components loaded on demand, so a page that never shows
+ * a PDF never downloads it.
  */
 // The legacy build, not the modern one: pdf.js 6 calls `Map#getOrInsertComputed`,
 // which the desktop app's Chromium does not have yet. Legacy carries the

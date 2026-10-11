@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { RouterLink } from 'vue-router'
 
@@ -22,6 +22,9 @@ import AppIcon from './AppIcon.vue'
 import ImageViewer from './ImageViewer.vue'
 import PersonInput from './PersonInput.vue'
 import StatusPill from './StatusPill.vue'
+
+// pdf.js is heavy, and only a PDF original needs it.
+const PdfPreview = defineAsyncComponent(() => import('./PdfPreview.vue'))
 
 /**
  * One document's fields, original and history: the whole of what a person
@@ -267,6 +270,24 @@ function useReading(field: FieldDef) {
   touch(field.key)
 }
 
+/**
+ * A field still holding what the AI wrote in it, until someone validates the
+ * entry: violet, so the eye knows which values nobody has typed or checked
+ * yet. Typing over one makes it the person's, and the colour goes.
+ */
+function aiFilled(field: FieldDef): boolean {
+  const current = record.value
+  if (!current || current.validat || inFlight.value) return false
+  if (unsaved.has(field.key) || field.key in kept.value || !form[field.key].trim()) return false
+  const hint = hintFor(field.key)
+  // An unsure reading is flagged in gold instead.
+  if (!hint || hint.source === 'migracio' || hint.review) return false
+  const read = current.ai_trace?.final?.[readingKey(field.key)]
+  return read ? toText(field, read.value as DocumentRecord[FieldKey]) === form[field.key] : true
+}
+
+const aiFilledCount = computed(() => ALL_FIELDS.filter((field) => aiFilled(field)).length)
+
 /** The fields the reading just filled glow for a moment, so the eye finds them. */
 const justFilled = reactive(new Set<string>())
 watch(inFlight, (now, before) => {
@@ -277,17 +298,23 @@ watch(inFlight, (now, before) => {
 
 // ── Original document preview ────────────────────────────────────────────────
 const photoSrc = ref<string | null>(null)
+/** A PDF original, drawn beside the fields from the moment it is uploaded. */
+const pdfSrc = ref<string | null>(null)
 const viewerOpen = ref(false)
 const photoLoading = ref(false)
 const isImage = computed(() => record.value?.source_file_type?.startsWith('image/') ?? false)
+const isPdf = computed(() => record.value?.source_file_type === 'application/pdf')
 
 watch(
   record,
   async (value) => {
-    if (!value?.file_url || photoSrc.value || !isImage.value) return
+    if (!value?.file_url || photoSrc.value || pdfSrc.value || photoLoading.value) return
+    if (!isImage.value && !isPdf.value) return
     photoLoading.value = true
     try {
-      photoSrc.value = await api.getDocumentFileBlob(internalDocNumber)
+      const url = await api.getDocumentFileBlob(internalDocNumber)
+      if (isPdf.value) pdfSrc.value = url
+      else photoSrc.value = url
     } catch {
       // The preview is best-effort; the fields still work without it.
     } finally {
@@ -298,12 +325,13 @@ watch(
 )
 
 async function openOriginal() {
-  const url = await api.getDocumentFileBlob(internalDocNumber)
+  const url = pdfSrc.value ?? (await api.getDocumentFileBlob(internalDocNumber))
   window.open(url, '_blank', 'noopener')
 }
 
 onUnmounted(() => {
   if (photoSrc.value) URL.revokeObjectURL(photoSrc.value)
+  if (pdfSrc.value) URL.revokeObjectURL(pdfSrc.value)
 })
 
 // ── Download the original ────────────────────────────────────────────────────
@@ -396,6 +424,14 @@ const SHEET_STATE = {
         </span>
       </p>
 
+      <p v-if="!inFlight && aiFilledCount" class="notice ai-notice">
+        <AppIcon name="sparkles" :size="15" class="ai-mark" />
+        <span>
+          {{ aiFilledCount }} {{ aiFilledCount === 1 ? 'camp l\'ha omplert' : 'camps els ha omplerts' }} la IA,
+          en lila. Contrasta'ls amb l'original; en escriure-hi, passen a ser teus.
+        </span>
+      </p>
+
       <section v-if="inFlight" class="reading-card" aria-live="polite">
         <div class="reading-top">
           <AppIcon name="sparkles" :size="15" class="ai-mark" />
@@ -429,6 +465,7 @@ const SHEET_STATE = {
                     invalid: errors[field.key],
                     reading: ownerOf(field) === 'reading',
                     mine: ownerOf(field) === 'mine',
+                    'ai-filled': aiFilled(field),
                     filled: justFilled.has(field.key),
                   }"
                 >
@@ -570,6 +607,7 @@ const SHEET_STATE = {
             <div class="card-head"><h2 class="card-title">Original</h2></div>
             <div class="card-body preview">
               <p v-if="photoLoading" class="hint">Carregant…</p>
+              <PdfPreview v-else-if="pdfSrc" :src="pdfSrc" @open="openOriginal" />
               <button
                 v-else-if="photoSrc"
                 class="photo-button"
@@ -805,6 +843,22 @@ const SHEET_STATE = {
   font-size: var(--text-sm);
   color: var(--ai-800);
   line-height: 1.45;
+}
+
+/* A value the AI wrote and nobody has checked yet. */
+.field.ai-filled .input,
+.field.ai-filled .select,
+.field.ai-filled .textarea,
+.field.ai-filled :deep(.input) {
+  border-color: var(--ai-400);
+  background: var(--ai-50);
+  color: var(--ai-800);
+}
+
+.ai-notice {
+  background: var(--ai-50);
+  border-color: var(--ai-200);
+  color: var(--ai-800);
 }
 
 /* A field the AI is reading: violet, with a slow sheen across it. */
