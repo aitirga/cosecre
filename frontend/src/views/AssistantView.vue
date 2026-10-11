@@ -647,11 +647,13 @@ onBeforeUnmount(() => abort?.abort())
 
 .chat-groups {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 12px;
   min-height: 0;
   margin: 0 -8px;
   padding: 4px 8px 8px;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -665,6 +667,7 @@ onBeforeUnmount(() => abort?.abort())
 
 .chat-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1px;
   margin: 0;
   padding: 0;
