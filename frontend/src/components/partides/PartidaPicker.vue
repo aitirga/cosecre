@@ -2,7 +2,9 @@
 import { computed, nextTick, ref, watch } from 'vue'
 
 import type { Partida } from '../../api/types'
+import { parseAmount } from '../../document-fields'
 import {
+  type Share,
   LEVEL_LABELS,
   LEVELS,
   type Level,
@@ -24,7 +26,10 @@ import AppIcon from '../AppIcon.vue'
  * each carries its fund's colour as a stripe, so "the Motxilles one" is found
  * by colour before it is read. The movement's school year leads: lines of
  * other years stay visible but step back. Search, fund, year and level narrow
- * the map; the keyboard walks what is left.
+ * the map; the keyboard walks what is left. Jev's picks lead, in their own
+ * strip. A chosen line takes its share right here when the movement is split,
+ * and the lines inside a concept keep the order the secretari/a dragged them
+ * into, on every device.
  */
 const props = defineProps<{
   partides: Partida[]
@@ -35,9 +40,21 @@ const props = defineProps<{
   movementYear: string
   /** The side of the budget the movement belongs to: expenses for money out, income for money in. */
   side?: 'despesa' | 'ingres'
+  /** The movement's split, to type a chosen line's share in place. */
+  shares?: Share[]
+  /** The movement's amount, unsigned. */
+  total?: number | null
+  /** The secretari/a's own order of the lines in each concept, by code. */
+  order?: Record<string, string[]>
+  /** Whether that order may be changed (the secretari/a's alone). */
+  reorderable?: boolean
   disabled?: boolean
 }>()
-const emit = defineEmits<{ toggle: [id: number] }>()
+const emit = defineEmits<{
+  toggle: [id: number]
+  share: [id: number, euros: number]
+  reorder: [block: string, codes: string[]]
+}>()
 
 const query = ref('')
 const groupBy = ref<'concepte' | 'fons'>('concepte')
@@ -46,7 +63,8 @@ const levels = ref<Level[]>([])
 const funds = ref<string[]>([])
 /** The other side of the budget too: income lines for a payment, expense lines for money in. */
 const withIncome = ref(false)
-const onlyFunded = ref(false)
+/** On by default: a line with no budget and nothing charged is rarely the one. */
+const onlyFunded = ref(true)
 const search = ref<HTMLInputElement | null>(null)
 const cursor = ref(-1)
 
@@ -101,7 +119,7 @@ const fundLegend = computed(() => {
 const visible = computed(() =>
   lines.value.filter((line) => {
     const p = line.partida
-    if (props.selected.includes(p.id)) return true
+    if (props.selected.includes(p.id) || props.suggested[p.id] !== undefined) return true
     if (query.value && !matches(line.haystack, query.value)) return false
     if (funds.value.length && !funds.value.includes(p.fons)) return false
     if (levels.value.length && !line.levels.some((level) => levels.value.includes(level))) return false
@@ -189,14 +207,105 @@ const blocks = computed<Block[]>(() => {
   }
   const list = [...map.values()].filter((block) => block.lines.length || block.quiet.length)
   for (const block of list) {
-    // The movement's year first, then esfer@'s order.
-    block.lines.sort((a, b) => Number(a.aside) - Number(b.aside) || a.partida.ordre - b.partida.ordre)
+    const custom = props.order?.[block.key]
+    const rank = new Map((custom ?? []).map((codi, index) => [codi, index]))
+    // The secretari/a's order where there is one; otherwise the movement's
+    // year first, then the biggest budget — not the code, which says little.
+    block.lines.sort(
+      (a, b) =>
+        (rank.get(a.partida.codi) ?? Infinity) - (rank.get(b.partida.codi) ?? Infinity) ||
+        Number(a.aside) - Number(b.aside) ||
+        b.partida.import_pressupost - a.partida.import_pressupost ||
+        a.partida.ordre - b.partida.ordre,
+    )
   }
   if (groupBy.value === 'fons') list.sort((a, b) => (a.key === '~' ? 1 : b.key === '~' ? -1 : b.lines.length - a.lines.length))
   // esfer@'s order for real concepts; the loose catch-alls after them.
   else list.sort((a, b) => Number(Boolean(a.loose)) - Number(Boolean(b.loose)))
   return list
 })
+
+/** Jev's picks worth a look, best first: their own strip above the map. */
+const jevLines = computed(() => {
+  const byId = new Map(lines.value.map((line) => [line.partida.id, line]))
+  return Object.entries(props.suggested)
+    .map(([id, probability]) => ({ line: byId.get(Number(id)), probability }))
+    .filter((entry): entry is { line: Line; probability: number } => Boolean(entry.line) && entry.probability >= 0.05)
+    .sort((a, b) => b.probability - a.probability)
+    .slice(0, 3)
+})
+
+// ── A chosen line's share, typed on the line ────────────────────────────────
+
+const split = computed(() => (props.shares?.length ?? 0) > 1)
+const editing = ref<{ id: number; unit: 'eur' | 'pct'; text: string } | null>(null)
+
+function shareOf(id: number) {
+  return props.shares?.find((share) => share.id === id)?.amount ?? 0
+}
+
+function shareShown(id: number, unit: 'eur' | 'pct') {
+  if (editing.value?.id === id && editing.value.unit === unit) return editing.value.text
+  const euros = shareOf(id)
+  if (unit === 'eur') return euros.toLocaleString('ca-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return props.total ? ((euros / props.total) * 100).toLocaleString('ca-ES', { maximumFractionDigits: 1 }) : ''
+}
+
+function onShare(id: number, unit: 'eur' | 'pct', text: string) {
+  editing.value = { id, unit, text }
+  const value = parseAmount(text.replace('%', ''))
+  if (value === undefined || value === null || (unit === 'pct' && !props.total)) return
+  emit('share', id, unit === 'eur' ? value : ((props.total ?? 0) * value) / 100)
+}
+
+// ── Reordering the lines of a concept ───────────────────────────────────────
+
+const dragging = ref<{ block: string; id: number } | null>(null)
+const dropAt = ref<{ id: number; after: boolean } | null>(null)
+const canReorder = computed(() => Boolean(props.reorderable) && groupBy.value === 'concepte')
+
+function onDragStart(event: DragEvent, block: Block, line: Line) {
+  if (!canReorder.value) return
+  dragging.value = { block: block.key, id: line.partida.id }
+  event.dataTransfer?.setData('text/plain', line.partida.codi)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+function onDragOver(event: DragEvent, block: Block, line: Line) {
+  if (!dragging.value || dragging.value.block !== block.key) return
+  event.preventDefault()
+  const box = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  dropAt.value = { id: line.partida.id, after: event.clientY > box.top + box.height / 2 }
+}
+
+function onDrop(block: Block) {
+  const moving = dragging.value
+  const at = dropAt.value
+  dragging.value = null
+  dropAt.value = null
+  if (!moving || !at || moving.id === at.id || moving.block !== block.key) return
+  const ids = block.lines.map((line) => line.partida.id).filter((id) => id !== moving.id)
+  const index = ids.indexOf(at.id) + (at.after ? 1 : 0)
+  ids.splice(index, 0, moving.id)
+  const codeOf = new Map(block.lines.map((line) => [line.partida.id, line.partida.codi]))
+  const shown = ids.map((id) => codeOf.get(id)!)
+  // Lines not on screen (filtered or folded) keep their place after these.
+  const rest = (props.order?.[block.key] ?? []).filter((codi) => !shown.includes(codi))
+  emit('reorder', block.key, [...shown, ...rest])
+}
+
+function onDragEnd() {
+  dragging.value = null
+  dropAt.value = null
+}
+
+function onLineKey(event: KeyboardEvent, id: number) {
+  if (event.target !== event.currentTarget || props.disabled) return
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    emit('toggle', id)
+  }
+}
 
 /** What the arrow keys walk, in reading order. */
 const flat = computed(() => blocks.value.flatMap((block) => block.lines.map((line) => line.partida.id)))
@@ -332,9 +441,9 @@ defineExpose({ focusSearch })
         </button>
       </div>
       <span class="facet-sep" />
-      <label class="check">
+      <label class="check" title="Amaga les partides sense pressupost ni res imputat">
         <input v-model="onlyFunded" type="checkbox" />
-        Amb pressupost
+        Amaga sense pressupost
       </label>
       <label class="check">
         <input v-model="withIncome" type="checkbox" />
@@ -358,32 +467,32 @@ defineExpose({ focusSearch })
       </button>
     </div>
 
-    <div v-if="blocks.length" class="map" role="listbox" aria-multiselectable="true" aria-label="Partides">
-      <section v-for="block in blocks" :key="block.key" class="block">
-        <header class="block-head" :style="block.tone ? { '--tone': block.tone.solid } : undefined">
-          <span v-if="block.tone" class="fund-dot" />
-          <span class="block-title">{{ block.title }}</span>
-          <span v-if="block.budget" class="block-budget mono">{{ formatEuros(block.budget) }}</span>
+    <div v-if="blocks.length || jevLines.length || $slots.jev" class="map" role="listbox" aria-multiselectable="true" aria-label="Partides">
+      <section v-if="jevLines.length || $slots.jev" class="block block-jev">
+        <header class="block-head">
+          <span class="block-title block-title-ai"><AppIcon name="sparkles" :size="11" /> Jev suggereix</span>
+          <slot name="jev-action" />
         </header>
-        <button
-          v-for="line in block.lines"
-          :id="`partida-${line.partida.id}`"
-          :key="line.partida.id"
-          :data-partida="line.partida.id"
-          type="button"
-          role="option"
+        <slot name="jev" />
+        <div
+          v-for="{ line } in jevLines"
+          :key="`jev-${line.partida.id}`"
+                    role="option"
           class="line"
           :class="{
             'is-on': selected.includes(line.partida.id),
             'is-aside': line.aside && !selected.includes(line.partida.id),
             'is-cursor': flat[cursor] === line.partida.id,
             'is-suggested': suggested[line.partida.id] !== undefined,
+            'is-disabled': disabled,
           }"
+          :tabindex="disabled ? -1 : 0"
           :aria-selected="selected.includes(line.partida.id)"
-          :disabled="disabled"
+          :aria-disabled="disabled"
           :style="{ '--tone': line.tone.solid, '--tone-soft': line.tone.soft }"
           :title="line.partida.context ? `${line.partida.nom}\n\n${line.partida.context}` : line.partida.nom"
-          @click="emit('toggle', line.partida.id)"
+          @click="!disabled && emit('toggle', line.partida.id)"
+          @keydown="onLineKey($event, line.partida.id)"
         >
           <span class="line-main">
             <span class="line-title">{{ line.title }}</span>
@@ -397,6 +506,35 @@ defineExpose({ focusSearch })
                 <AppIcon name="sparkles" :size="10" />
                 {{ Math.round(suggested[line.partida.id] * 100) }} %
               </span>
+            </span>
+            <span v-if="split && selected.includes(line.partida.id)" class="line-share" @click.stop @keydown.stop>
+              <label class="share-field">
+                <input
+                  class="input input-mono"
+                  inputmode="decimal"
+                  :value="shareShown(line.partida.id, 'eur')"
+                  :aria-label="`Import de ${line.title}`"
+                  @input="onShare(line.partida.id, 'eur', ($event.target as HTMLInputElement).value)"
+                  @focus="($event.target as HTMLInputElement).select()"
+                  @blur="editing = null"
+                  @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
+                />
+                <span class="unit">€</span>
+              </label>
+              <label class="share-field share-pct">
+                <input
+                  class="input input-mono"
+                  inputmode="decimal"
+                  :value="shareShown(line.partida.id, 'pct')"
+                  :disabled="!total"
+                  :aria-label="`Percentatge de ${line.title}`"
+                  @input="onShare(line.partida.id, 'pct', ($event.target as HTMLInputElement).value)"
+                  @focus="($event.target as HTMLInputElement).select()"
+                  @blur="editing = null"
+                  @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
+                />
+                <span class="unit">%</span>
+              </label>
             </span>
           </span>
           <span class="line-side">
@@ -414,7 +552,103 @@ defineExpose({ focusSearch })
           <span class="line-check" aria-hidden="true">
             <AppIcon v-if="selected.includes(line.partida.id)" name="check" :size="12" />
           </span>
-        </button>
+        </div>
+      </section>
+      <!-- Columns on an inner box with no height of its own: they balance,
+           and the outer box scrolls, rather than spilling sideways. -->
+      <div class="map-cols">
+      <section v-for="block in blocks" :key="block.key" class="block" @drop.prevent="onDrop(block)">
+        <header class="block-head" :style="block.tone ? { '--tone': block.tone.solid } : undefined">
+          <span v-if="block.tone" class="fund-dot" />
+          <span class="block-title">{{ block.title }}</span>
+          <span v-if="block.budget" class="block-budget mono">{{ formatEuros(block.budget) }}</span>
+        </header>
+        <div
+          v-for="line in block.lines"
+          :key="line.partida.id"
+          :draggable="canReorder"
+          :data-drop="dropAt?.id === line.partida.id ? (dropAt.after ? 'after' : 'before') : undefined"
+          @dragstart="onDragStart($event, block, line)"
+          @dragover="onDragOver($event, block, line)"
+          @dragend="onDragEnd"
+          :id="`partida-${line.partida.id}`"
+          :data-partida="line.partida.id"
+          role="option"
+          class="line"
+          :class="{
+            'is-on': selected.includes(line.partida.id),
+            'is-aside': line.aside && !selected.includes(line.partida.id),
+            'is-cursor': flat[cursor] === line.partida.id,
+            'is-suggested': suggested[line.partida.id] !== undefined,
+            'is-disabled': disabled,
+          }"
+          :tabindex="disabled ? -1 : 0"
+          :aria-selected="selected.includes(line.partida.id)"
+          :aria-disabled="disabled"
+          :style="{ '--tone': line.tone.solid, '--tone-soft': line.tone.soft }"
+          :title="line.partida.context ? `${line.partida.nom}\n\n${line.partida.context}` : line.partida.nom"
+          @click="!disabled && emit('toggle', line.partida.id)"
+          @keydown="onLineKey($event, line.partida.id)"
+        >
+          <span class="line-main">
+            <span class="line-title">{{ line.title }}</span>
+            <span class="line-tags">
+              <span v-for="tag in line.years" :key="tag" class="tag tag-year mono">{{ tag }}</span>
+              <span class="tag mono">{{ shortCode(line.partida.codi) }}</span>
+              <span v-if="line.partida.context" class="tag tag-note" aria-label="Té context">
+                <AppIcon name="message" :size="10" />
+              </span>
+              <span v-if="suggested[line.partida.id] !== undefined" class="tag tag-ai">
+                <AppIcon name="sparkles" :size="10" />
+                {{ Math.round(suggested[line.partida.id] * 100) }} %
+              </span>
+            </span>
+            <span v-if="split && selected.includes(line.partida.id)" class="line-share" @click.stop @keydown.stop>
+              <label class="share-field">
+                <input
+                  class="input input-mono"
+                  inputmode="decimal"
+                  :value="shareShown(line.partida.id, 'eur')"
+                  :aria-label="`Import de ${line.title}`"
+                  @input="onShare(line.partida.id, 'eur', ($event.target as HTMLInputElement).value)"
+                  @focus="($event.target as HTMLInputElement).select()"
+                  @blur="editing = null"
+                  @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
+                />
+                <span class="unit">€</span>
+              </label>
+              <label class="share-field share-pct">
+                <input
+                  class="input input-mono"
+                  inputmode="decimal"
+                  :value="shareShown(line.partida.id, 'pct')"
+                  :disabled="!total"
+                  :aria-label="`Percentatge de ${line.title}`"
+                  @input="onShare(line.partida.id, 'pct', ($event.target as HTMLInputElement).value)"
+                  @focus="($event.target as HTMLInputElement).select()"
+                  @blur="editing = null"
+                  @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
+                />
+                <span class="unit">%</span>
+              </label>
+            </span>
+          </span>
+          <span class="line-side">
+            <span class="line-budget mono">{{ formatEuros(line.partida.import_pressupost) }}</span>
+            <span
+              class="meter"
+              :title="`Imputat ${formatEuros(line.partida.imputat, 2)} en ${line.partida.moviments} moviments`"
+            >
+              <span
+                :class="{ over: line.partida.imputat > line.partida.import_pressupost }"
+                :style="{ width: `${used(line.partida) * 100}%` }"
+              />
+            </span>
+          </span>
+          <span class="line-check" aria-hidden="true">
+            <AppIcon v-if="selected.includes(line.partida.id)" name="check" :size="12" />
+          </span>
+        </div>
         <button
           v-if="block.quiet.length"
           type="button"
@@ -425,6 +659,7 @@ defineExpose({ focusSearch })
           {{ block.quiet.length }} {{ block.quiet.length === 1 ? 'partida' : 'partides' }} sense pressupost ni ús
         </button>
       </section>
+      </div>
     </div>
     <div v-else class="empty-map">
       <p>Cap partida amb aquests filtres.</p>
@@ -622,6 +857,9 @@ defineExpose({ focusSearch })
   min-height: 0;
   overflow-y: auto;
   padding: 2px 2px 12px;
+}
+
+.map-cols {
   columns: 300px;
   column-gap: 10px;
 }
@@ -720,8 +958,70 @@ defineExpose({ focusSearch })
   opacity: 1;
 }
 
-.line:disabled {
+.line.is-disabled {
   cursor: default;
+}
+
+.line:focus-visible {
+  outline: 2px solid var(--accent-500);
+  outline-offset: -1px;
+}
+
+.line[draggable='true'] {
+  cursor: grab;
+}
+
+.line[data-drop='before'] {
+  box-shadow: 0 -2px 0 var(--accent-500);
+}
+
+.line[data-drop='after'] {
+  box-shadow: 0 2px 0 var(--accent-500);
+}
+
+.block-jev {
+  border-color: var(--ai-200);
+  background: var(--ai-50);
+}
+
+.block-title-ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ai-700);
+}
+
+.line-share {
+  display: flex;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.share-field {
+  position: relative;
+  width: 96px;
+}
+
+.share-field.share-pct {
+  width: 62px;
+}
+
+.share-field .input {
+  width: 100%;
+  height: 24px;
+  padding: 0 18px 0 5px;
+  font-size: var(--text-xs);
+  text-align: right;
+}
+
+.share-field .unit {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  color: var(--ink-400);
+  font-size: 10px;
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .line-main {

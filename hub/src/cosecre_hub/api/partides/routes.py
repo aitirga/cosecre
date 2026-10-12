@@ -36,6 +36,7 @@ from .schemas import (
     ContextUpdate,
     ImportSummary,
     InvoiceBrief,
+    OrderUpdate,
     PartidaRead,
     PressupostRead,
     QueueItem,
@@ -50,6 +51,8 @@ router = APIRouter()
 #: Where the general context lives: one value, every year.
 CONTEXT_APP = "cosecre-docs"
 CONTEXT_KEY = "partides.context"
+#: The secretari/a's order of the lines inside each concept.
+ORDER_KEY = "partides.order"
 
 #: Movements that never reach the budget: money moving between the school's
 #: own accounts, and the opening balance of a statement.
@@ -63,14 +66,24 @@ def _exercicis(session: Session) -> list[int]:
     return [row[0] for row in session.query(Pressupost.exercici).order_by(Pressupost.exercici.desc())]
 
 
-def _general_context(session: Session) -> str:
-    row = (
+def _setting(session: Session, key: str) -> AppSetting | None:
+    return (
         session.query(AppSetting)
-        .filter(AppSetting.app_slug == CONTEXT_APP, AppSetting.key == CONTEXT_KEY)
+        .filter(AppSetting.app_slug == CONTEXT_APP, AppSetting.key == key)
         .first()
     )
+
+
+def _general_context(session: Session) -> str:
+    row = _setting(session, CONTEXT_KEY)
     value = row.value if row is not None else ""
     return value if isinstance(value, str) else ""
+
+
+def _user_order(session: Session) -> dict[str, list[str]]:
+    row = _setting(session, ORDER_KEY)
+    value = row.value if row is not None else None
+    return value if isinstance(value, dict) else {}
 
 
 def _partida_read(partida: Partida, has_children: set[str], usage: dict[int, tuple[int, float]]) -> PartidaRead:
@@ -123,11 +136,14 @@ def _read_budget(request: Request, session: Session, exercici: int | None) -> Pr
     years = _exercicis(session)
     jev = getattr(request.app.state.classifier, "jev", None) is not None
     context = _general_context(session)
+    order = _user_order(session)
     if exercici is None:
         exercici = years[0] if years else None
     budget = session.get(Pressupost, exercici) if exercici is not None else None
     if budget is None:
-        return PressupostRead(exercici=None, exercicis=years, context_general=context, jev=jev)
+        return PressupostRead(
+            exercici=None, exercicis=years, context_general=context, ordre_usuari=order, jev=jev
+        )
     partides = (
         session.query(Partida).filter(Partida.exercici == exercici).order_by(Partida.ordre).all()
     )
@@ -145,6 +161,7 @@ def _read_budget(request: Request, session: Session, exercici: int | None) -> Pr
         file_name=budget.file_name,
         imported_at=budget.imported_at,
         context_general=context,
+        ordre_usuari=order,
         jev=jev,
         partides=[_partida_read(p, has_children, usage) for p in partides],
     )
@@ -433,11 +450,7 @@ def update_general_context(
     session: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    row = (
-        session.query(AppSetting)
-        .filter(AppSetting.app_slug == CONTEXT_APP, AppSetting.key == CONTEXT_KEY)
-        .first()
-    )
+    row = _setting(session, CONTEXT_KEY)
     if row is None:
         row = AppSetting(app_slug=CONTEXT_APP, key=CONTEXT_KEY)
         session.add(row)
@@ -445,6 +458,30 @@ def update_general_context(
     row.updated_by_id = admin.id
     session.commit()
     return _read_budget(request, session, exercici)
+
+
+@router.put("/order", response_model=dict[str, list[str]])
+def update_order(
+    payload: OrderUpdate,
+    session: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Keep the order the secretari/a dragged one concept's lines into."""
+    row = _setting(session, ORDER_KEY)
+    if row is None:
+        row = AppSetting(app_slug=CONTEXT_APP, key=ORDER_KEY)
+        session.add(row)
+    order = dict(row.value) if isinstance(row.value, dict) else {}
+    codis = list(dict.fromkeys(c.strip() for c in payload.codis if c.strip()))
+    if codis:
+        order[payload.block] = codis
+    else:
+        order.pop(payload.block, None)
+    # A new dict, so the JSON column sees the change.
+    row.value = order
+    row.updated_by_id = admin.id
+    session.commit()
+    return order
 
 
 @router.put("/lines/{partida_id}/context", response_model=PartidaRead)

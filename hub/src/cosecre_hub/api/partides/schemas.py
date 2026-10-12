@@ -40,6 +40,9 @@ class PressupostRead(BaseModel):
     file_name: str = ""
     imported_at: datetime | None = None
     context_general: str = ""
+    #: The secretari/a's order of the lines inside each concept, by code. Keyed
+    #: by the concept's code (or ``chapter-N``), so it holds from year to year.
+    ordre_usuari: dict[str, list[str]] = {}
     jev: bool = False
     partides: list[PartidaRead] = []
 
@@ -64,6 +67,11 @@ class ImportSummary(BaseModel):
     total_despeses: float | None
     #: Context copied over from the same line of an earlier year.
     context_inherited: int = 0
+
+
+class OrderUpdate(BaseModel):
+    block: str = Field(min_length=1, max_length=64)
+    codis: list[str] = Field(default_factory=list, max_length=400)
 
 
 class ContextUpdate(BaseModel):

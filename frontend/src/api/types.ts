@@ -962,6 +962,8 @@ export interface Pressupost {
   file_name: string
   imported_at: string | null
   context_general: string
+  /** The secretari/a's order of the lines inside each concept, by code. */
+  ordre_usuari: Record<string, string[]>
   jev: boolean
   partides: Partida[]
 }

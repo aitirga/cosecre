@@ -531,3 +531,27 @@ def test_money_in_is_offered_the_income_lines_and_bank_fees_their_concept(tmp_pa
     assert state["partides_anteriors_del_mateix_proveidor_o_concepte"] == [
         {"partida": "Despeses per comissions bancàries", "vegades": 1}
     ]
+
+
+def test_the_secretari_orders_a_concepts_lines_and_it_holds(hub):
+    client, _ = hub
+    admin = register_admin(client)
+    office = make_user(client, admin, "administratiu")
+    upload(client, admin, esfera_export())
+    body = {"block": "D/220000100/4210", "codis": ["D/220000100/4210.29", "D/220000100/4210.01"]}
+    assert client.put(f"{API}/order", headers=office, json=body).status_code == 403
+    assert client.put(f"{API}/order", headers=admin, json=body).json() == {
+        "D/220000100/4210": ["D/220000100/4210.29", "D/220000100/4210.01"]
+    }
+    assert client.get(API, headers=office).json()["ordre_usuari"]["D/220000100/4210"][0] == "D/220000100/4210.29"
+    cleared = client.put(f"{API}/order", headers=admin, json={"block": "D/220000100/4210", "codis": []})
+    assert cleared.json() == {}
+
+
+def test_jev_only_preselects_when_it_is_sure():
+    unsure = suggest.Suggestion(
+        ranking=[suggest.Ranked(1, 0.45), suggest.Ranked(2, 0.3)], confidence=0.45, cap=0.1, multiple=0.1, model="m"
+    )
+    assert unsure.preassign() == []
+    sure = suggest.Suggestion(ranking=[suggest.Ranked(1, 0.8)], confidence=0.8, cap=0.1, multiple=0.1, model="m")
+    assert [r.partida_id for r in sure.preassign()] == [1]

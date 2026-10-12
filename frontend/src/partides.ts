@@ -140,3 +140,78 @@ export function formatEuros(value: number | null | undefined, digits = 0): strin
     maximumFractionDigits: digits,
   }).format(value)
 }
+
+// ── Splitting an amount between lines ───────────────────────────────────────
+
+export interface Share {
+  id: number
+  amount: number | null
+}
+
+const cents = (value: number) => Math.round(value * 100) / 100
+
+/**
+ * Give `total` out in the proportions `weights` already have (evenly when they
+ * are all zero), to the cent, with the rounding left on the biggest share.
+ */
+function spread(ids: number[], weights: number[], total: number): Record<number, number> {
+  const out: Record<number, number> = {}
+  if (!ids.length) return out
+  const sum = weights.reduce((acc, w) => acc + Math.max(0, w), 0)
+  let given = 0
+  ids.forEach((id, index) => {
+    const share = sum > 0 ? (Math.max(0, weights[index]) / sum) * total : total / ids.length
+    out[id] = Math.floor(share * 100) / 100
+    given += out[id]
+  })
+  const biggest = ids.reduce((a, b) => (out[b] > out[a] ? b : a))
+  out[biggest] = cents(out[biggest] + total - given)
+  return out
+}
+
+/** Shares split evenly. One line alone takes it all, and says so with `null`. */
+export function evenShares(ids: number[], total: number | null): Share[] {
+  if (ids.length < 2 || !total) return ids.map((id) => ({ id, amount: ids.length < 2 ? null : 0 }))
+  const amounts = spread(ids, ids.map(() => 1), total)
+  return ids.map((id) => ({ id, amount: amounts[id] }))
+}
+
+/**
+ * One line set to `value`; the others make room, or take what is left, in the
+ * proportions they had — so the split keeps adding up to `total` whatever is
+ * typed. Without a total there is nothing to keep, and only that line changes.
+ */
+export function rebalance(shares: Share[], id: number, value: number, total: number | null): Share[] {
+  if (total === null || total <= 0 || shares.length < 2) {
+    return shares.map((share) => (share.id === id ? { ...share, amount: cents(Math.max(0, value)) } : share))
+  }
+  const fixed = cents(Math.min(Math.max(0, value), total))
+  const others = shares.filter((share) => share.id !== id)
+  const rest = spread(
+    others.map((share) => share.id),
+    others.map((share) => share.amount ?? 0),
+    cents(total - fixed),
+  )
+  return shares.map((share) => ({ ...share, amount: share.id === id ? fixed : rest[share.id] }))
+}
+
+/** A line joins with an even share; the others shrink in proportion to make room. */
+export function addShare(shares: Share[], id: number, total: number | null): Share[] {
+  if (!shares.length) return [{ id, amount: null }]
+  if (shares.length === 1 || !total) return evenShares([...shares.map((s) => s.id), id], total)
+  const next = [...shares, { id, amount: 0 }]
+  return rebalance(next, id, total / next.length, total)
+}
+
+/** A line leaves; what it had goes back to the others, in proportion. */
+export function removeShare(shares: Share[], id: number, total: number | null): Share[] {
+  const left = shares.filter((share) => share.id !== id)
+  if (left.length < 2) return left.map((share) => ({ ...share, amount: null }))
+  if (!total) return left
+  const amounts = spread(
+    left.map((share) => share.id),
+    left.map((share) => share.amount ?? 0),
+    total,
+  )
+  return left.map((share) => ({ ...share, amount: amounts[share.id] }))
+}

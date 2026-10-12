@@ -28,8 +28,9 @@ from .models import Partida
 
 #: Jev's own limit is 255 options per Choice; one is the way out.
 MAX_OPTIONS = 254
-#: Below this a proposal is shown as an alternative but not pre-assigned.
-PREASSIGN_MINIMUM = 0.2
+#: Below this a proposal is only shown, in the map's Jev strip; at or above
+#: it Jev is sure enough to pre-select it (still unconfirmed, in violet).
+PREASSIGN_MINIMUM = 0.6
 #: A second line is pre-assigned too when Jev thinks the purchase is split and
 #: the runner-up is at least this likely.
 SECOND_LINE_MINIMUM = 0.15

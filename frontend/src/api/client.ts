@@ -649,6 +649,12 @@ export const api = {
       body: JSON.stringify({ context }),
     })
   },
+  updatePartidesOrder(block: string, codis: string[]) {
+    return request<Record<string, string[]>>('/partides/order', {
+      method: 'PUT',
+      body: JSON.stringify({ block, codis }),
+    })
+  },
   getPartidesQueue() {
     return request<PartidaQueueItem[]>('/partides/queue')
   },

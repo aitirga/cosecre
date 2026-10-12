@@ -4,14 +4,14 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 
 import { ApiError, api } from '../api/client'
-import type { Partida, PartidaInvoice, PartidaQueueItem } from '../api/types'
+import type { Partida, PartidaInvoice, PartidaQueueItem, Pressupost } from '../api/types'
 import AppIcon from '../components/AppIcon.vue'
 import DocumentPeek from '../components/DocumentPeek.vue'
 import PartidaPicker from '../components/partides/PartidaPicker.vue'
 import SplitEditor, { type SplitLine } from '../components/partides/SplitEditor.vue'
 import { fold } from '../composables/useTableQuery'
 import { formatAmount, formatDate } from '../document-fields'
-import { fundTone, lineTitle, lineYears, shortCode } from '../partides'
+import { type Share, addShare, evenShares, fundTone, lineTitle, lineYears, rebalance, removeShare, shortCode } from '../partides'
 
 /**
  * Charging statement movements to budget lines, one after another, fast.
@@ -117,20 +117,18 @@ const jevOn = computed(() => Boolean(budget.value?.jev))
 
 // ── What this movement is charged to (the draft) ────────────────────────────
 
-interface DraftLine {
-  id: number
-  amount: number | null
-}
-const draft = ref<DraftLine[]>([])
+const draft = ref<Share[]>([])
 const savedKey = ref('')
 
-function keyOf(list: DraftLine[]) {
+function keyOf(list: Share[]) {
   return JSON.stringify(list.map((line) => [line.id, list.length > 1 ? line.amount : null]))
 }
 
 function loadDraft(item: PartidaQueueItem | null) {
   draft.value = (item?.assignments ?? []).map((a) => ({ id: a.partida_id, amount: a.import_assignat }))
-  if (draft.value.length > 1 && draft.value.some((line) => line.amount == null)) spreadEvenly()
+  if (draft.value.length > 1 && draft.value.some((line) => line.amount == null)) {
+    draft.value = evenShares(draft.value.map((line) => line.id), total.value)
+  }
   // Jev's proposal is not saved yet: it starts dirty, so one keystroke confirms it.
   savedKey.value = item?.assignments.every((a) => a.confirmada) ? keyOf(draft.value) : ''
 }
@@ -154,58 +152,31 @@ const proposalAsIs = computed(() => {
   return proposed.join() === now.join()
 })
 
-function spreadEvenly() {
-  const whole = total.value
-  const n = draft.value.length
-  if (!whole || n < 2) return
-  const share = Math.floor((whole * 100) / n) / 100
-  draft.value = draft.value.map((line, index) => ({
-    ...line,
-    amount: index === n - 1 ? Math.round((whole - share * (n - 1)) * 100) / 100 : share,
-  }))
-}
-
 function toggle(id: number) {
   const line = lineById.value.get(id)
   if (!line || line.te_fills) return
-  const existing = draft.value.find((d) => d.id === id)
-  if (existing) {
-    const freed = existing.amount ?? 0
-    draft.value = draft.value.filter((d) => d.id !== id)
-    if (draft.value.length === 1) draft.value = [{ ...draft.value[0], amount: null }]
-    else if (draft.value.length > 1 && freed) {
-      // What the removed line had goes to the biggest share left.
-      const biggest = draft.value.reduce((a, b) => ((b.amount ?? 0) > (a.amount ?? 0) ? b : a))
-      biggest.amount = Math.round(((biggest.amount ?? 0) + freed) * 100) / 100
-    }
-    return
-  }
-  if (draft.value.length === 0) {
-    draft.value = [{ id, amount: null }]
-  } else if (draft.value.length === 1) {
-    draft.value = [...draft.value, { id, amount: null }]
-    spreadEvenly()
-  } else {
-    // A third line starts at zero: drag the bar or type to give it its share.
-    draft.value = [...draft.value, { id, amount: 0 }]
-  }
+  draft.value = draft.value.some((d) => d.id === id)
+    ? removeShare(draft.value, id, total.value)
+    : addShare(draft.value, id, total.value)
 }
 
-const splitModel = computed<Record<number, number | null>>({
-  get: () => Object.fromEntries(draft.value.map((line) => [line.id, line.amount])),
-  set: (value) => {
-    draft.value = draft.value.map((line) => ({ ...line, amount: value[line.id] ?? null }))
-  },
-})
+/** A share typed on the map: the other lines make room. */
+function setShare(id: number, euros: number) {
+  draft.value = rebalance(draft.value, id, euros, total.value)
+}
 
 const splitLines = computed<SplitLine[]>(() =>
   draft.value.map((line) => {
     const partida = lineById.value.get(line.id)
+    const tone = fundTone(partida?.fons ?? '')
     return {
       id: line.id,
       title: partida ? lineTitle(partida.nom) : `Partida ${line.id}`,
       code: partida ? `${lineYears(partida.nom)[0] ?? ''} ${shortCode(partida.codi)}`.trim() : '',
-      colour: fundTone(partida?.fons ?? '').solid,
+      fund: partida?.codi_finalista ? partida.fons_label : '',
+      colour: tone.solid,
+      soft: tone.soft,
+      jev: unconfirmed.value.has(line.id) && proposalAsIs.value,
     }
   }),
 )
@@ -234,6 +205,58 @@ watch(
   },
   { immediate: true },
 )
+
+// ── The secretari/a's order of the lines ────────────────────────────────────
+
+const order = computed(() => budget.value?.ordre_usuari ?? {})
+
+async function reorder(block: string, codis: string[]) {
+  const key = ['pressupost', exercici.value]
+  const before = queryClient.getQueryData<Pressupost>(key)
+  if (before) queryClient.setQueryData<Pressupost>(key, { ...before, ordre_usuari: { ...before.ordre_usuari, [block]: codis } })
+  try {
+    const saved = await api.updatePartidesOrder(block, codis)
+    queryClient.setQueriesData<Pressupost>({ queryKey: ['pressupost'] }, (data) => (data ? { ...data, ordre_usuari: saved } : data))
+  } catch (error) {
+    if (before) queryClient.setQueryData(key, before)
+    saveError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
+// ── Columns ─────────────────────────────────────────────────────────────────
+// The three columns part where people drag them, and stay that way.
+
+const COLUMNS_KEY = 'cosecre.partides.columns'
+const columns = reactive({ rail: 250, middle: 460 })
+try {
+  Object.assign(columns, JSON.parse(localStorage.getItem(COLUMNS_KEY) ?? '{}'))
+} catch {
+  // A blocked or broken store: the defaults will do.
+}
+
+function startResize(event: PointerEvent, which: 'rail' | 'middle') {
+  if (event.button !== 0) return
+  const handle = event.currentTarget as HTMLElement
+  handle.setPointerCapture(event.pointerId)
+  const startX = event.clientX
+  const start = columns[which]
+  const [min, max] = which === 'rail' ? [180, 420] : [340, 820]
+  const move = (e: PointerEvent) => {
+    columns[which] = Math.round(Math.min(max, Math.max(min, start + e.clientX - startX)))
+  }
+  const up = () => {
+    handle.removeEventListener('pointermove', move)
+    handle.removeEventListener('pointerup', up)
+    try {
+      localStorage.setItem(COLUMNS_KEY, JSON.stringify(columns))
+    } catch {
+      // Not kept; it still applies until the page is left.
+    }
+  }
+  handle.addEventListener('pointermove', move)
+  handle.addEventListener('pointerup', up)
+  event.preventDefault()
+}
 
 // ── Saving ──────────────────────────────────────────────────────────────────
 
@@ -503,7 +526,7 @@ function signed(value: number) {
       <span>Jev no ha pogut proposar {{ bulk.failed }} moviments. Torna-ho a provar.</span>
     </p>
 
-    <div class="work">
+    <div class="work" :style="{ '--rail-w': `${columns.rail}px`, '--middle-w': `${columns.middle}px` }">
       <!-- ── The queue ─────────────────────────────────────────────────── -->
       <aside class="rail" aria-label="Moviments">
         <nav class="rail-tabs" role="tablist">
@@ -552,6 +575,8 @@ function signed(value: number) {
           </li>
         </ul>
       </aside>
+
+      <div class="col-handle col-handle-rail" role="separator" aria-orientation="vertical" aria-label="Amplada de la llista" @pointerdown="startResize($event, 'rail')" />
 
       <!-- ── The movement, what it paid, and its lines ─────────────────── -->
       <section v-if="current" class="invoice" aria-label="Moviment">
@@ -636,7 +661,9 @@ function signed(value: number) {
 
         <article class="card charge" :class="{ 'is-dirty': dirty }">
           <header class="charge-head">
-            <span class="charge-title">Partides d'aquest moviment</span>
+            <span class="charge-title">
+              {{ draft.length > 1 ? `Repartit entre ${draft.length} partides` : 'Partida' }}
+            </span>
             <span v-if="current.estat === 'assignada' && !dirty" class="badge badge-olive"><AppIcon name="check" :size="11" /> Desat</span>
             <span v-else-if="proposalAsIs" class="badge badge-ai" title="Encara no s'ha desat: ⌘↵ la confirma">
               <AppIcon name="sparkles" :size="11" /> Proposta de Jev
@@ -644,70 +671,14 @@ function signed(value: number) {
             <span v-else-if="dirty" class="badge badge-accent">Sense desar</span>
           </header>
 
-          <ul v-if="draft.length" class="chosen">
-            <li
-              v-for="line in draft"
-              :key="line.id"
-              class="chosen-line"
-              :class="{ 'is-jev': unconfirmed.has(line.id) }"
-              :style="{ '--tone': fundTone(lineById.get(line.id)?.fons ?? '').solid }"
-            >
-              <span class="chosen-main">
-                <span class="chosen-title">{{ lineById.get(line.id)?.nom ?? `Partida ${line.id}` }}</span>
-                <span class="chosen-sub mono">
-                  {{ lineById.get(line.id)?.codi }}
-                  <template v-if="lineById.get(line.id)?.codi_finalista"> · {{ lineById.get(line.id)?.codi_finalista }}</template>
-                </span>
-              </span>
-              <button type="button" class="btn btn-ghost btn-icon btn-sm" title="Treu-la" @click="toggle(line.id)">
-                <AppIcon name="close" :size="13" />
-              </button>
-            </li>
-          </ul>
-          <p v-else class="chosen-empty">Tria una o més partides al mapa de la dreta.</p>
-
           <SplitEditor
-            v-if="draft.length > 1"
-            v-model="splitModel"
+            v-if="draft.length"
+            v-model="draft"
             :lines="splitLines"
             :total="total"
+            @remove="toggle"
           />
-
-          <div v-if="jevOn" class="jev">
-            <div class="jev-head">
-              <span class="jev-title"><AppIcon name="sparkles" :size="12" class="ai-mark" /> Jev suggereix</span>
-              <button
-                type="button"
-                class="btn btn-ai-outline btn-sm"
-                :disabled="asking.has(current.id) || noBudget"
-                title="Torna-ho a preguntar a Jev (P)"
-                @click="askJev(current.id).catch(() => undefined)"
-              >
-                <AppIcon :name="asking.has(current.id) ? 'refresh' : 'sparkles'" :size="13" :class="{ spin: asking.has(current.id) }" />
-                {{ asking.has(current.id) ? 'Pensant…' : suggestion ? 'Torna-hi' : 'Proposa' }}
-              </button>
-            </div>
-            <p v-if="askError" class="jev-error">{{ askError }}</p>
-            <ol v-if="topSuggestions.length" class="jev-list">
-              <li v-for="(pick, index) in topSuggestions" :key="pick.partida_id">
-                <button
-                  type="button"
-                  class="jev-pick"
-                  :class="{ on: draft.some((line) => line.id === pick.partida_id) }"
-                  @click="toggle(pick.partida_id)"
-                >
-                  <kbd class="kbd">{{ index + 1 }}</kbd>
-                  <span class="jev-dot" :style="{ background: fundTone(pick.partida.fons).solid }" />
-                  <span class="jev-name truncate">{{ pick.partida.nom }}</span>
-                  <span class="jev-bar"><span :style="{ width: pct(pick.probability) }" /></span>
-                  <span class="jev-p mono">{{ pct(pick.probability) }}</span>
-                </button>
-              </li>
-            </ol>
-            <p v-else-if="suggestion && suggestion.cap > 0.5" class="jev-note">Jev creu que aquest moviment no s'imputa a cap partida.</p>
-            <p v-else-if="!suggestion && !asking.has(current.id)" class="jev-note">Encara no s'ha preguntat a Jev.</p>
-            <p v-if="suggestion?.multiple && suggestion.multiple >= 0.6" class="jev-note">Sembla que paga conceptes diferents: potser cal repartir-lo.</p>
-          </div>
+          <p v-else class="chosen-empty">Tria una o més partides al mapa de la dreta.</p>
 
           <p v-if="saveError" class="notice notice-error"><AppIcon name="alert" :size="14" /><span>{{ saveError }}</span></p>
 
@@ -716,11 +687,11 @@ function signed(value: number) {
               type="button"
               class="btn btn-primary"
               :disabled="saving || !splitBalanced || !dirty"
-              :title="splitBalanced ? 'Desa i ves a la següent (⌘↵)' : 'El repartiment no quadra amb el moviment'"
+              :title="splitBalanced ? 'Desa i ves al següent (⌘↵)' : 'El repartiment no quadra amb el moviment'"
               @click="save(true)"
             >
               <AppIcon name="check" :size="14" />
-              {{ saving ? 'Desant…' : draft.length ? 'Desa i següent' : 'Treu les partides' }}
+              {{ saving ? 'Desant…' : !draft.length && current.estat === 'assignada' ? 'Treu les partides' : 'Desa i següent' }}
               <kbd class="kbd kbd-on">⌘↵</kbd>
             </button>
             <button type="button" class="btn btn-ghost" :disabled="!nextRef" @click="open(nextRef)">Salta</button>
@@ -730,6 +701,8 @@ function signed(value: number) {
       <section v-else class="invoice invoice-empty">
         <p class="empty">{{ queueQuery.isLoading.value ? 'Carregant…' : 'Tria un moviment de la llista.' }}</p>
       </section>
+
+      <div class="col-handle" role="separator" aria-orientation="vertical" aria-label="Amplada de la columna central" @pointerdown="startResize($event, 'middle')" />
 
       <!-- ── The budget map ────────────────────────────────────────────── -->
       <section class="assign-map card" aria-label="Pressupost">
@@ -741,9 +714,35 @@ function signed(value: number) {
           :suggested="suggestedMap"
           :movement-year="current?.curs ?? ''"
           :side="current?.sentit ?? 'despesa'"
+          :shares="draft"
+          :total="total"
+          :order="order"
+          reorderable
           :disabled="!current"
           @toggle="toggle"
-        />
+          @share="setShare"
+          @reorder="reorder"
+        >
+          <template v-if="jevOn && current" #jev-action>
+            <button
+              type="button"
+              class="btn btn-ai-outline btn-sm"
+              :disabled="asking.has(current.id) || noBudget"
+              title="Torna-ho a preguntar a Jev (P)"
+              @click.stop="askJev(current.id).catch(() => undefined)"
+            >
+              <AppIcon :name="asking.has(current.id) ? 'refresh' : 'sparkles'" :size="12" :class="{ spin: asking.has(current.id) }" />
+              {{ asking.has(current.id) ? 'Pensant…' : suggestion ? 'Torna-hi' : 'Proposa' }}
+            </button>
+          </template>
+          <template v-if="jevOn && current" #jev>
+            <p v-if="askError" class="jev-note jev-error">{{ askError }}</p>
+            <p v-else-if="suggestion && suggestion.cap > 0.5" class="jev-note">Jev creu que aquest moviment no s'imputa a cap partida.</p>
+            <p v-else-if="!suggestion && !asking.has(current.id)" class="jev-note">Encara no s'ha preguntat a Jev.</p>
+            <p v-else-if="suggestion && !topSuggestions.length" class="jev-note">Jev no en veu cap de clara.</p>
+            <p v-if="suggestion?.multiple && suggestion.multiple >= 0.6" class="jev-note">Sembla que paga conceptes diferents: potser cal repartir-lo.</p>
+          </template>
+        </PartidaPicker>
         <p v-else class="empty">{{ budgetQuery.isLoading.value ? 'Carregant el pressupost…' : 'Sense pressupost.' }}</p>
       </section>
     </div>
@@ -804,9 +803,32 @@ function signed(value: number) {
 .work {
   display: grid;
   flex: 1;
-  grid-template-columns: 250px minmax(360px, 400px) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: var(--rail-w, 250px) 12px var(--middle-w, 460px) 12px minmax(320px, 1fr);
   min-height: 0;
+}
+
+/* Where two columns part: drag to give one more room. */
+.col-handle {
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.col-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.1s;
+}
+
+.col-handle:hover::before,
+.col-handle:active::before {
+  background: var(--accent-300);
 }
 
 /* ── Rail ─────────────────────────────────────────────────────────────── */
@@ -947,6 +969,8 @@ function signed(value: number) {
 /* ── The invoice ──────────────────────────────────────────────────────── */
 .invoice {
   display: grid;
+  /* The column's width, whatever a long name inside would like. */
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 12px;
   min-height: 0;
@@ -1129,6 +1153,13 @@ function signed(value: number) {
   padding: 12px 14px;
 }
 
+.charge {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  box-shadow: 0 -6px 12px -10px rgba(15, 30, 60, 0.25);
+}
+
 .charge.is-dirty {
   border-color: var(--accent-300);
 }
@@ -1145,49 +1176,6 @@ function signed(value: number) {
   font-weight: 600;
 }
 
-.chosen {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.chosen-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 4px 6px 10px;
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--tone);
-  border-radius: var(--r-md);
-  background: var(--surface-0);
-}
-
-.chosen-line.is-jev {
-  border-color: var(--ai-200);
-  border-left-color: var(--tone);
-  border-style: dashed dashed dashed solid;
-  background: var(--ai-50);
-}
-
-.chosen-main {
-  display: grid;
-  flex: 1;
-  min-width: 0;
-  line-height: 1.3;
-}
-
-.chosen-title {
-  font-size: var(--text-base);
-  font-weight: 600;
-}
-
-.chosen-sub {
-  color: var(--ink-400);
-  font-size: var(--text-xs);
-}
-
 .chosen-empty {
   margin: 0;
   padding: 14px;
@@ -1198,97 +1186,13 @@ function signed(value: number) {
   text-align: center;
 }
 
-.jev {
-  display: grid;
-  gap: 6px;
-  padding: 10px;
-  border: 1px solid var(--ai-200);
-  border-radius: var(--r-md);
-  background: var(--ai-50);
-}
-
-.jev-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.jev-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--ai-700);
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-
-.jev-list {
-  display: grid;
-  gap: 3px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.jev-pick {
-  display: grid;
-  grid-template-columns: auto 8px minmax(0, 1fr) 48px 34px;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  padding: 4px 6px;
-  border: 1px solid transparent;
-  border-radius: var(--r-sm);
-  background: var(--surface-0);
-  color: var(--ink-900);
-  font: inherit;
-  font-size: var(--text-sm);
-  text-align: left;
-  cursor: pointer;
-}
-
-.jev-pick:hover {
-  border-color: var(--ai-200);
-}
-
-.jev-pick.on {
-  border-color: var(--ai-400);
-  font-weight: 600;
-}
-
-.jev-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-}
-
-.jev-bar {
-  height: 4px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: var(--ai-100);
-}
-
-.jev-bar > span {
-  display: block;
-  height: 100%;
-  background: var(--ai-500);
-}
-
-.jev-p {
+.jev-note {
+  margin: 0 2px 4px;
   color: var(--ai-700);
   font-size: var(--text-xs);
-  text-align: right;
 }
 
-.jev-note,
-.jev-error {
-  margin: 0;
-  color: var(--ai-700);
-  font-size: var(--text-sm);
-}
-
-.jev-error {
+.jev-note.jev-error {
   color: var(--danger-700);
 }
 
@@ -1346,10 +1250,11 @@ function signed(value: number) {
 
 @media (max-width: 1280px) {
   .work {
-    grid-template-columns: minmax(340px, 380px) minmax(0, 1fr);
+    grid-template-columns: var(--middle-w, 460px) 12px minmax(0, 1fr);
   }
 
-  .rail {
+  .rail,
+  .col-handle-rail {
     display: none;
   }
 }
@@ -1361,6 +1266,11 @@ function signed(value: number) {
 
   .work {
     grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .col-handle {
+    display: none;
   }
 
   .assign-map {
