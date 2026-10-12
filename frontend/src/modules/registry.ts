@@ -131,7 +131,8 @@ export function useModules() {
     return item.name === routeName || (item.childRoutes?.includes(routeName) ?? false)
   }
 
-  return { navItems, navTree, footNav, homeRoute, isActive }
+  const settingsSections = computed(() => activeModules().flatMap((module) => module.settingsSections ?? []))
+  return { navItems, navTree, footNav, homeRoute, isActive, settingsSections }
 }
 
 /**
@@ -167,6 +168,7 @@ function buildNavTree(items: CosecreNavItem[], groups: CosecreNavGroup[]): NavNo
     ;(parent ? parent.children : root).push({
       kind: 'link',
       name: item.name,
+      to: item.to,
       label: item.label,
       icon: item.icon,
       badge: item.badge,

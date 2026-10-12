@@ -4,7 +4,9 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/shared/**/*",
-    "../frontend/src/print/contract.ts"
+    "../frontend/src/print/contract.ts",
+    "../frontend/src/browser/*.ts",
+    "../frontend/src/sfera/*.ts"
   ],
   "compilerOptions": {
     "composite": true,

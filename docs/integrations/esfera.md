@@ -83,7 +83,9 @@ actual de esos archivos antes de operar.
 | Observación anterior declarada por documentación local | Detalle de factura, formularios y endpoints internos de validación y guardado | `desktop/SFERA.md`; los PUT no se ejecutaron en la exploración que describe |
 | Simulación local | `frontend/src/sfera/invoice-poc.ts` | Catálogos ficticios y transporte sintético; `/services/factura/poc/creades` es del simulador. No prueba escritura remota |
 | Ensayo conectado local observado, sin verificación remota en esta revisión | Catálogo, preparación y alta por ID de plan en formación | `desktop/src/main/sfera/invoices.ts`, `portal.ts`, `frontend/src/sfera/invoice-bridge.ts`, `frontend/src/modules/sfera/InvoicePocView.vue`; WIP concurrente que contiene PUT reales, no exportador productivo |
-| Pendiente | Exportación, sincronización persistente, pagos, ingresos y datos académicos/administrativos | No hay worker ni contratos de escritura remota en el Hub revisado |
+| Trabajo local, probado con fixtures (2026-10-12) | Planes de exportación de facturas de proveedor en el Hub y runner de escritorio | `hub/src/cosecre_hub/api/sfera/` (preflight, plan, aprobación por hash, claim, resultado, recuperación y conciliación), `desktop/src/main/sfera/export-runner.ts`; tests `hub/tests/test_sfera_export.py` y `scripts/check-sfera.mjs`. Ensayo real el 2026-10-12 en formación con un Hub local: una factura de prueba exportada, bloqueo de reexportación y conciliación de una factura manual sin escribir |
+| Trabajo local (2026-10-12) | Pantalla **Esfer@ → Plans d'exportació** y diagnóstico de solo lectura | `frontend/src/modules/sfera/ExportPlansView.vue`, `desktop/src/main/sfera/diagnostics.ts`; plan creado desde la prueba de extractos |
+| Pendiente | Generar planes desde el registro, mapeo de maestros, pagos, ingresos y datos académicos/administrativos | Sin resolución de proveedor, partida o banco desde `Document` |
 
 ### Importación de partidas versionada
 
@@ -556,6 +558,33 @@ relectura. `portal.ts` restringe el origen a formación. El código observado fi
 simplificado; rechaza centros configurados para liquidar IVA. **No se ejecutó
 este ensayo ni se confirmó su efecto remoto en esta revisión documental.**
 
+Las escrituras van como `fetch` del mismo origen dentro de la página del portal,
+no con su `$http`. El interceptor `responseError` de `AppClient` (en
+`libs_concat.js`) solo trata el 401. Cualquier otro error lo resuelve como
+`undefined`, con lo que se pierden el estado y el cuerpo de la respuesta.
+
+Observación del 2026-10-12 (formación, un centro de prueba): `PUT /factura/validate`
+responde 405 `HTTP method PUT is not supported by this URL` (HTML genérico del
+contenedor) cuando el servidor falla al procesar el cuerpo. El error de un `PUT`
+acaba en la página de error, que no admite `PUT`. El 405 **no** significa que
+falte el método: oculta un error de datos. Pasa igual con el transporte del
+portal y con cuerpo `{}`.
+
+Al quitar solo `centreCost` de la línea del portal se reproduce el 405. Basta
+`{id}` en `partidaPressupost`, `centreCost` y `compteBancari`. El centro de coste
+sale de `centreCostDesglosPartida` de la partida (`/partidaPressupost/cerca/filtre/{id}/DESPESA`).
+Las facturas manuales observadas usan `tipusPagament` `TR` (transferencia) o `R`.
+Con línea + `centreCost` + venciment `TR`, validate responde 200 `{}`. Un
+duplicado responde 200 `{"numDocExtern":true}`.
+`validate` no comprueba longitudes, pero `desa` falla con el mismo 405 genérico
+si un campo supera su columna. Los límites son los `maxlength` del formulario:
+número de factura (`identificadorDocProveidor`) 20, número interno 20,
+descripción 100, descripción del venciment 200 y observaciones 500. Las 307
+facturas del centro observado no pasan de 20 caracteres en el número. El ensayo
+usa `CSC-POC-xxxxxx-M001` (19) y comprueba los límites antes de enviar.
+`SFERA_PROBE_ALLOW_VALIDATE=1` deja pasar solo `/factura/validate` en
+`scripts/probe-sfera.mjs`, que además registra cabeceras y estado de las escrituras.
+
 Los planes están en memoria. El UUID por preparación modifica el número de
 factura: repetir el mismo plan y preparar otro lote son casos diferentes.
 La comprobación de relectura revisada contrasta presupuesto, proveedor y total;
@@ -759,7 +788,63 @@ operación trazable.
 
 ### API propuesta del Hub
 
-Estas rutas **no están implementadas**. Permiten acciones cerradas, sin
+Implementado el 2026-10-12 para `supplier_invoice` en `hub/src/cosecre_hub/api/sfera/`
+(trabajo local, sin desplegar):
+
+- `GET /api/v1/sfera/capabilities`: qué se verificó, dónde y cuándo.
+- `POST /api/v1/sfera/export-plans`: recibe el contrato propio con contexto e IDs
+  remotos explícitos.
+- `GET /api/v1/sfera/export-plans` y `GET /api/v1/sfera/export-plans/{id}`.
+- `POST /api/v1/sfera/export-plans/{id}/approve`: con `plan_hash`.
+- `POST /api/v1/sfera/export-plans/{id}/items/{item}/claim`: crea el intento
+  antes de la llamada; serializa por entorno y centro.
+- `POST /api/v1/sfera/export-plans/{id}/items/{item}/result`: solo el intento
+  vigente; `failed` exige `no_effect_confirmed`; un éxito exige relectura
+  coincidente y crea `SferaRemoteMapping`.
+- `POST /api/v1/sfera/export-plans/{id}/items/{item}/recover`: `executing` pasa
+  a `uncertain`.
+- `POST /api/v1/sfera/export-plans/{id}/items/{item}/reconcile`.
+- `POST /api/v1/sfera/export-plans/{id}/cancel`.
+
+El preflight bloquea lo no verificado: líneas sin centro de coste, longitudes,
+IVA o IRPF distintos de cero, formas de pago distintas de `TR`/`R`, centros que
+liquidan IVA y producción. Los duplicados se buscan por proveedor + número en el
+plan, en otros planes activos y en los mapeos del mismo entorno y centro.
+
+El runner (`window.cosecreDesktop.sferaExport.run(planId, itemId)`) solo recibe
+IDs. Toma el payload del Hub y comprueba antes de escribir el centro, el
+presupuesto, el ejercicio y los límites contra la sesión. Si ya existe una
+factura igual, la marca como `uncertain`. Tras un fallo de `desa`, relee para
+confirmar si se guardó.
+
+Añadidos después:
+
+- `POST /api/v1/sfera/preflight`: las mismas comprobaciones, sin guardar nada.
+- `DELETE /api/v1/sfera/export-plans/{id}`: solo si ningún elemento se ha
+  reclamado; si no, el diario se conserva y hay que cancelar.
+- `DELETE /api/v1/sfera/export-plans/{id}/items/{item}`: antes de aprobar; da un
+  nuevo hash y vuelve a comprobar el plan.
+
+El escritorio expone también `sferaExport.reconcile(planId, itemId)`, que lee el
+portal y concilia, y `sferaExport.diagnose()`. Este último es de solo lectura y
+comprueba:
+
+- sesión y presupuesto;
+- liquidación de IVA;
+- centros de coste por partida;
+- bancos y proveedores;
+- búsqueda de facturas;
+- capacidad del Hub;
+- una factura sintética pasada por el preflight.
+
+**Prueba end-to-end con Hub local.** Arrancar `hub` con `COSECRE_PORT=8011` y una
+BD temporal. Lanzar `scripts/probe-sfera.mjs` con `SFERA_PROBE_HUB_URL`,
+`SFERA_PROBE_HUB_TOKEN`, `SFERA_PROBE_HUB_USER` y
+`SFERA_PROBE_ALLOW_INVOICE_WRITES=1`: la copia temporal del perfil apunta al Hub
+local y reindexa la credencial GICAR cifrada. Crear y aprobar el plan por API y
+ejecutar `sferaExport.run` desde la ventana.
+
+Diseño original de las rutas, que siguen el principio de acciones cerradas, sin
 transporte HTTP ni JavaScript arbitrarios hacia el portal.
 
 | Ruta propuesta | Responsabilidad |

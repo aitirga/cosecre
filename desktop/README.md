@@ -14,6 +14,7 @@ desktop shell substitutes is only what has to differ:
 | Session tokens | `localStorage` | the main process, namespaced per hub |
 | Routing | `history` | `hash` — a packaged renderer is loaded from `file://` |
 | Updates | reload the page | GitHub Releases, via electron-updater |
+| Esfer@ | not shown (GICAR blocks iframes) | embedded WebContentsView, isolated per hub/account |
 | Printing | not available | *Eines → Impressió*, via `PlatformIntegration.print` |
 
 ## Developing
@@ -117,3 +118,7 @@ version — and it refuses to guess from a range. Keep the two in step.
 
 See the [Updating section of the root README](../README.md#updating) for what
 happens on each platform and how to enable in-place macOS updates.
+
+## Esfer@
+
+The portal opens **inside this window**, preserving the sidebar. **Tauler econòmic** reads live training data through the same private session. **Prova d’extractes** converts fictitious movements into invoice drafts; it supports the local simulator and a connection to the training portal with real catalogs, validation, saving and readback. Live saving is still being verified: the first attempt was rejected at validation with HTTP 405. The updated writer uses Esfer@'s own HTTP client. [SFERA.md](SFERA.md) documents usage, storage and limits. Run `just check-sfera` for the full isolated fixture, `just check-sfera-poc` for the synthetic domain checks, or `just explore-sfera` for read-only discovery.

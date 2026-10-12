@@ -7,7 +7,12 @@
  */
 import { inject, type Component, type InjectionKey } from 'vue'
 
+import type { BrowserBridge } from './browser/contract'
 import type { PrintBridge } from './print/contract'
+import type { SferaDataBridge } from './sfera/contract'
+import type { SferaDashboardBridge } from './sfera/dashboard'
+import type { SferaInvoiceBridge } from './sfera/invoice-bridge'
+import type { SferaExportBridge } from './sfera/export-bridge'
 
 export interface PlatformIntegration {
   /** Which shell is hosting the app. Shown in Settings, and used for copy. */
@@ -28,6 +33,11 @@ export interface PlatformIntegration {
    * can reach those; the print tool tells a browser tab where to get one.
    */
   print?: PrintBridge
+  browser?: BrowserBridge
+  sferaData?: SferaDataBridge
+  sferaDashboard?: SferaDashboardBridge
+  sferaInvoices?: SferaInvoiceBridge
+  sferaExport?: SferaExportBridge
 }
 
 export const PLATFORM_KEY: InjectionKey<PlatformIntegration> = Symbol('cosecre.platform')

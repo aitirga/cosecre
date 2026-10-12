@@ -1,4 +1,9 @@
+import type { BrowserBridge } from '../../../frontend/src/browser/contract'
 import type { PrintBridge } from '@print/contract'
+import type { SferaDataBridge } from '../../../frontend/src/sfera/contract'
+import type { SferaDashboardBridge } from '../../../frontend/src/sfera/dashboard'
+import type { SferaInvoiceBridge } from '../../../frontend/src/sfera/invoice-bridge'
+import type { SferaExportBridge } from '../../../frontend/src/sfera/export-bridge'
 
 export type UpdatePhase =
   | 'idle'
@@ -52,4 +57,9 @@ export interface CosecreDesktopApi {
   onUpdateState(callback: (state: UpdateState) => void): () => void
   /** The print tool. Handed to the web app as `PlatformIntegration.print`. */
   print: PrintBridge
+  browser: BrowserBridge
+  sferaData: SferaDataBridge
+  sferaDashboard: SferaDashboardBridge
+  sferaInvoices: SferaInvoiceBridge
+  sferaExport: SferaExportBridge
 }

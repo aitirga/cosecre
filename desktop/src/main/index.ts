@@ -6,6 +6,7 @@ import { BrowserWindow, app, ipcMain, nativeTheme, shell } from 'electron'
 
 import { IPC } from '../shared/ipc.js'
 import type { Bootstrap } from '../shared/types.js'
+import { EmbeddedBrowser } from './browser/index.js'
 import { buildMenu } from './menu.js'
 import { startPrinting, type PrintService } from './print/index.js'
 import { DesktopStore } from './store.js'
@@ -13,6 +14,7 @@ import { Updater } from './updater.js'
 
 const dirname = fileURLToPath(new URL('.', import.meta.url))
 
+let browser: EmbeddedBrowser | null = null
 let mainWindow: BrowserWindow | null = null
 let store: DesktopStore | null = null
 let updater: Updater | null = null
@@ -70,6 +72,7 @@ function createWindow(): BrowserWindow {
     }
   })
 
+  browser = new EmbeddedBrowser(window, store!, (state) => window.webContents.send(IPC.browserChanged, state))
   loadRenderer(window)
   return window
 }
@@ -123,6 +126,31 @@ app.on('before-quit', () => {
 })
 
 function registerIpc(): void {
+  const browserHandler = (channel: string, action: (browser: EmbeddedBrowser, args: unknown[]) => unknown) => {
+    ipcMain.handle(channel, (event, ...args: unknown[]) => {
+      if (!browser) throw new Error('Navegador no disponible.')
+      browser.assertSender(event)
+      return action(browser, args)
+    })
+  }
+  browserHandler(IPC.browserCredentialsStatus, (engine, [tool]) => engine.credentialsStatus(tool))
+  browserHandler(IPC.browserCredentialsSave, (engine, [tool, input]) => engine.saveCredentials(tool, input as import('../../../frontend/src/browser/contract').BrowserCredentialsInput))
+  browserHandler(IPC.browserCredentialsRemove, (engine, [tool]) => engine.removeCredentials(tool))
+  browserHandler(IPC.browserOpen, (engine, [tool]) => engine.open(tool))
+  browserHandler(IPC.browserLayout, (engine, [id, bounds]) => engine.layout(id, bounds as import('../../../frontend/src/browser/contract').BrowserBounds | null))
+  browserHandler(IPC.browserCommand, (engine, [id, action]) => engine.command(id, action as import('../../../frontend/src/browser/contract').BrowserAction))
+  browserHandler(IPC.browserState, (engine, [id]) => engine.state(id))
+  browserHandler(IPC.browserClose, (engine, [id]) => engine.close(id))
+  browserHandler(IPC.browserRelease, (engine, [tool]) => engine.release(tool))
+  browserHandler(IPC.sferaQuery, (engine, [input]) => engine.query(input))
+  browserHandler(IPC.sferaDashboard, (engine, [input]) => engine.dashboard(input))
+  browserHandler(IPC.sferaDashboardCentre, (engine, [code]) => engine.dashboardCentre(code))
+  browserHandler(IPC.sferaInvoiceCatalog,(engine,[budget])=>engine.invoiceCatalog(budget as number|undefined))
+  browserHandler(IPC.sferaInvoicePrepare,(engine,[input])=>engine.invoicePrepare(input as Parameters<typeof engine.invoicePrepare>[0]))
+  browserHandler(IPC.sferaInvoiceCreate,(engine,[id])=>engine.invoiceCreate(id))
+  browserHandler(IPC.sferaExportRun, (engine, [planId, itemId]) => engine.exportRun(planId, itemId))
+  browserHandler(IPC.sferaExportReconcile, (engine, [planId, itemId]) => engine.exportReconcile(planId, itemId))
+  browserHandler(IPC.sferaExportDiagnose, (engine) => engine.exportDiagnose())
   // Synchronous: the renderer has to attach a token to its very first request,
   // so the hub URL and the stored session cannot arrive over a promise.
   ipcMain.on(IPC.bootstrap, (event) => {
@@ -137,6 +165,7 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC.setHubUrl, (_event, url: string) => {
+    browser?.dispose()
     store?.setHubUrl(url)
     // Reload from the entry point rather than in place: the renderer caches the
     // hub URL, the API base and the session at startup, and a fresh load is the
@@ -145,7 +174,7 @@ function registerIpc(): void {
   })
 
   ipcMain.on(IPC.setToken, (_event, key: string, value: string) => store?.setToken(key, value))
-  ipcMain.on(IPC.removeToken, (_event, key: string) => store?.removeToken(key))
+  ipcMain.on(IPC.removeToken, (_event, key: string) => { browser?.dispose(); store?.removeToken(key) })
 
   ipcMain.handle(IPC.openExternal, async (_event, url: string) => {
     // Only ever hand the OS a web URL — `shell.openExternal` will happily run a

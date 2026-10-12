@@ -18,11 +18,12 @@ Three pieces, one of which does all the work:
 | [**frontend/**](frontend) | `@cosecre/web` | The web app. Vue 3 + Vite, installable as a PWA — which is what makes phone camera capture work. |
 | [**desktop/**](desktop) | `cosecre-desktop` | Windows, macOS and Linux. Renders the *same* Vue app, with its own hub picker and auto-updates. |
 
-Two apps run on it today, and the shell hosts them without knowing what they do:
+The shell hosts these tools, and the shell hosts them without knowing what they do:
 
 | | |
 |---|---|
 | **Documents** | Photograph an invoice or a receipt, and it comes back as structured fields in a shared spreadsheet — checked by a person before it counts. |
+| **Esfer@** | Embedded portal with personal GICAR sign-in, a live economic dashboard and *Prova d’extractes*. Invoice drafts can use the local simulator or connect to the training portal for validation, saving and readback. Live invoice writing is still being verified. Desktop only. [Usage and verified limits](desktop/SFERA.md). |
 | **Impressió** | *Eines → Impressió.* Print batches of PDF and Word files, each to its own printer, with every printer working at once. Formerly the standalone Cosecre-print. Desktop only — it needs the machine's spooler and LibreOffice; a browser tab points at the installer. |
 
 A second, [AIM](https://github.com/aitirga/aim), runs as its own server and its
@@ -44,10 +45,10 @@ does not have to be rewritten to leave — see *Apps on the hub* below.
               SQLite/Postgres · Google Sheets · Drive
 ```
 
-**The hub is the only thing that holds a secret.** Model API keys, the Google
+**Service keys stay on the hub.** Model API keys, the Google
 service account, the database — all server-side. A desktop binary or a browser
 bundle can be handed to anyone without leaking anything, which is the reason the
-gateway exists rather than each client calling OpenAI itself.
+gateway exists rather than each client calling OpenAI itself. Optional personal Esfer@ passwords are a separate desktop feature: OS-encrypted on that device, isolated per hub/account, never bundled or stored in the shared settings bag.
 
 ## Downloads
 

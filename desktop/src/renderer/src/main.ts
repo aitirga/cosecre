@@ -52,5 +52,10 @@ createCosecreApp({
     changeHub: (url) => bridge.setHubUrl(url),
     settingsPanel: UpdatePanel,
     print: bridge.print,
+    browser: bridge.browser,
+    sferaData: bridge.sferaData,
+    sferaDashboard: bridge.sferaDashboard,
+    sferaInvoices: bridge.sferaInvoices,
+    sferaExport: bridge.sferaExport,
   },
 }).mount('#app')

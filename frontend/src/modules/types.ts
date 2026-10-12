@@ -11,6 +11,8 @@
  */
 import type { RouteLocationNormalized, RouteLocationRaw, RouteRecordRaw } from 'vue-router'
 
+import type { Component } from 'vue'
+
 import type { HubMeta, Role } from '../api/types'
 import type { IconName } from '../components/icons'
 
@@ -18,6 +20,8 @@ export interface CosecreNavItem {
   /** Route name this entry points at. */
   name: string
   label: string
+  /** Optional deep link, e.g. a settings tab. */
+  to?: RouteLocationRaw
   icon: IconName
   /** A short tag after the label, such as `beta`. */
   badge?: string
@@ -55,6 +59,8 @@ export interface CosecreNavGroup {
 
 export interface CosecreModule {
   id: string
+  /** Shells that can host this module. Omitted means both. */
+  platforms?: readonly ('web' | 'desktop')[]
   /**
    * Who the module is for. Its routes refuse everyone else (the global guard
    * reads `meta.roles`, which the registry stamps on every route), its nav is
@@ -70,6 +76,7 @@ export interface CosecreModule {
   rootRoutes?: RouteRecordRaw[]
   nav: CosecreNavItem[]
   navGroups?: CosecreNavGroup[]
+  settingsSections?: { id: string; label: string; icon: IconName; component: Component }[]
   /** Off when the hub does not advertise the capability this module needs. */
   enabled?: (hub: HubMeta | null) => boolean
   /**

@@ -14,6 +14,7 @@ from .meta import router as meta_router
 from .notifications import router as notifications_router
 from .partides import router as partides_router
 from .reconciliation import router as reconciliation_router
+from .sfera import router as sfera_router
 from .requests import router as requests_router
 from .statements import router as statements_router
 from .statements_mirror import router as statements_mirror_router
@@ -58,6 +59,7 @@ api_router.include_router(
 api_router.include_router(
     partides_router, prefix="/partides", tags=["partides"], dependencies=staff
 )
+api_router.include_router(sfera_router, prefix="/sfera", tags=["sfera"], dependencies=staff)
 api_router.include_router(status_router, prefix="/status", tags=["status"], dependencies=staff)
 api_router.include_router(tools_router, prefix="/tools", tags=["tools"], dependencies=staff)
 api_router.include_router(backups_router, prefix="/backups", tags=["backups"], dependencies=staff)

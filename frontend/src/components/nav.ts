@@ -5,6 +5,7 @@
  * renders it. Groups nest to any depth, so a section can grow subgroups
  * without the shell learning anything new.
  */
+import type { RouteLocationRaw } from 'vue-router'
 import { reactive } from 'vue'
 
 import type { IconName } from './icons'
@@ -13,6 +14,7 @@ export interface NavLink {
   kind: 'link'
   /** Route name the link navigates to. */
   name: string
+  to?: RouteLocationRaw
   label: string
   icon: IconName
   badge?: string

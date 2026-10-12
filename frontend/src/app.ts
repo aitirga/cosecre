@@ -14,6 +14,7 @@ import App from './App.vue'
 import { assistantModule } from './modules/assistant'
 import { documentsModule } from './modules/documents'
 import { hubModule } from './modules/hub'
+import { sferaModule } from './modules/sfera'
 import { printModule } from './modules/print'
 import { requestsModule } from './modules/requests'
 import { teacherModule } from './modules/teacher'
@@ -44,6 +45,7 @@ const DEFAULT_MODULES: CosecreModule[] = [
   documentsModule,
   assistantModule,
   printModule,
+  sferaModule,
   teacherModule,
   requestsModule,
   hubModule,
@@ -69,7 +71,7 @@ export function createCosecreApp(options: CosecreAppOptions = {}): VueApp<Elemen
   }
 
   // Before the router: it reads the registry to build its route table.
-  registerModules(options.modules ?? DEFAULT_MODULES)
+  registerModules((options.modules ?? DEFAULT_MODULES).filter((module) => !module.platforms || module.platforms.includes(platform.name)))
 
   configureApi({
     baseUrl: options.apiBaseUrl,

@@ -1,3 +1,4 @@
+import type { BrowserBridge, BrowserState } from '../../../frontend/src/browser/contract'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   AddFilesResult,
@@ -66,6 +67,23 @@ const print: PrintBridge = {
   },
 }
 
+const browser: BrowserBridge = {
+  credentialsStatus: (tool) => ipcRenderer.invoke(IPC.browserCredentialsStatus, tool),
+  saveCredentials: (tool, input) => ipcRenderer.invoke(IPC.browserCredentialsSave, tool, input),
+  removeCredentials: (tool) => ipcRenderer.invoke(IPC.browserCredentialsRemove, tool),
+  open: (tool) => ipcRenderer.invoke(IPC.browserOpen, tool),
+  layout: (id, bounds) => ipcRenderer.invoke(IPC.browserLayout, id, bounds),
+  command: (id, action) => ipcRenderer.invoke(IPC.browserCommand, id, action),
+  state: (id) => ipcRenderer.invoke(IPC.browserState, id),
+  close: (id) => ipcRenderer.invoke(IPC.browserClose, id),
+  release: (tool) => ipcRenderer.invoke(IPC.browserRelease, tool),
+  onState: (callback) => {
+    const listener = (_event: unknown, state: BrowserState) => callback(state)
+    ipcRenderer.on(IPC.browserChanged, listener)
+    return () => ipcRenderer.removeListener(IPC.browserChanged, listener)
+  },
+}
+
 const api: CosecreDesktopApi = {
   bootstrap,
 
@@ -86,6 +104,22 @@ const api: CosecreDesktopApi = {
   },
 
   print,
+  browser,
+  sferaData: { query: (input) => ipcRenderer.invoke(IPC.sferaQuery, input) },
+  sferaDashboard: {
+    load: (input) => ipcRenderer.invoke(IPC.sferaDashboard, input),
+    selectCentre: (code) => ipcRenderer.invoke(IPC.sferaDashboardCentre, code),
+  },
+  sferaInvoices: {
+    catalog: (budgetId)=>ipcRenderer.invoke(IPC.sferaInvoiceCatalog,budgetId),
+    prepare: (input)=>ipcRenderer.invoke(IPC.sferaInvoicePrepare,input),
+    create: (id)=>ipcRenderer.invoke(IPC.sferaInvoiceCreate,id),
+  },
+  sferaExport: {
+    run: (planId, itemId) => ipcRenderer.invoke(IPC.sferaExportRun, planId, itemId),
+    reconcile: (planId, itemId) => ipcRenderer.invoke(IPC.sferaExportReconcile, planId, itemId),
+    diagnose: () => ipcRenderer.invoke(IPC.sferaExportDiagnose),
+  },
 }
 
 contextBridge.exposeInMainWorld('cosecreDesktop', api)

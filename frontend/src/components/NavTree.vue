@@ -1,19 +1,28 @@
 <script setup lang="ts">
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import AppIcon from './AppIcon.vue'
 import {
-  groupHoldsActive,
   isCollapsed,
   linkIsActive,
   toggleGroup,
   type NavNode,
+  type NavGroup,
 } from './nav'
 
 withDefaults(defineProps<{ nodes: NavNode[]; depth?: number }>(), { depth: 0 })
 const emit = defineEmits<{ navigate: [] }>()
 
 const route = useRoute()
+const router = useRouter()
+function holdsActive(node: NavGroup): boolean {
+  return node.children.some((child) => child.kind === 'link' ? active(child) : holdsActive(child))
+}
+function active(node: import('./nav').NavLink) {
+  if (!node.to) return linkIsActive(node, route.name as string)
+  const target = router.resolve(node.to)
+  return target.name === route.name && Object.entries(target.query).every(([key, value]) => route.query[key] === value)
+}
 </script>
 
 <template>
@@ -22,8 +31,8 @@ const route = useRoute()
       <RouterLink
         v-if="node.kind === 'link'"
         class="nav-item"
-        :class="{ active: linkIsActive(node, route.name as string) }"
-        :to="{ name: node.name }"
+        :class="{ active: active(node) }"
+        :to="node.to ?? { name: node.name }"
         @click="emit('navigate')"
       >
         <AppIcon :name="node.icon" :size="15" />
@@ -37,7 +46,7 @@ const route = useRoute()
           :class="[
             depth === 0 ? 'group-head' : 'nav-item subgroup-head',
             // A closed group still says where you are.
-            { 'holds-active': isCollapsed(node.id) && groupHoldsActive(node, route.name as string) },
+            { 'holds-active': isCollapsed(node.id) && holdsActive(node) },
           ]"
           :aria-expanded="!isCollapsed(node.id)"
           @click="toggleGroup(node.id)"

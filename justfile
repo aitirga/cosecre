@@ -28,6 +28,7 @@ _version := `node -p "require('./desktop/package.json').version" 2>/dev/null || 
 [private]
 default:
     #!/usr/bin/env bash
+    source scripts/terminal-colors.sh
     printf '%b\n' ""
     printf '%b\n' "  {{_b}}{{_acc}}Cosecre{{_r}} {{_d}}{{_version}}{{_r}}   {{_d}}hub · web · desktop{{_r}}"
     printf '%b\n' ""
@@ -45,6 +46,8 @@ default:
     printf '%b\n' "  {{_b}}{{_gold}}CHECK{{_r}}"
     printf '%b\n' "    {{_olive}}just check{{_r}}          typecheck and tests, everything"
     printf '%b\n' "    {{_olive}}just test{{_r}}           hub test suite            {{_d}}no network, no keys{{_r}}"
+    printf '%b\n' "    {{_olive}}just check-sfera{{_r}}    verify Sfer@ browser, data queries and isolation"
+    printf '%b\n' "    {{_olive}}just explore-sfera{{_r}}  read-only discovery with an authenticated local profile"
     printf '%b\n' "    {{_olive}}just types{{_r}}          typecheck both clients"
     printf '%b\n' ""
     printf '%b\n' "  {{_b}}{{_gold}}BUILD{{_r}}"
@@ -71,6 +74,7 @@ default:
 [doc('Install dependencies and create hub/.env')]
 setup:
     #!/usr/bin/env bash
+    source scripts/terminal-colors.sh
     set -euo pipefail
     printf '%b\n' "{{_acc}}→{{_r}} npm workspaces"
     npm install
@@ -90,6 +94,7 @@ setup:
 [doc('Check the toolchain is complete')]
 doctor:
     #!/usr/bin/env bash
+    source scripts/terminal-colors.sh
     set -uo pipefail
     missing=0
     check() {
@@ -166,6 +171,7 @@ test-idle:
 [doc('Run the hub and the web client together')]
 dev:
     #!/usr/bin/env bash
+    source scripts/terminal-colors.sh
     set -uo pipefail
     # `kill 0` signals the whole process group, which is what actually stops
     # uvicorn's reloader and Vite's child processes on Ctrl-C. Killing the two
@@ -235,6 +241,7 @@ icons:
 [doc('Delete build output')]
 clean:
     #!/usr/bin/env bash
+    source scripts/terminal-colors.sh
     set -euo pipefail
     rm -rf frontend/dist desktop/out desktop/release
     find . -name '*.tsbuildinfo' -not -path './node_modules/*' -delete
@@ -246,6 +253,7 @@ clean:
 [doc('Build a DMG for this Mac and open it')]
 mac: bundle-desktop
     #!/usr/bin/env bash
+    source scripts/terminal-colors.sh
     set -euo pipefail
     printf '%b\n' "{{_acc}}→{{_r}} packaging {{_b}}{{_arch}}{{_r}} DMG {{_d}}(this Mac only — 'just mac-all' for both){{_r}}"
     cd desktop && npx electron-builder --mac dmg {{_arch}}
@@ -270,6 +278,7 @@ mac: bundle-desktop
 [doc('Build and copy straight into /Applications, no DMG')]
 install: bundle-desktop
     #!/usr/bin/env bash
+    source scripts/terminal-colors.sh
     set -euo pipefail
     printf '%b\n' "{{_acc}}→{{_r}} packaging {{_b}}{{_arch}}{{_r}} app bundle"
     cd desktop && npx electron-builder --dir {{_arch}}
@@ -322,6 +331,7 @@ win: bundle-desktop
 [doc('Bump versions, tag and push — CI builds and publishes')]
 release VERSION:
     #!/usr/bin/env bash
+    source scripts/terminal-colors.sh
     set -euo pipefail
 
     if [ -n "$(git status --porcelain)" ]; then
@@ -367,3 +377,20 @@ ci:
 [doc('Open the releases page')]
 releases:
     open https://github.com/aitirga/cosecre/releases
+
+[group('check')]
+[doc('Check Sfer@ settings, browser and read-only data explorer in isolated Electron')]
+check-sfera: bundle-web bundle-desktop
+    cd hub && uv run pytest tests/test_sfera_settings.py tests/test_app_settings.py -q
+    node scripts/check-sfera-invoice-poc.mjs
+    node_modules/.bin/electron scripts/check-sfera.mjs
+
+[group('check')]
+[doc('Check statement-to-invoice mapping, validation and duplicate prevention without network')]
+check-sfera-poc:
+    node scripts/check-sfera-invoice-poc.mjs
+
+[group('data')]
+[doc('Inspect Sfer@ read-only in a copy of SFERA_PROFILE; save private local evidence')]
+explore-sfera: bundle-desktop
+    SFERA_RESEARCH_STEPS=scripts/sfera-research-steps.mjs node_modules/.bin/electron scripts/explore-sfera.mjs

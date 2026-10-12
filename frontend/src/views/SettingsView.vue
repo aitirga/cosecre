@@ -16,8 +16,10 @@ import TeamPanel from '../components/TeamPanel.vue'
 import type { IconName } from '../components/icons'
 import { useAuth } from '../composables/useAuth'
 import { DESKTOP_OS_LABELS, usePreferences } from '../composables/usePreferences'
+import { useModules } from '../modules/registry'
 import { usePlatform } from '../platform'
 
+const { settingsSections } = useModules()
 const auth = useAuth()
 const preferences = usePreferences()
 const platform = usePlatform()
@@ -188,7 +190,7 @@ const activeUsers = computed(() => (usersQuery.data.value ?? []).filter((user) =
 // one section, a second, quieter bar. The open section lives in `?tab=`, so a
 // link (or the register's "restore from Configuració") can land on the right
 // one and a reload keeps it; old links to a section keep working.
-type TabId = 'general' | 'sheet' | 'ai' | 'data' | 'history' | 'centre' | 'bank' | 'pressupost' | 'team' | 'app'
+type TabId = string
 type GroupId = 'general' | 'centre' | 'team' | 'app'
 
 interface Tab {
@@ -234,6 +236,7 @@ const groups = computed<Group[]>(() => {
     { id: 'ai', label: 'Lectura amb IA', icon: 'sparkles', dot: aiDirty.value ? 'accent' : undefined },
     { id: 'data', label: 'Còpies', icon: 'database' },
     { id: 'history', label: 'Historial', icon: 'activity' },
+    ...settingsSections.value.map(({ id, label, icon }) => ({ id, label, icon })),
   ]
   const centre: Tab[] = [
     {
@@ -398,6 +401,10 @@ function onSubtabKey(event: KeyboardEvent) {
         </button>
       </nav>
     </div>
+
+    <template v-for="section in settingsSections" :key="section.id">
+      <component :is="section.component" v-if="active === section.id" :id="`panel-${section.id}`" role="tabpanel" :aria-labelledby="`subtab-${section.id}`" />
+    </template>
 
     <!-- ── General ────────────────────────────────────────────────────── -->
     <div

@@ -25,6 +25,8 @@ from ..schemas import (
     MessageResponse,
 )
 
+from . import sfera_settings
+
 router = APIRouter()
 
 AppSlug = Annotated[str, Path(pattern=APP_SLUG_PATTERN, description="Lowercase app identifier.")]
@@ -55,7 +57,11 @@ def read_settings(
 ):
     return AppSettingsBundle(
         app_slug=app_slug,
-        settings={row.key: row.value for row in _rows(session, app_slug)},
+        settings={
+            row.key: row.value
+            for row in _rows(session, app_slug)
+            if app_slug != sfera_settings.SLUG or row.key in sfera_settings.KEYS
+        },
     )
 
 
@@ -79,6 +85,9 @@ def replace_settings(
             status_code=422, detail=f"Invalid setting key(s): {', '.join(sorted(invalid))}"
         )
 
+    if app_slug == sfera_settings.SLUG:
+        payload = sfera_settings.validate_settings(payload)
+
     existing = {row.key: row for row in _rows(session, app_slug)}
     for key, value in payload.items():
         row = existing.pop(key, None)
@@ -95,7 +104,11 @@ def replace_settings(
     session.commit()
     return AppSettingsBundle(
         app_slug=app_slug,
-        settings={row.key: row.value for row in _rows(session, app_slug)},
+        settings={
+            row.key: row.value
+            for row in _rows(session, app_slug)
+            if app_slug != sfera_settings.SLUG or row.key in sfera_settings.KEYS
+        },
     )
 
 
@@ -106,6 +119,8 @@ def read_setting(
     session: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    if app_slug == sfera_settings.SLUG and key not in sfera_settings.KEYS:
+        raise HTTPException(422, "Camp d’Esfer@ no permès.")
     row = (
         session.query(AppSetting)
         .filter(AppSetting.app_slug == app_slug, AppSetting.key == key)
@@ -126,6 +141,8 @@ def write_setting(
     session: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
+    if app_slug == sfera_settings.SLUG and key not in sfera_settings.KEYS:
+        raise HTTPException(422, "Camp d’Esfer@ no permès.")
     row = (
         session.query(AppSetting)
         .filter(AppSetting.app_slug == app_slug, AppSetting.key == key)
@@ -134,7 +151,11 @@ def write_setting(
     if row is None:
         row = AppSetting(app_slug=app_slug, key=key)
         session.add(row)
-    row.value = payload.value
+    row.value = (
+        sfera_settings.validate_settings({key: payload.value})[key]
+        if app_slug == sfera_settings.SLUG
+        else payload.value
+    )
     row.updated_by_id = admin.id
     session.commit()
     session.refresh(row)
@@ -150,6 +171,8 @@ def delete_setting(
     session: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
+    if app_slug == sfera_settings.SLUG and key not in sfera_settings.KEYS:
+        raise HTTPException(422, "Camp d’Esfer@ no permès.")
     row = (
         session.query(AppSetting)
         .filter(AppSetting.app_slug == app_slug, AppSetting.key == key)
