@@ -5,12 +5,12 @@ import { formatAmount, parseAmount } from '../../document-fields'
 import AppIcon from '../AppIcon.vue'
 
 /**
- * How an invoice is shared between its budget lines.
+ * How a movement is shared between its budget lines.
  *
  * One bar, one segment per line, in each line's fund colour: drag the seam
  * between two segments and only those two change, so the total always holds.
  * The rows below say the same in numbers, typed in euros or in percent — the
- * hub only ever stores euros. When the invoice has no amount there is nothing
+ * hub only ever stores euros. When there is no amount there is nothing
  * to be a percentage of, so the bar shows the amounts' own proportions and the
  * percent mode is off.
  */
@@ -23,7 +23,7 @@ export interface SplitLine {
 
 const props = defineProps<{
   lines: SplitLine[]
-  /** The invoice's amount, or null when the register does not know it. */
+  /** The movement's amount (unsigned), or null when it is not known. */
   total: number | null
   /** Euros per line id. */
   modelValue: Record<number, number | null>
@@ -184,7 +184,7 @@ defineExpose({ balanced, even })
             :aria-checked="mode === 'pct'"
             :class="{ on: mode === 'pct' }"
             :disabled="!total"
-            :title="total ? '' : 'La factura no té import'"
+            :title="total ? '' : 'Sense import'"
             @click="mode = 'pct'"
           >
             %
@@ -267,11 +267,11 @@ defineExpose({ balanced, even })
     <footer class="split-foot" :class="balanced ? 'is-ok' : gap > 0 ? 'is-short' : 'is-over'">
       <template v-if="total === null">
         <AppIcon name="info" :size="13" />
-        La factura no té import: es desa el que escriguis ({{ formatAmount(sum) }}).
+        Sense import: es desa el que escriguis ({{ formatAmount(sum) }}).
       </template>
       <template v-else-if="balanced">
         <AppIcon name="check" :size="13" />
-        Quadra amb la factura · {{ formatAmount(total) }}
+        Quadra amb el moviment · {{ formatAmount(total) }}
       </template>
       <template v-else-if="gap > 0">
         <AppIcon name="alert" :size="13" />

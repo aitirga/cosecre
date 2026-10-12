@@ -1,4 +1,4 @@
-"""Budget lines: the esfer@ import, the secretari/a's assignments, Jev's proposals."""
+"""Budget lines: the esfer@ import, charging statement movements to them, Jev's proposals."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from openpyxl import Workbook
 
 from conftest import build_client, make_user, register_admin
 from cosecre_hub.api.partides import esfera, suggest
-from cosecre_hub.models import Document
+from cosecre_hub.models import BankMovement, Document, PaymentMatch, StatementImport
 from cosecre_hub.services.classification import DocumentClassifier, JevClient, JevError
 
 API = "/api/v1/partides"
@@ -76,6 +76,44 @@ def add_document(client, reference: str = "DOC-1", **values) -> int:
         session.add(document)
         session.commit()
         return document.id
+
+
+def add_movement(
+    client,
+    *,
+    paid: str | None = None,
+    concepte: str = "TRANSF. AUTOCARS PEP SL",
+    import_value: float = -420.0,
+    data: date = date(2026, 3, 12),
+    categoria: str = "pagament",
+    match: str = "confirmed",
+) -> int:
+    """A statement line; with ``paid``, the register entry a person confirmed it paid."""
+    with client.app.state.session_factory() as session:
+        statement = session.query(StatementImport).first()
+        if statement is None:
+            statement = StatementImport(source="caixa_xls", compte="General", file_name="x.xls")
+            session.add(statement)
+            session.flush()
+        movement = BankMovement(
+            import_id=statement.id,
+            fingerprint=f"fp-{session.query(BankMovement).count() + 1}",
+            source="caixa_xls",
+            compte="General",
+            tipus="Transferència",
+            categoria=categoria,
+            data=data,
+            concepte=concepte,
+            import_value=import_value,
+            match_status="confirmed" if paid and match == "confirmed" else "unmatched",
+        )
+        session.add(movement)
+        session.flush()
+        if paid:
+            document = session.query(Document).filter(Document.internal_doc_number == paid).one()
+            session.add(PaymentMatch(movement_id=movement.id, document_id=document.id, status=match))
+        session.commit()
+        return movement.id
 
 
 def lines(client, headers) -> dict[str, dict]:
@@ -149,9 +187,9 @@ def test_reimporting_keeps_context_and_retires_only_lines_in_use(hub):
     office = by_code["D/220000100/4210.29"]["id"]
     bus = by_code["D/223000100/4210.11"]["id"]
     client.put(f"{API}/lines/{office}/context", headers=admin, json={"context": "Paper i tòner"})
-    add_document(client)
+    movement = add_movement(client)
     assert client.put(
-        f"{API}/documents/DOC-1", headers=admin, json={"partides": [{"partida_id": bus}]}
+        f"{API}/movements/{movement}", headers=admin, json={"partides": [{"partida_id": bus}]}
     ).status_code == 200
 
     summary = upload(
@@ -196,31 +234,31 @@ def test_only_the_secretari_writes_the_office_reads(hub):
     admin = register_admin(client)
     office = make_user(client, admin, "administratiu")
     upload(client, admin, esfera_export())
-    add_document(client)
+    movement = add_movement(client)
     line = lines(client, admin)["D/220000100/4210.29"]["id"]
 
     assert client.get(API, headers=office).status_code == 200
     assert client.get(f"{API}/queue", headers=office).status_code == 200
     body = {"partides": [{"partida_id": line}]}
-    assert client.put(f"{API}/documents/DOC-1", headers=office, json=body).status_code == 403
+    assert client.put(f"{API}/movements/{movement}", headers=office, json=body).status_code == 403
     assert upload(client, office, esfera_export()).status_code == 403
     assert client.put(f"{API}/context", headers=office, json={"context": "x"}).status_code == 403
     assert (
         client.put(f"{API}/lines/{line}/context", headers=office, json={"context": "x"}).status_code
         == 403
     )
-    assert client.post(f"{API}/documents/DOC-1/suggest", headers=office).status_code == 403
+    assert client.post(f"{API}/movements/{movement}/suggest", headers=office).status_code == 403
 
 
-def test_an_invoice_takes_several_lines_but_never_a_heading(hub):
+def test_a_movement_takes_several_lines_but_never_a_heading(hub):
     client, _ = hub
     admin = register_admin(client)
     upload(client, admin, esfera_export())
-    add_document(client)
+    movement = add_movement(client)
     by_code = lines(client, admin)
 
     heading = client.put(
-        f"{API}/documents/DOC-1",
+        f"{API}/movements/{movement}",
         headers=admin,
         json={"partides": [{"partida_id": by_code["D/220000100/4210"]["id"]}]},
     )
@@ -231,39 +269,52 @@ def test_an_invoice_takes_several_lines_but_never_a_heading(hub):
         {"partida_id": by_code["D/223000100/4210.11"]["id"], "import_assignat": 300},
         {"partida_id": by_code["D/220000100/4210.29"]["id"], "import_assignat": 120},
     ]
-    item = client.put(f"{API}/documents/DOC-1", headers=admin, json={"partides": split}).json()
+    item = client.put(f"{API}/movements/{movement}", headers=admin, json={"partides": split}).json()
     assert item["estat"] == "assignada"
     assert [a["import_assignat"] for a in item["assignments"]] == [300, 120]
     assert lines(client, admin)["D/223000100/4210.11"]["imputat"] == 300
 
-    cleared = client.put(f"{API}/documents/DOC-1", headers=admin, json={"partides": []}).json()
+    cleared = client.put(f"{API}/movements/{movement}", headers=admin, json={"partides": []}).json()
     assert cleared["estat"] == "pendent"
 
 
-def test_the_queue_leaves_out_quotes_and_documents_being_read(hub):
+def test_the_queue_is_movements_with_the_invoices_they_paid(hub):
     client, _ = hub
     admin = register_admin(client)
     add_document(client, "DOC-1")
-    add_document(client, "DOC-2", tipus_document="Pressupost")
-    add_document(client, "DOC-3", status="processing")
+    add_document(client, "DOC-2", proveidor="Llibreria", descripcio_compra="Llibres")
+    paid = add_movement(client, paid="DOC-1")
+    proposed = add_movement(client, paid="DOC-2", match="proposed", data=date(2026, 3, 1))
+    income = add_movement(client, concepte="QUOTES FAMILIES", import_value=150.0, categoria="ingres", data=date(2025, 10, 2))
+    add_movement(client, concepte="TRASPAS A TARGETA", categoria="traspas_intern")
+    add_movement(client, concepte="SALDO INICIAL", import_value=1000.0, categoria="saldo_inicial")
+
     queue = client.get(f"{API}/queue", headers=admin).json()
-    assert [item["reference"] for item in queue] == ["DOC-1"]
-    assert queue[0]["curs"] == "25-26"
+    assert [item["id"] for item in queue] == [paid, proposed, income]
+    first = queue[0]
+    assert (first["sentit"], first["curs"], first["concepte"]) == ("despesa", "25-26", "TRANSF. AUTOCARS PEP SL")
+    assert [f["reference"] for f in first["factures"]] == ["DOC-1"]
+    assert first["factures"][0]["descripcio_compra"].startswith("Autocar")
+    # Only a confirmed payment says what the money was for.
+    assert queue[1]["factures"] == []
+    assert queue[2]["sentit"] == "ingres"
 
 
-def test_deleting_an_invoice_forgets_its_lines(hub):
+def test_deleting_a_statement_forgets_its_lines(hub):
     client, _ = hub
     admin = register_admin(client)
     upload(client, admin, esfera_export())
-    add_document(client)
+    movement = add_movement(client)
     line = lines(client, admin)["D/220000100/4210.29"]["id"]
-    client.put(f"{API}/documents/DOC-1", headers=admin, json={"partides": [{"partida_id": line}]})
-    assert client.delete("/api/v1/documents/records/DOC-1", headers=admin).status_code == 204
+    client.put(f"{API}/movements/{movement}", headers=admin, json={"partides": [{"partida_id": line}]})
+    with client.app.state.session_factory() as session:
+        statement_id = session.get(BankMovement, movement).import_id
+    assert client.delete(f"/api/v1/statements/imports/{statement_id}", headers=admin).status_code == 204
 
-    from cosecre_hub.api.partides.models import DocumentPartida
+    from cosecre_hub.api.partides.models import MovementPartida
 
     with client.app.state.session_factory() as session:
-        assert session.query(DocumentPartida).count() == 0
+        assert session.query(MovementPartida).count() == 0
 
 
 # ── Jev ─────────────────────────────────────────────────────────────────────
@@ -327,8 +378,9 @@ def test_jev_proposes_a_preliminary_line_from_the_leaves_with_the_context(tmp_pa
         )
         jev.answers = _prefer(ids, "D/223000100/4210.11")
         add_document(client)
+        movement = add_movement(client, paid="DOC-1")
 
-        item = client.post(f"{API}/documents/DOC-1/suggest", headers=admin).json()
+        item = client.post(f"{API}/movements/{movement}/suggest", headers=admin).json()
 
     assert item["estat"] == "proposta"
     assert item["assignments"] == [
@@ -343,9 +395,10 @@ def test_jev_proposes_a_preliminary_line_from_the_leaves_with_the_context(tmp_pa
     assert item["suggestion"]["ranking"][0]["partida_id"] == ids["D/223000100/4210.11"]
 
     state, questions = jev.asked[0]
-    assert state["curs_escolar_de_la_factura"] == "25-26"
+    assert state["curs_escolar_del_moviment"] == "25-26"
     assert state["criteris_del_centre"] == "Els autocars van a Transports."
-    assert state["factura"]["que_es_compra_segons_el_professor"].startswith("Autocar")
+    assert state["moviment"]["concepte"] == "TRANSF. AUTOCARS PEP SL"
+    assert state["factures_que_paga"][0]["que_es_compra_segons_el_professor"].startswith("Autocar")
     criteria = questions["partida"]["criteria"]
     # Headings are not options; leaves and the way out are.
     assert f"p{ids['D/220000100/4210']}" not in criteria
@@ -363,13 +416,13 @@ def test_jev_never_overwrites_what_a_person_confirmed(tmp_path):
         upload(client, admin, esfera_export())
         ids = {code: line["id"] for code, line in lines(client, admin).items()}
         jev.answers = _prefer(ids, "D/223000100/4210.11")
-        add_document(client)
+        movement = add_movement(client)
         client.put(
-            f"{API}/documents/DOC-1",
+            f"{API}/movements/{movement}",
             headers=admin,
             json={"partides": [{"partida_id": ids["D/220000100/4210.29"]}]},
         )
-        item = client.post(f"{API}/documents/DOC-1/suggest", headers=admin).json()
+        item = client.post(f"{API}/movements/{movement}/suggest", headers=admin).json()
 
     assert [a["partida_id"] for a in item["assignments"]] == [ids["D/220000100/4210.29"]]
     assert item["assignments"][0]["confirmada"] is True
@@ -383,21 +436,23 @@ def test_a_split_purchase_gets_two_lines_and_the_supplier_history_is_a_hint(tmp_
         upload(client, admin, esfera_export())
         ids = {code: line["id"] for code, line in lines(client, admin).items()}
         add_document(client, "DOC-OLD", data_factura=date(2026, 1, 5))
+        old = add_movement(client, paid="DOC-OLD", data=date(2026, 1, 9))
         client.put(
-            f"{API}/documents/DOC-OLD",
+            f"{API}/movements/{old}",
             headers=admin,
             json={"partides": [{"partida_id": ids["D/223000100/4210.11"]}]},
         )
         jev.answers = _prefer(ids, "D/223000100/4210.11", split=0.8, runner_up="D/220000100/4210.29")
         add_document(client, "DOC-1", cif_proveidor="B-12345678")
-        item = client.post(f"{API}/documents/DOC-1/suggest", headers=admin).json()
+        movement = add_movement(client, paid="DOC-1")
+        item = client.post(f"{API}/movements/{movement}/suggest", headers=admin).json()
 
     assert [a["partida_id"] for a in item["assignments"]] == [
         ids["D/223000100/4210.11"],
         ids["D/220000100/4210.29"],
     ]
     state, _ = jev.asked[0]
-    assert state["partides_anteriors_del_mateix_proveidor"] == [
+    assert state["partides_anteriors_del_mateix_proveidor_o_concepte"] == [
         {"partida": "25-26 Autocars INFANTIL.", "vegades": 1}
     ]
 
@@ -405,16 +460,16 @@ def test_a_split_purchase_gets_two_lines_and_the_supplier_history_is_a_hint(tmp_
 def test_without_jev_or_a_budget_the_suggestion_says_why(tmp_path, hub):
     client, _ = hub
     admin = register_admin(client)
-    add_document(client)
-    assert client.post(f"{API}/documents/DOC-1/suggest", headers=admin).status_code == 503
+    movement = add_movement(client)
+    assert client.post(f"{API}/movements/{movement}/suggest", headers=admin).status_code == 503
 
     with _jev_client(tmp_path / "jev", FakeJev(fail=True)) as other:
         (tmp_path / "jev").mkdir(exist_ok=True)
         admin = register_admin(other)
-        add_document(other)
-        assert other.post(f"{API}/documents/DOC-1/suggest", headers=admin).status_code == 409
+        movement = add_movement(other)
+        assert other.post(f"{API}/movements/{movement}/suggest", headers=admin).status_code == 409
         upload(other, admin, esfera_export())
-        assert other.post(f"{API}/documents/DOC-1/suggest", headers=admin).status_code == 502
+        assert other.post(f"{API}/movements/{movement}/suggest", headers=admin).status_code == 502
 
 
 def test_a_school_year_runs_september_to_august():
@@ -423,17 +478,17 @@ def test_a_school_year_runs_september_to_august():
     assert suggest.school_year(None) == ""
 
 
-def test_a_split_adds_up_to_the_invoice_or_is_refused(hub):
+def test_a_split_adds_up_to_the_movement_or_is_refused(hub):
     client, _ = hub
     admin = register_admin(client)
     upload(client, admin, esfera_export())
-    add_document(client)  # 420 €
+    movement = add_movement(client)  # −420 €
     by_code = lines(client, admin)
     bus, office = by_code["D/223000100/4210.11"]["id"], by_code["D/220000100/4210.29"]["id"]
 
     def put(*parts):
         body = {"partides": [{"partida_id": pid, "import_assignat": amount} for pid, amount in parts]}
-        return client.put(f"{API}/documents/DOC-1", headers=admin, json=body)
+        return client.put(f"{API}/movements/{movement}", headers=admin, json=body)
 
     short = put((bus, 300), (office, 100))
     assert short.status_code == 422
@@ -444,6 +499,35 @@ def test_a_split_adds_up_to_the_invoice_or_is_refused(hub):
     # Even, unsplit: allowed, and counted half each.
     assert put((bus, None), (office, None)).status_code == 200
     assert lines(client, admin)["D/223000100/4210.11"]["imputat"] == 210
-    # One line takes the whole invoice whatever it was sent with.
+    # One line takes the whole movement whatever it was sent with.
     alone = put((bus, 12)).json()
     assert alone["assignments"][0]["import_assignat"] is None
+
+
+def test_money_in_is_offered_the_income_lines_and_bank_fees_their_concept(tmp_path):
+    jev = FakeJev()
+    with _jev_client(tmp_path, jev) as client:
+        admin = register_admin(client)
+        upload(client, admin, esfera_export())
+        ids = {code: line["id"] for code, line in lines(client, admin).items()}
+        jev.answers = _prefer(ids, "I/3000001")
+        income = add_movement(client, concepte="INGRES QUOTES", import_value=80.0, categoria="ingres")
+        client.post(f"{API}/movements/{income}/suggest", headers=admin)
+
+        fee = add_movement(client, concepte="COMISSIO MANTENIMENT", import_value=-6.0, categoria="comissio")
+        client.put(
+            f"{API}/movements/{fee}", headers=admin, json={"partides": [{"partida_id": ids["D/226003900/4210"]}]}
+        )
+        jev.answers = _prefer(ids, "D/226003900/4210")
+        again = add_movement(client, concepte="Comissió manteniment", import_value=-6.0, categoria="comissio")
+        client.post(f"{API}/movements/{again}/suggest", headers=admin)
+
+    state, questions = jev.asked[0]
+    criteria = questions["partida"]["criteria"]
+    assert state["moviment"]["sentit"] == "entrada de diners"
+    assert f"p{ids['I/3000001']}" in criteria
+    assert f"p{ids['D/220000100/4210.29']}" not in criteria
+    state, _ = jev.asked[1]
+    assert state["partides_anteriors_del_mateix_proveidor_o_concepte"] == [
+        {"partida": "Despeses per comissions bancàries", "vegades": 1}
+    ]

@@ -4,7 +4,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 
 import { ApiError, api } from '../api/client'
-import type { Partida, PartidaQueueItem } from '../api/types'
+import type { Partida, PartidaInvoice, PartidaQueueItem } from '../api/types'
 import AppIcon from '../components/AppIcon.vue'
 import DocumentPeek from '../components/DocumentPeek.vue'
 import PartidaPicker from '../components/partides/PartidaPicker.vue'
@@ -14,12 +14,15 @@ import { formatAmount, formatDate } from '../document-fields'
 import { fundTone, lineTitle, lineYears, shortCode } from '../partides'
 
 /**
- * Charging invoices to budget lines, one after another, fast.
+ * Charging statement movements to budget lines, one after another, fast.
  *
- * The queue down the left; the invoice — who, how much, what for in the AI's
- * words and in the teacher's, how it was paid — and what it is charged to in
- * the middle; the budget as a map on the right. Jev proposes in violet before
- * a person decides; nothing it proposes counts until it is saved here.
+ * esfer@ books the money that moved, so what is charged is a line of an
+ * extract — the bank, the caixeta, the prepaid card. The queue down the left;
+ * the movement — concept, amount, account — and the invoices it paid (who,
+ * what for in the AI's words and the teacher's), which are what tell the
+ * line, in the middle; the budget as a map on the right. Jev proposes in
+ * violet before a person decides; nothing it proposes counts until it is
+ * saved here.
  *
  * The secretari/a's alone: the route and every write check it.
  */
@@ -49,11 +52,11 @@ const counts = computed(() => {
 })
 
 /**
- * The list as it was when the tab or the search last changed. Saving an
- * invoice moves it to "Fetes", but it stays where it was here, so "next" is
+ * The list as it was when the tab or the search last changed. Saving a
+ * movement moves it to "Fets", but it stays where it was here, so "next" is
  * the one that was next — the same rule as the register's window.
  */
-const frozen = ref<string[]>([])
+const frozen = ref<number[]>([])
 function refreeze() {
   const words = fold(railSearch.value)
   frozen.value = queue.value
@@ -61,29 +64,45 @@ function refreeze() {
     .filter(
       (item) =>
         !words ||
-        fold(`${item.proveidor} ${item.descripcio} ${item.descripcio_compra} ${item.num_factura}`).includes(words),
+        fold(
+          [
+            item.concepte,
+            item.mes_dades,
+            item.codi,
+            item.compte,
+            ...item.factures.flatMap((f) => [f.proveidor, f.descripcio, f.descripcio_compra, f.num_factura]),
+          ].join(' '),
+        ).includes(words),
     )
-    .map((item) => item.reference)
+    .map((item) => item.id)
 }
 watch([tab, railSearch], refreeze)
 
-const byRef = computed(() => new Map(queue.value.map((item) => [item.reference, item])))
-const rail = computed(() => frozen.value.map((ref) => byRef.value.get(ref)).filter(Boolean) as PartidaQueueItem[])
+const byRef = computed(() => new Map(queue.value.map((item) => [item.id, item])))
+const rail = computed(() => frozen.value.map((id) => byRef.value.get(id)).filter(Boolean) as PartidaQueueItem[])
 
-const currentRef = computed(() => (typeof route.query.f === 'string' ? route.query.f : null))
+const currentRef = computed(() => Number(route.query.m) || null)
 const current = computed(() => (currentRef.value ? (byRef.value.get(currentRef.value) ?? null) : null))
 const position = computed(() => (currentRef.value ? frozen.value.indexOf(currentRef.value) : -1))
 const nextRef = computed(() => (position.value >= 0 ? frozen.value[position.value + 1] : frozen.value[0]))
 const prevRef = computed(() => (position.value > 0 ? frozen.value[position.value - 1] : undefined))
 
-function open(reference: string | undefined, replace = false) {
-  if (!reference || reference === currentRef.value) return
-  if (dirty.value && !window.confirm('Aquesta factura té canvis sense desar. Vols descartar-los?')) return
-  const to = { query: { ...route.query, f: reference } }
+function open(id: number | undefined, replace = false) {
+  if (!id || id === currentRef.value) return
+  if (dirty.value && !window.confirm('Aquest moviment té canvis sense desar. Vols descartar-los?')) return
+  const to = { query: { ...route.query, m: String(id) } }
   void (replace ? router.replace(to) : router.push(to))
 }
 
-// ── The budget for this invoice's year ──────────────────────────────────────
+/** What the rail calls a movement: who was paid, when an invoice says so; the bank's words if not. */
+function railName(item: PartidaQueueItem) {
+  return item.factures[0]?.proveidor || item.concepte || 'Sense concepte'
+}
+
+/** Parts are always positive, whichever way the money went. */
+const total = computed(() => (current.value ? Math.abs(current.value.import_value) : null))
+
+// ── The budget for this movement's year ─────────────────────────────────────
 
 const exercici = computed(() => current.value?.exercici ?? null)
 const budgetQuery = useQuery({
@@ -96,7 +115,7 @@ const lineById = computed(() => new Map(lines.value.map((p) => [p.id, p])))
 const noBudget = computed(() => budgetQuery.isSuccess.value && budget.value?.exercici == null)
 const jevOn = computed(() => Boolean(budget.value?.jev))
 
-// ── What this invoice is charged to (the draft) ─────────────────────────────
+// ── What this movement is charged to (the draft) ────────────────────────────
 
 interface DraftLine {
   id: number
@@ -117,10 +136,10 @@ function loadDraft(item: PartidaQueueItem | null) {
 }
 
 const dirty = computed(() => keyOf(draft.value) !== savedKey.value && (draft.value.length > 0 || savedKey.value !== ''))
-watch(() => current.value?.reference, () => loadDraft(current.value), { immediate: true })
+watch(() => current.value?.id, () => loadDraft(current.value), { immediate: true })
 // A refetch updates the draft only while nobody is editing it.
 watch(current, (item, old) => {
-  if (item && old && item.reference === old.reference && !dirty.value) loadDraft(item)
+  if (item && old && item.id === old.id && !dirty.value) loadDraft(item)
 })
 
 const unconfirmed = computed(
@@ -136,13 +155,13 @@ const proposalAsIs = computed(() => {
 })
 
 function spreadEvenly() {
-  const total = current.value?.import_value
+  const whole = total.value
   const n = draft.value.length
-  if (!total || n < 2) return
-  const share = Math.floor((total * 100) / n) / 100
+  if (!whole || n < 2) return
+  const share = Math.floor((whole * 100) / n) / 100
   draft.value = draft.value.map((line, index) => ({
     ...line,
-    amount: index === n - 1 ? Math.round((total - share * (n - 1)) * 100) / 100 : share,
+    amount: index === n - 1 ? Math.round((whole - share * (n - 1)) * 100) / 100 : share,
   }))
 }
 
@@ -193,10 +212,10 @@ const splitLines = computed<SplitLine[]>(() =>
 
 const splitBalanced = computed(() => {
   if (draft.value.length < 2) return true
-  const total = current.value?.import_value
+  const whole = total.value
   const sum = draft.value.reduce((acc, line) => acc + (line.amount ?? 0), 0)
   if (draft.value.some((line) => !line.amount || line.amount <= 0)) return false
-  return total == null || Math.abs(sum - total) < 0.005
+  return whole == null || Math.abs(sum - whole) < 0.005
 })
 
 // First load (or a cached one): start on the pending ones, or everything if
@@ -205,7 +224,7 @@ watch(
   () => queueQuery.data.value,
   (data, old) => {
     if (!data || old) return
-    const linked = data.find((item) => item.reference === currentRef.value)
+    const linked = data.find((item) => item.id === currentRef.value)
     if (linked) tab.value = linked.estat
     else if (!data.some((item) => item.estat === 'pendent')) {
       tab.value = data.some((item) => item.estat === 'proposta') ? 'proposta' : 'totes'
@@ -223,7 +242,7 @@ const saveError = ref('')
 
 function replaceItem(item: PartidaQueueItem) {
   queryClient.setQueryData<PartidaQueueItem[]>(['partides-queue'], (list) =>
-    list?.map((existing) => (existing.reference === item.reference ? item : existing)),
+    list?.map((existing) => (existing.id === item.id ? item : existing)),
   )
 }
 
@@ -235,7 +254,7 @@ async function save(advance: boolean) {
   saveError.value = ''
   try {
     const saved = await api.assignPartides(
-      item.reference,
+      item.id,
       draft.value.map((line) => ({ partida_id: line.id, import_assignat: draft.value.length > 1 ? line.amount : null })),
     )
     replaceItem(saved)
@@ -251,37 +270,37 @@ async function save(advance: boolean) {
 
 // ── Jev ─────────────────────────────────────────────────────────────────────
 
-const asking = reactive(new Set<string>())
+const asking = reactive(new Set<number>())
 const bulk = reactive({ running: false, done: 0, total: 0, failed: 0, stop: false })
 const askError = ref('')
-const asked = new Set<string>()
+const asked = new Set<number>()
 
-async function askJev(reference: string, quiet = false) {
-  if (asking.has(reference)) return
-  asking.add(reference)
+async function askJev(id: number, quiet = false) {
+  if (asking.has(id)) return
+  asking.add(id)
   if (!quiet) askError.value = ''
   try {
-    const item = await api.suggestPartides(reference)
+    const item = await api.suggestPartides(id)
     replaceItem(item)
-    if (item.reference === currentRef.value && !dirty.value) loadDraft(item)
+    if (item.id === currentRef.value && !dirty.value) loadDraft(item)
   } catch (error) {
     if (!quiet) askError.value = error instanceof ApiError ? error.message : String(error)
     throw error
   } finally {
-    asking.delete(reference)
+    asking.delete(id)
   }
 }
 
-/** Open a pending invoice nobody has asked about, and Jev is asked — and the next one too. */
+/** Open a pending movement nobody has asked about, and Jev is asked — and the next one too. */
 watch(
   [current, jevOn, noBudget],
   () => {
     if (!jevOn.value || noBudget.value || bulk.running) return
-    for (const reference of [currentRef.value, nextRef.value]) {
-      const item = reference ? byRef.value.get(reference) : undefined
-      if (item && item.estat === 'pendent' && !item.suggestion && !asked.has(item.reference)) {
-        asked.add(item.reference)
-        void askJev(item.reference, item.reference !== currentRef.value).catch(() => undefined)
+    for (const id of [currentRef.value, nextRef.value]) {
+      const item = id ? byRef.value.get(id) : undefined
+      if (item && item.estat === 'pendent' && !item.suggestion && !asked.has(item.id)) {
+        asked.add(item.id)
+        void askJev(item.id, item.id !== currentRef.value).catch(() => undefined)
       }
     }
   },
@@ -303,7 +322,7 @@ const topSuggestions = computed(() =>
     .filter((r): r is typeof r & { partida: Partida } => Boolean(r.partida)),
 )
 
-/** Every pending invoice without a proposal, a few at a time. */
+/** Every pending movement without a proposal, a few at a time. */
 const bulkTargets = computed(() => queue.value.filter((item) => item.estat === 'pendent' && !item.suggestion))
 
 async function proposeAll() {
@@ -311,14 +330,14 @@ async function proposeAll() {
     bulk.stop = true
     return
   }
-  const targets = bulkTargets.value.map((item) => item.reference)
+  const targets = bulkTargets.value.map((item) => item.id)
   Object.assign(bulk, { running: true, done: 0, total: targets.length, failed: 0, stop: false })
   const worker = async () => {
     while (targets.length && !bulk.stop) {
-      const reference = targets.shift()!
-      asked.add(reference)
+      const id = targets.shift()!
+      asked.add(id)
       try {
-        await askJev(reference, true)
+        await askJev(id, true)
       } catch {
         bulk.failed += 1
       }
@@ -331,23 +350,39 @@ async function proposeAll() {
 
 // ── The original ────────────────────────────────────────────────────────────
 
-const peekOpen = ref(false)
+/** The invoice whose original floats over the map, by register reference. */
+const peekRef = ref<string | null>(null)
+const peekInvoice = computed<PartidaInvoice | null>(
+  () => current.value?.factures.find((f) => f.reference === peekRef.value) ?? null,
+)
 const originals = reactive(new Map<string, { url: string; type: string } | 'loading' | 'missing'>())
 const peekFile = computed(() => {
-  const entry = currentRef.value ? originals.get(currentRef.value) : undefined
+  const entry = peekRef.value ? originals.get(peekRef.value) : undefined
   return typeof entry === 'object' ? entry : null
 })
+const firstWithFile = computed(() => current.value?.factures.find((f) => f.file_url) ?? null)
 
-async function loadOriginal(item: PartidaQueueItem | null) {
-  if (!item?.file_url || originals.has(item.reference)) return
-  originals.set(item.reference, 'loading')
+function togglePeek(invoice: PartidaInvoice | null) {
+  peekRef.value = invoice && peekRef.value !== invoice.reference ? invoice.reference : null
+}
+
+async function loadOriginal(invoice: PartidaInvoice | null) {
+  if (!invoice?.file_url || originals.has(invoice.reference)) return
+  originals.set(invoice.reference, 'loading')
   try {
-    originals.set(item.reference, await api.getDocumentFile(item.reference))
+    originals.set(invoice.reference, await api.getDocumentFile(invoice.reference))
   } catch {
-    originals.set(item.reference, 'missing')
+    originals.set(invoice.reference, 'missing')
   }
 }
-watch([current, peekOpen], () => peekOpen.value && void loadOriginal(current.value))
+watch(peekInvoice, (invoice) => void loadOriginal(invoice))
+// Another movement, other invoices: a peek left open follows to its first one.
+watch(
+  () => current.value?.id,
+  () => {
+    if (peekRef.value) peekRef.value = firstWithFile.value?.reference ?? null
+  },
+)
 onBeforeUnmount(() => {
   for (const entry of originals.values()) if (typeof entry === 'object') URL.revokeObjectURL(entry.url)
 })
@@ -389,7 +424,7 @@ function onKey(event: KeyboardEvent) {
     const pick = topSuggestions.value[Number(event.key) - 1]
     if (pick) toggle(pick.partida_id)
   } else if (event.key === 'o') {
-    peekOpen.value = !peekOpen.value
+    togglePeek(peekRef.value ? null : firstWithFile.value)
   } else if (event.key === 'p' && jevOn.value && currentRef.value) {
     void askJev(currentRef.value).catch(() => undefined)
   }
@@ -408,6 +443,18 @@ const doneShare = computed(() => (queue.value.length ? counts.value.assignada / 
 function pct(value: number) {
   return `${Math.round(value * 100)} %`
 }
+
+/** Where the movement stands in Justificar extractes, when it is not confirmed. */
+const JUSTIFICACIO: Record<string, string> = {
+  unmatched: 'Encara no s’ha justificat amb cap factura.',
+  proposed: 'Hi ha una factura proposada, pendent de confirmar a Justificar extractes.',
+  no_match: 'No s’ha trobat cap factura que hi encaixi.',
+  rejected: 'La factura proposada es va rebutjar.',
+}
+
+function signed(value: number) {
+  return `${value > 0 ? '+' : ''}${formatAmount(value)}`
+}
 </script>
 
 <template>
@@ -416,12 +463,12 @@ function pct(value: number) {
       <div>
         <h1 class="page-title">Assignar partides</h1>
         <p class="page-lead">
-          Cada factura, a la partida del pressupost{{ budget?.exercici ? ` ${budget.exercici}` : '' }} on s'imputa.
+          Cada moviment dels extractes, a la partida del pressupost{{ budget?.exercici ? ` ${budget.exercici}` : '' }} on s'imputa.
           <template v-if="budget?.centre"> · {{ budget.centre }}</template>
         </p>
       </div>
       <div class="head-side">
-        <div class="progress-block" :title="`${counts.assignada} de ${counts.totes} factures amb partida`">
+        <div class="progress-block" :title="`${counts.assignada} de ${counts.totes} moviments amb partida`">
           <span class="progress-label">
             <strong>{{ counts.assignada }}</strong>
             <span class="muted"> / {{ counts.totes }} fetes</span>
@@ -433,7 +480,7 @@ function pct(value: number) {
           type="button"
           class="btn btn-ai btn-sm"
           :disabled="!bulk.running && bulkTargets.length === 0"
-          :title="bulk.running ? 'Atura' : 'Jev proposa una partida per a cada factura pendent; no es desa res fins que ho confirmis'"
+          :title="bulk.running ? 'Atura' : 'Jev proposa una partida per a cada moviment pendent; no es desa res fins que ho confirmis'"
           @click="proposeAll"
         >
           <AppIcon :name="bulk.running ? 'stop' : 'sparkles'" :size="14" />
@@ -453,12 +500,12 @@ function pct(value: number) {
     </p>
     <p v-if="bulk.failed && !bulk.running" class="notice notice-error">
       <AppIcon name="alert" :size="15" />
-      <span>Jev no ha pogut proposar {{ bulk.failed }} factures. Torna-ho a provar.</span>
+      <span>Jev no ha pogut proposar {{ bulk.failed }} moviments. Torna-ho a provar.</span>
     </p>
 
     <div class="work">
       <!-- ── The queue ─────────────────────────────────────────────────── -->
-      <aside class="rail" aria-label="Factures">
+      <aside class="rail" aria-label="Moviments">
         <nav class="rail-tabs" role="tablist">
           <button
             v-for="option in TABS"
@@ -474,42 +521,44 @@ function pct(value: number) {
             <span class="rail-count">{{ counts[option.id] }}</span>
           </button>
         </nav>
-        <input v-model="railSearch" class="input rail-search" type="search" placeholder="Proveïdor, descripció…" />
+        <input v-model="railSearch" class="input rail-search" type="search" placeholder="Concepte, proveïdor, descripció…" />
         <ul class="rail-list">
           <li v-if="queueQuery.isLoading.value" class="rail-empty">Carregant…</li>
           <li v-else-if="!rail.length" class="rail-empty">Res per aquí.</li>
-          <li v-for="item in rail" :key="item.reference">
+          <li v-for="item in rail" :key="item.id">
             <button
               type="button"
               class="rail-item"
-              :class="{ on: item.reference === currentRef }"
-              :data-ref="item.reference"
-              @click="open(item.reference)"
+              :class="{ on: item.id === currentRef }"
+              :data-ref="item.id"
+              @click="open(item.id)"
             >
               <span class="state" :class="`state-${item.estat}`" :title="item.estat">
                 <AppIcon v-if="item.estat === 'assignada'" name="check" :size="10" />
                 <AppIcon v-else-if="item.estat === 'proposta'" name="sparkles" :size="10" />
-                <AppIcon v-else-if="asking.has(item.reference)" name="refresh" :size="10" class="spin" />
+                <AppIcon v-else-if="asking.has(item.id)" name="refresh" :size="10" class="spin" />
               </span>
               <span class="rail-main">
-                <span class="rail-name truncate">{{ item.proveidor || 'Sense proveïdor' }}</span>
-                <span class="rail-sub truncate">{{ item.descripcio_compra || item.descripcio || '—' }}</span>
+                <span class="rail-name truncate">{{ railName(item) }}</span>
+                <span class="rail-sub truncate">
+                  {{ item.factures.length ? item.factures[0].descripcio_compra || item.factures[0].descripcio || item.concepte : `${item.compte} · ${item.tipus || item.categoria}` }}
+                </span>
               </span>
               <span class="rail-side">
-                <span class="mono">{{ formatAmount(item.import_value) }}</span>
-                <span class="subtle">{{ formatDate(item.data_factura) }}</span>
+                <span class="mono" :class="{ 'is-in': item.import_value > 0 }">{{ signed(item.import_value) }}</span>
+                <span class="subtle">{{ formatDate(item.data) }}</span>
               </span>
             </button>
           </li>
         </ul>
       </aside>
 
-      <!-- ── The invoice and its lines ─────────────────────────────────── -->
-      <section v-if="current" class="invoice" aria-label="Factura">
+      <!-- ── The movement, what it paid, and its lines ─────────────────── -->
+      <section v-if="current" class="invoice" aria-label="Moviment">
         <article class="card inv">
           <div class="inv-top">
             <span class="eyebrow">
-              {{ current.tipus_document || 'Document' }}<template v-if="current.num_factura"> · {{ current.num_factura }}</template>
+              {{ current.compte || 'Extracte' }}<template v-if="current.codi"> · {{ current.codi }}</template>
             </span>
             <span class="inv-nav">
               <button type="button" class="btn btn-ghost btn-icon btn-sm" :disabled="!prevRef" title="Anterior (K)" @click="open(prevRef)">
@@ -521,60 +570,73 @@ function pct(value: number) {
               </button>
             </span>
           </div>
-          <h2 class="inv-supplier">{{ current.proveidor || 'Sense proveïdor' }}</h2>
-          <span v-if="current.cif_proveidor" class="mono subtle inv-cif">{{ current.cif_proveidor }}</span>
+          <h2 class="inv-supplier">{{ current.concepte || 'Sense concepte' }}</h2>
+          <span v-if="current.mes_dades" class="subtle inv-cif">{{ current.mes_dades }}</span>
 
           <div class="inv-amount">
-            <span class="amount mono">{{ formatAmount(current.import_value) }}</span>
+            <span class="amount mono" :class="{ 'is-in': current.import_value > 0 }">{{ signed(current.import_value) }}</span>
             <span class="inv-date">
-              {{ formatDate(current.data_factura) || 'Sense data' }}
-              <span v-if="current.curs" class="badge badge-neutral mono" title="Curs escolar de la factura">{{ current.curs }}</span>
+              {{ formatDate(current.data) || 'Sense data' }}
+              <span v-if="current.curs" class="badge badge-neutral mono" title="Curs escolar del moviment">{{ current.curs }}</span>
             </span>
           </div>
 
           <dl class="inv-facts">
             <div>
-              <dt>Mètode de pagament</dt>
-              <dd>{{ current.metode_pagament || '—' }}</dd>
+              <dt>Tipus</dt>
+              <dd>{{ current.tipus || '—' }}</dd>
             </div>
             <div>
-              <dt>Pagament</dt>
-              <dd>{{ current.pagament || '—' }}</dd>
-            </div>
-            <div>
-              <dt>Compte</dt>
-              <dd>{{ current.pressupost_afectat || '—' }}</dd>
-            </div>
-            <div>
-              <dt>Responsable</dt>
-              <dd>{{ current.responsable_nom || '—' }}</dd>
+              <dt>Partides</dt>
+              <dd>{{ current.sentit === 'ingres' ? "D'ingressos" : 'De despeses' }}</dd>
             </div>
           </dl>
 
-          <div class="desc">
-            <span class="desc-label"><AppIcon name="user" :size="12" /> Què s'ha comprat, segons qui ho va comprar</span>
-            <p :class="{ muted: !current.descripcio_compra }">{{ current.descripcio_compra || 'Sense descripció del professorat.' }}</p>
-          </div>
-          <div class="desc desc-ai">
-            <span class="desc-label"><AppIcon name="sparkles" :size="12" class="ai-mark" /> Segons la IA, del document</span>
-            <p :class="{ muted: !current.descripcio }">{{ current.descripcio || 'La IA no n\'ha extret cap descripció.' }}</p>
-          </div>
-
-          <div class="inv-actions">
-            <button type="button" class="btn btn-outline btn-sm" :disabled="!current.file_url" @click="peekOpen = !peekOpen">
-              <AppIcon name="eye" :size="14" />
-              {{ peekOpen ? "Amaga l'original" : "Veure l'original" }}
-            </button>
-            <RouterLink class="btn btn-ghost btn-sm" :to="{ name: 'document', params: { internalDocNumber: current.reference } }">
-              <AppIcon name="external" :size="14" />
-              Fitxa
-            </RouterLink>
+          <div class="paid">
+            <span class="desc-label"><AppIcon name="invoice" :size="12" /> {{ current.factures.length > 1 ? `Paga ${current.factures.length} factures` : current.factures.length ? 'Paga la factura' : 'Factura' }}</span>
+            <div v-for="invoice in current.factures" :key="invoice.reference" class="paid-invoice">
+              <div class="paid-head">
+                <span class="paid-supplier truncate">{{ invoice.proveidor || 'Sense proveïdor' }}</span>
+                <span class="mono">{{ formatAmount(invoice.import_value) }}</span>
+              </div>
+              <span class="subtle paid-sub">
+                {{ invoice.tipus_document || 'Document' }}<template v-if="invoice.num_factura"> · {{ invoice.num_factura }}</template>
+                <template v-if="invoice.data_factura"> · {{ formatDate(invoice.data_factura) }}</template>
+                <template v-if="invoice.responsable_nom"> · {{ invoice.responsable_nom }}</template>
+              </span>
+              <div class="desc">
+                <span class="desc-label"><AppIcon name="user" :size="12" /> Què s'ha comprat, segons qui ho va comprar</span>
+                <p :class="{ muted: !invoice.descripcio_compra }">{{ invoice.descripcio_compra || 'Sense descripció del professorat.' }}</p>
+              </div>
+              <div class="desc desc-ai">
+                <span class="desc-label"><AppIcon name="sparkles" :size="12" class="ai-mark" /> Segons la IA, del document</span>
+                <p :class="{ muted: !invoice.descripcio }">{{ invoice.descripcio || 'La IA no n\'ha extret cap descripció.' }}</p>
+              </div>
+              <div class="inv-actions">
+                <button type="button" class="btn btn-outline btn-sm" :disabled="!invoice.file_url" @click="togglePeek(invoice)">
+                  <AppIcon name="eye" :size="14" />
+                  {{ peekRef === invoice.reference ? "Amaga l'original" : "Veure l'original" }}
+                </button>
+                <RouterLink class="btn btn-ghost btn-sm" :to="{ name: 'document', params: { internalDocNumber: invoice.reference } }">
+                  <AppIcon name="external" :size="14" />
+                  Fitxa
+                </RouterLink>
+              </div>
+            </div>
+            <p v-if="!current.factures.length" class="paid-none">
+              <template v-if="current.categoria === 'pagament'">{{ JUSTIFICACIO[current.match_status] ?? 'Sense factura confirmada.' }}</template>
+              <template v-else>Aquest moviment no va amb factura: el concepte és el que diu la partida.</template>
+              <RouterLink
+                v-if="current.categoria === 'pagament'"
+                :to="{ name: 'reconcile', query: { extracte: String(current.import_id), moviment: String(current.id) } }"
+              >Justifica'l</RouterLink>
+            </p>
           </div>
         </article>
 
         <article class="card charge" :class="{ 'is-dirty': dirty }">
           <header class="charge-head">
-            <span class="charge-title">Partides d'aquesta factura</span>
+            <span class="charge-title">Partides d'aquest moviment</span>
             <span v-if="current.estat === 'assignada' && !dirty" class="badge badge-olive"><AppIcon name="check" :size="11" /> Desat</span>
             <span v-else-if="proposalAsIs" class="badge badge-ai" title="Encara no s'ha desat: ⌘↵ la confirma">
               <AppIcon name="sparkles" :size="11" /> Proposta de Jev
@@ -608,7 +670,7 @@ function pct(value: number) {
             v-if="draft.length > 1"
             v-model="splitModel"
             :lines="splitLines"
-            :total="current.import_value"
+            :total="total"
           />
 
           <div v-if="jevOn" class="jev">
@@ -617,12 +679,12 @@ function pct(value: number) {
               <button
                 type="button"
                 class="btn btn-ai-outline btn-sm"
-                :disabled="asking.has(current.reference) || noBudget"
+                :disabled="asking.has(current.id) || noBudget"
                 title="Torna-ho a preguntar a Jev (P)"
-                @click="askJev(current.reference).catch(() => undefined)"
+                @click="askJev(current.id).catch(() => undefined)"
               >
-                <AppIcon :name="asking.has(current.reference) ? 'refresh' : 'sparkles'" :size="13" :class="{ spin: asking.has(current.reference) }" />
-                {{ asking.has(current.reference) ? 'Pensant…' : suggestion ? 'Torna-hi' : 'Proposa' }}
+                <AppIcon :name="asking.has(current.id) ? 'refresh' : 'sparkles'" :size="13" :class="{ spin: asking.has(current.id) }" />
+                {{ asking.has(current.id) ? 'Pensant…' : suggestion ? 'Torna-hi' : 'Proposa' }}
               </button>
             </div>
             <p v-if="askError" class="jev-error">{{ askError }}</p>
@@ -642,9 +704,9 @@ function pct(value: number) {
                 </button>
               </li>
             </ol>
-            <p v-else-if="suggestion && suggestion.cap > 0.5" class="jev-note">Jev creu que aquest document no s'imputa a cap partida de despesa.</p>
-            <p v-else-if="!suggestion && !asking.has(current.reference)" class="jev-note">Encara no s'ha preguntat a Jev.</p>
-            <p v-if="suggestion?.multiple && suggestion.multiple >= 0.6" class="jev-note">Sembla una compra de conceptes diferents: potser cal repartir-la.</p>
+            <p v-else-if="suggestion && suggestion.cap > 0.5" class="jev-note">Jev creu que aquest moviment no s'imputa a cap partida.</p>
+            <p v-else-if="!suggestion && !asking.has(current.id)" class="jev-note">Encara no s'ha preguntat a Jev.</p>
+            <p v-if="suggestion?.multiple && suggestion.multiple >= 0.6" class="jev-note">Sembla que paga conceptes diferents: potser cal repartir-lo.</p>
           </div>
 
           <p v-if="saveError" class="notice notice-error"><AppIcon name="alert" :size="14" /><span>{{ saveError }}</span></p>
@@ -654,7 +716,7 @@ function pct(value: number) {
               type="button"
               class="btn btn-primary"
               :disabled="saving || !splitBalanced || !dirty"
-              :title="splitBalanced ? 'Desa i ves a la següent (⌘↵)' : 'El repartiment no quadra amb la factura'"
+              :title="splitBalanced ? 'Desa i ves a la següent (⌘↵)' : 'El repartiment no quadra amb el moviment'"
               @click="save(true)"
             >
               <AppIcon name="check" :size="14" />
@@ -666,7 +728,7 @@ function pct(value: number) {
         </article>
       </section>
       <section v-else class="invoice invoice-empty">
-        <p class="empty">{{ queueQuery.isLoading.value ? 'Carregant…' : 'Tria una factura de la llista.' }}</p>
+        <p class="empty">{{ queueQuery.isLoading.value ? 'Carregant…' : 'Tria un moviment de la llista.' }}</p>
       </section>
 
       <!-- ── The budget map ────────────────────────────────────────────── -->
@@ -677,7 +739,8 @@ function pct(value: number) {
           :partides="lines"
           :selected="draft.map((line) => line.id)"
           :suggested="suggestedMap"
-          :invoice-year="current?.curs ?? ''"
+          :movement-year="current?.curs ?? ''"
+          :side="current?.sentit ?? 'despesa'"
           :disabled="!current"
           @toggle="toggle"
         />
@@ -687,7 +750,7 @@ function pct(value: number) {
 
     <footer class="keys" aria-label="Dreceres">
       <AppIcon name="keyboard" :size="13" />
-      <span><kbd class="kbd">J</kbd><kbd class="kbd">K</kbd> factura</span>
+      <span><kbd class="kbd">J</kbd><kbd class="kbd">K</kbd> moviment</span>
       <span><kbd class="kbd">/</kbd> cerca partida · <kbd class="kbd">↑</kbd><kbd class="kbd">↓</kbd><kbd class="kbd">↵</kbd> tria</span>
       <span><kbd class="kbd">1</kbd><kbd class="kbd">2</kbd><kbd class="kbd">3</kbd> proposta de Jev</span>
       <span><kbd class="kbd">⌘↵</kbd> desa i següent</span>
@@ -696,14 +759,14 @@ function pct(value: number) {
     </footer>
 
     <DocumentPeek
-      v-if="peekOpen && current"
+      v-if="peekInvoice"
       :src="peekFile?.url ?? null"
       :type="peekFile?.type ?? ''"
-      :loading="originals.get(current.reference) === 'loading'"
-      :title="current.num_factura || 'Sense número'"
-      :subtitle="`${current.proveidor} · ${formatDate(current.data_factura)} · ${formatAmount(current.import_value)}`"
+      :loading="originals.get(peekInvoice.reference) === 'loading'"
+      :title="peekInvoice.num_factura || 'Sense número'"
+      :subtitle="`${peekInvoice.proveidor} · ${formatDate(peekInvoice.data_factura)} · ${formatAmount(peekInvoice.import_value)}`"
       :home="peekHome"
-      @close="peekOpen = false"
+      @close="peekRef = null"
     />
   </div>
 </template>
@@ -1010,6 +1073,53 @@ function pct(value: number) {
   display: flex;
   gap: 6px;
   margin-top: 8px;
+}
+
+.is-in {
+  color: var(--olive-700);
+}
+
+.paid {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.paid-invoice {
+  display: grid;
+  gap: 2px;
+}
+
+.paid-invoice + .paid-invoice {
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.paid-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.paid-supplier {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.paid-sub {
+  font-size: var(--text-xs);
+}
+
+.paid-none {
+  margin: 0;
+  padding: 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--ink-500);
+  font-size: var(--text-sm);
 }
 
 /* ── What it is charged to ────────────────────────────────────────────── */

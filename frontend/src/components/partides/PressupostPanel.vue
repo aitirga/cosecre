@@ -154,7 +154,7 @@ function saveLine(p: Partida) {
     <div class="card-head">
       <div>
         <h2 class="card-title">Pressupost d'esfer@</h2>
-        <p class="hint">Les partides on s'imputen les factures. Cada curs, torna a importar l'Excel: el que ja s'ha assignat i escrit es manté.</p>
+        <p class="hint">Les partides on s'imputen els moviments dels extractes. Cada curs, torna a importar l'Excel: el que ja s'ha assignat i escrit es manté.</p>
       </div>
       <select
         v-if="(budget?.exercicis.length ?? 0) > 1"
@@ -247,7 +247,7 @@ function saveLine(p: Partida) {
           <li><strong>{{ preview.created }}</strong> noves</li>
           <li><strong>{{ preview.updated }}</strong> actualitzades</li>
           <li><strong>{{ preview.unchanged }}</strong> iguals</li>
-          <li v-if="preview.retired"><strong>{{ preview.retired }}</strong> retirades <span class="subtle">(amb factures, es conserven)</span></li>
+          <li v-if="preview.retired"><strong>{{ preview.retired }}</strong> retirades <span class="subtle">(amb moviments, es conserven)</span></li>
           <li v-if="preview.removed"><strong>{{ preview.removed }}</strong> esborrades</li>
           <li v-if="preview.context_inherited"><strong>{{ preview.context_inherited }}</strong> amb el context de l'any anterior</li>
         </ul>
@@ -289,7 +289,7 @@ function saveLine(p: Partida) {
       <div>
         <h2 class="card-title"><AppIcon name="sparkles" :size="14" class="ai-mark" /> Criteris per a Jev</h2>
         <p class="hint">
-          Com tria el centre les partides, en general. Jev ho llegeix cada cop que proposa una partida per a una factura.
+          Com tria el centre les partides, en general. Jev ho llegeix cada cop que proposa una partida per a un moviment.
         </p>
       </div>
       <span class="badge" :class="budget?.jev ? 'badge-ai' : 'badge-neutral'">
@@ -303,7 +303,7 @@ function saveLine(p: Partida) {
         class="textarea"
         rows="5"
         maxlength="4000"
-        placeholder="Per exemple: Les fotocòpies de Konica van a «Fotocòpies Konika (Secretaria)». Les compres d'Amazon per a informàtica, a «Material i estris informàtics». Si una factura és de material per al curs que ve (compres de juny i juliol), tria la partida del curs següent."
+        placeholder="Per exemple: Les fotocòpies de Konica van a «Fotocòpies Konika (Secretaria)». Les compres d'Amazon per a informàtica, a «Material i estris informàtics». Si un pagament és de material per al curs que ve (compres de juny i juliol), tria la partida del curs següent."
       />
       <div class="row-actions">
         <span class="subtle">{{ general.length }}/4000</span>

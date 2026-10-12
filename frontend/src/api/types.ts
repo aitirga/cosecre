@@ -941,11 +941,12 @@ export interface Partida {
   nom: string
   import_pressupost: number
   ordre: number
-  /** A heading with sub-lines: invoices go to its sub-lines. */
+  /** A heading with sub-lines: movements go to its sub-lines. */
   te_fills: boolean
   retirada: boolean
   context: string
-  factures: number
+  /** Confirmed movements charged to it, and their total. */
+  moviments: number
   imputat: number
 }
 
@@ -1001,7 +1002,8 @@ export interface PartidaSuggestion {
   created_at: string
 }
 
-export interface PartidaQueueItem {
+/** An invoice a movement paid, as confirmed in Justificar extractes. */
+export interface PartidaInvoice {
   reference: string
   tipus_document: string
   num_factura: string
@@ -1011,13 +1013,28 @@ export interface PartidaQueueItem {
   import_value: number | null
   descripcio: string
   descripcio_compra: string
-  metode_pagament: string
-  pagament: string
-  pressupost_afectat: string
   responsable_nom: string
-  validat: boolean
   file_url: string | null
   file_name: string | null
+}
+
+/** A statement movement to charge to the budget. */
+export interface PartidaQueueItem {
+  id: number
+  import_id: number
+  codi: string
+  compte: string
+  tipus: string
+  categoria: string
+  data: string | null
+  concepte: string
+  mes_dades: string
+  /** Signed, as the statement has it: negative is money out. */
+  import_value: number
+  /** Which side of the budget applies: expense lines for money out, income for money in. */
+  sentit: 'despesa' | 'ingres'
+  match_status: string
+  factures: PartidaInvoice[]
   exercici: number | null
   curs: string
   estat: 'pendent' | 'proposta' | 'assignada'

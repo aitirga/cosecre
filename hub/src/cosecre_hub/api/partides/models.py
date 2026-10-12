@@ -1,4 +1,4 @@
-"""The school's budget lines (partides) and which invoices are charged to them.
+"""The school's budget lines (partides) and which statement movements are charged to them.
 
 A budget comes from esfer@ once a year as an Excel; importing it again updates
 the lines in place, keyed by ``(exercici, codi)``, so the assignments already
@@ -26,7 +26,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...db import Base
-from ...models import Document, utcnow
+from ...models import BankMovement, utcnow
 
 
 class Pressupost(Base):
@@ -66,7 +66,7 @@ class Partida(Base):
     import_pressupost: Mapped[float] = mapped_column(Float, default=0.0)
     #: Position in the export, which is esfer@'s own order.
     ordre: Mapped[int] = mapped_column(Integer, default=0)
-    #: Gone from the latest import but kept, because invoices are charged to it.
+    #: Gone from the latest import but kept, because movements are charged to it.
     retirada: Mapped[bool] = mapped_column(Boolean, default=False)
     #: What the secretari/a wrote about when to use this line. Read by Jev.
     context: Mapped[str] = mapped_column(Text, default="")
@@ -75,22 +75,27 @@ class Partida(Base):
     )
 
 
-class DocumentPartida(Base):
-    """One invoice charged to one line. An invoice may have several."""
+class MovementPartida(Base):
+    """One statement movement charged to one line. A movement may have several.
 
-    __tablename__ = "document_partides"
+    esfer@ books the money that moved, not the paper behind it: what is
+    charged to a line is the bank (or caixeta, or card) movement, and the
+    invoices it paid are only what tells which line.
+    """
+
+    __tablename__ = "movement_partides"
     __table_args__ = (
-        UniqueConstraint("document_id", "partida_id", name="uq_document_partides_pair"),
+        UniqueConstraint("movement_id", "partida_id", name="uq_movement_partides_pair"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    document_id: Mapped[int] = mapped_column(
-        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    movement_id: Mapped[int] = mapped_column(
+        ForeignKey("bank_movements.id", ondelete="CASCADE"), index=True
     )
     partida_id: Mapped[int] = mapped_column(
         ForeignKey("partides.id", ondelete="CASCADE"), index=True
     )
-    #: The part of the invoice charged here, when it is split. ``None`` = all of it.
+    #: The part of the movement charged here, when it is split. ``None`` = all of it.
     import_assignat: Mapped[float | None] = mapped_column(Float, nullable=True)
     #: ``persona`` or ``jev``: who first put it there.
     origen: Mapped[str] = mapped_column(String(16), default="persona")
@@ -104,18 +109,18 @@ class DocumentPartida(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-class PartidaSuggestion(Base):
-    """Jev's latest ranking for an invoice, kept to show the alternatives."""
+class MovementPartidaSuggestion(Base):
+    """Jev's latest ranking for a movement, kept to show the alternatives."""
 
-    __tablename__ = "partida_suggestions"
+    __tablename__ = "movement_partida_suggestions"
 
-    document_id: Mapped[int] = mapped_column(
-        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    movement_id: Mapped[int] = mapped_column(
+        ForeignKey("bank_movements.id", ondelete="CASCADE"), primary_key=True
     )
     #: ``[{"partida_id": 12, "probability": 0.61}, …]``, best first.
     ranking: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
-    #: Probability that the purchase spans several budget concepts.
+    #: Probability that the payment spans several budget concepts.
     multiple: Mapped[float | None] = mapped_column(Float, nullable=True)
     #: Probability of "no line fits".
     cap: Mapped[float] = mapped_column(Float, default=0.0)
@@ -123,8 +128,8 @@ class PartidaSuggestion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-@event.listens_for(Document, "after_delete")
-def _forget_document(mapper, connection, target: Document) -> None:
+@event.listens_for(BankMovement, "after_delete")
+def _forget_movement(mapper, connection, target: BankMovement) -> None:
     """SQLite does not enforce the cascades, and a reused id would inherit them."""
-    for table in (DocumentPartida.__table__, PartidaSuggestion.__table__):
-        connection.execute(delete(table).where(table.c.document_id == target.id))
+    for table in (MovementPartida.__table__, MovementPartidaSuggestion.__table__):
+        connection.execute(delete(table).where(table.c.movement_id == target.id))

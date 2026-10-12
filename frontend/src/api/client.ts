@@ -652,14 +652,14 @@ export const api = {
   getPartidesQueue() {
     return request<PartidaQueueItem[]>('/partides/queue')
   },
-  assignPartides(reference: string, partides: { partida_id: number; import_assignat: number | null }[]) {
-    return request<PartidaQueueItem>(`/partides/documents/${reference}`, {
+  assignPartides(movementId: number, partides: { partida_id: number; import_assignat: number | null }[]) {
+    return request<PartidaQueueItem>(`/partides/movements/${movementId}`, {
       method: 'PUT',
       body: JSON.stringify({ partides }),
     })
   },
-  suggestPartides(reference: string) {
-    return request<PartidaQueueItem>(`/partides/documents/${reference}/suggest`, { method: 'POST' })
+  suggestPartides(movementId: number) {
+    return request<PartidaQueueItem>(`/partides/movements/${movementId}/suggest`, { method: 'POST' })
   },
 
   // ── Migration from the two old tabs ─────────────────────────────────────

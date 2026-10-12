@@ -22,7 +22,7 @@ import AppIcon from '../AppIcon.vue'
  *
  * Lines sit in blocks — by concept (esfer@'s own headings) or by fund — and
  * each carries its fund's colour as a stripe, so "the Motxilles one" is found
- * by colour before it is read. The invoice's school year leads: lines of
+ * by colour before it is read. The movement's school year leads: lines of
  * other years stay visible but step back. Search, fund, year and level narrow
  * the map; the keyboard walks what is left.
  */
@@ -31,17 +31,20 @@ const props = defineProps<{
   selected: number[]
   /** Jev's probability per line id, for the ones it ranked. */
   suggested: Record<number, number>
-  /** `25-26`: the invoice's school year. */
-  invoiceYear: string
+  /** `25-26`: the movement's school year. */
+  movementYear: string
+  /** The side of the budget the movement belongs to: expenses for money out, income for money in. */
+  side?: 'despesa' | 'ingres'
   disabled?: boolean
 }>()
 const emit = defineEmits<{ toggle: [id: number] }>()
 
 const query = ref('')
 const groupBy = ref<'concepte' | 'fons'>('concepte')
-const year = ref<'factura' | 'tots' | string>('factura')
+const year = ref<'moviment' | 'tots' | string>('moviment')
 const levels = ref<Level[]>([])
 const funds = ref<string[]>([])
+/** The other side of the budget too: income lines for a payment, expense lines for money in. */
 const withIncome = ref(false)
 const onlyFunded = ref(false)
 const search = ref<HTMLInputElement | null>(null)
@@ -56,14 +59,14 @@ interface Line {
   levels: Level[]
   haystack: string
   tone: ReturnType<typeof fundTone>
-  /** Of another school year than the invoice's: shown, but quieter. */
+  /** Of another school year than the movement's: shown, but quieter. */
   aside: boolean
 }
 
 const lines = computed<Line[]>(() =>
   props.partides
     .filter((p) => !p.te_fills && !p.retirada)
-    .filter((p) => withIncome.value || p.tipus === 'despesa')
+    .filter((p) => withIncome.value || p.tipus === (props.side ?? 'despesa'))
     .map((p) => {
       const years = lineYears(p.nom)
       return {
@@ -73,7 +76,7 @@ const lines = computed<Line[]>(() =>
         levels: lineLevels(p.nom),
         haystack: searchText(p, p.codi_pare ? byCode.value.get(p.codi_pare) : undefined),
         tone: fundTone(p.fons),
-        aside: Boolean(props.invoiceYear) && years.length > 0 && !years.includes(props.invoiceYear),
+        aside: Boolean(props.movementYear) && years.length > 0 && !years.includes(props.movementYear),
       }
     }),
 )
@@ -102,11 +105,11 @@ const visible = computed(() =>
     if (query.value && !matches(line.haystack, query.value)) return false
     if (funds.value.length && !funds.value.includes(p.fons)) return false
     if (levels.value.length && !line.levels.some((level) => levels.value.includes(level))) return false
-    if (onlyFunded.value && p.import_pressupost <= 0 && p.factures === 0) return false
-    const wanted = year.value === 'factura' ? props.invoiceYear : year.value
+    if (onlyFunded.value && p.import_pressupost <= 0 && p.moviments === 0) return false
+    const wanted = year.value === 'moviment' ? props.movementYear : year.value
     if (year.value !== 'tots' && wanted && line.years.length && !line.years.includes(wanted)) {
-      // "Curs de la factura" keeps other years findable by search, just not by browsing.
-      return year.value === 'factura' && Boolean(query.value)
+      // "Curs del moviment" keeps other years findable by search, just not by browsing.
+      return year.value === 'moviment' && Boolean(query.value)
     }
     return true
   }),
@@ -119,7 +122,7 @@ interface Block {
   budget: number | null
   tone: ReturnType<typeof fundTone> | null
   lines: Line[]
-  /** Lines with no budget, no invoices and no year: folded away until asked for. */
+  /** Lines with no budget, no movements and no year: folded away until asked for. */
   quiet: Line[]
   /** A catch-all of lines without a heading: after the real concepts. */
   loose?: boolean
@@ -132,7 +135,7 @@ function isQuiet(line: Line) {
   const p = line.partida
   return (
     p.import_pressupost <= 0 &&
-    p.factures === 0 &&
+    p.moviments === 0 &&
     line.years.length === 0 &&
     !props.selected.includes(p.id) &&
     props.suggested[p.id] === undefined
@@ -186,7 +189,7 @@ const blocks = computed<Block[]>(() => {
   }
   const list = [...map.values()].filter((block) => block.lines.length || block.quiet.length)
   for (const block of list) {
-    // The invoice's year first, then esfer@'s order.
+    // The movement's year first, then esfer@'s order.
     block.lines.sort((a, b) => Number(a.aside) - Number(b.aside) || a.partida.ordre - b.partida.ordre)
   }
   if (groupBy.value === 'fons') list.sort((a, b) => (a.key === '~' ? 1 : b.key === '~' ? -1 : b.lines.length - a.lines.length))
@@ -244,7 +247,7 @@ function reset() {
   query.value = ''
   funds.value = []
   levels.value = []
-  year.value = 'factura'
+  year.value = 'moviment'
   onlyFunded.value = false
 }
 
@@ -296,11 +299,11 @@ defineExpose({ focusSearch })
         <button
           type="button"
           class="chip"
-          :class="{ on: year === 'factura' }"
-          :title="invoiceYear ? `Les partides del curs ${invoiceYear} i les que no en tenen` : ''"
-          @click="year = 'factura'"
+          :class="{ on: year === 'moviment' }"
+          :title="movementYear ? `Les partides del curs ${movementYear} i les que no en tenen` : ''"
+          @click="year = 'moviment'"
         >
-          Curs de la factura<span v-if="invoiceYear" class="mono"> · {{ invoiceYear }}</span>
+          Curs del moviment<span v-if="movementYear" class="mono"> · {{ movementYear }}</span>
         </button>
         <button
           v-for="option in years"
@@ -308,7 +311,7 @@ defineExpose({ focusSearch })
           type="button"
           class="chip mono"
           :class="{ on: year === option }"
-          @click="year = year === option ? 'factura' : option"
+          @click="year = year === option ? 'moviment' : option"
         >
           {{ option }}
         </button>
@@ -335,7 +338,7 @@ defineExpose({ focusSearch })
       </label>
       <label class="check">
         <input v-model="withIncome" type="checkbox" />
-        Ingressos
+        {{ side === 'ingres' ? 'Despeses' : 'Ingressos' }}
       </label>
     </div>
 
@@ -400,7 +403,7 @@ defineExpose({ focusSearch })
             <span class="line-budget mono">{{ formatEuros(line.partida.import_pressupost) }}</span>
             <span
               class="meter"
-              :title="`Imputat ${formatEuros(line.partida.imputat, 2)} en ${line.partida.factures} factures`"
+              :title="`Imputat ${formatEuros(line.partida.imputat, 2)} en ${line.partida.moviments} moviments`"
             >
               <span
                 :class="{ over: line.partida.imputat > line.partida.import_pressupost }"

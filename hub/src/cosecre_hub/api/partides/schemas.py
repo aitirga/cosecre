@@ -19,12 +19,12 @@ class PartidaRead(BaseModel):
     nom: str
     import_pressupost: float
     ordre: int
-    #: A heading with sub-lines: invoices go to its sub-lines, not to it.
+    #: A heading with sub-lines: movements go to its sub-lines, not to it.
     te_fills: bool
     retirada: bool
     context: str
-    #: Confirmed invoices charged to it, and their total.
-    factures: int = 0
+    #: Confirmed movements charged to it, and their total.
+    moviments: int = 0
     imputat: float = 0.0
 
 
@@ -56,7 +56,7 @@ class ImportSummary(BaseModel):
     created: int
     updated: int
     unchanged: int
-    #: Gone from the new file but kept because invoices are charged to them.
+    #: Gone from the new file but kept because movements are charged to them.
     retired: int
     removed: int
     despeses: int
@@ -92,7 +92,9 @@ class SuggestionRead(BaseModel):
     created_at: datetime
 
 
-class QueueItem(BaseModel):
+class InvoiceBrief(BaseModel):
+    """An invoice the movement paid, as a person confirmed in Justificar extractes."""
+
     reference: str
     tipus_document: str
     num_factura: str
@@ -102,14 +104,32 @@ class QueueItem(BaseModel):
     import_value: float | None
     descripcio: str
     descripcio_compra: str
-    metode_pagament: str
-    pagament: str
-    pressupost_afectat: str
     responsable_nom: str
-    validat: bool
     file_url: str | None
     file_name: str | None
-    #: The budget year whose lines apply: the invoice's own, or the latest imported.
+
+
+class QueueItem(BaseModel):
+    """One statement movement that is charged to the budget."""
+
+    id: int
+    import_id: int
+    codi: str
+    #: Which account the money moved in, and how (``METODES_PAGAMENT``).
+    compte: str
+    tipus: str
+    categoria: str
+    data: date | None
+    concepte: str
+    mes_dades: str
+    #: Signed, as the statement has it: negative is money out.
+    import_value: float
+    #: ``despesa`` for money out, ``ingres`` for money in: the lines that apply.
+    sentit: Literal["despesa", "ingres"]
+    #: Its reconciliation with the register (``confirmed``, ``proposed``…).
+    match_status: str
+    factures: list[InvoiceBrief]
+    #: The budget year whose lines apply: the movement's own, or the latest imported.
     exercici: int | None
     curs: str
     #: ``pendent`` (nothing), ``proposta`` (only Jev's) or ``assignada``.

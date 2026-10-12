@@ -1,7 +1,12 @@
-"""Budget lines: import from esfer@, context for Jev, and charging invoices to them.
+"""Budget lines: import from esfer@, context for Jev, and charging movements to them.
+
+What esfer@ books against a line is the money that moved — a line of a bank
+statement, the caixeta or the prepaid card — so that is what is charged here.
+The invoices a movement paid (confirmed in Justificar extractes) are shown and
+read by Jev, because they say what the money was for.
 
 Reading is the office's (the router is mounted behind ``require_staff``);
-every write is the secretari/a's alone, because which line an invoice is
+every write is the secretari/a's alone, because which line a movement is
 charged to is an accounting decision.
 """
 
@@ -17,19 +22,20 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from ...deps import get_db, get_workspace_setting, require_admin
-from ...models import AppSetting, Document, User, utcnow
+from ...models import AppSetting, BankMovement, Document, PaymentMatch, User, utcnow
 from ...services.classification import JevError
 from ...services.people import fold
 from ...services.storage import MAX_UPLOAD_BYTES
 from ...services.text_format import compact_code
-from ..documents.register import IN_FLIGHT, drive_name, extension_for
+from ..documents.register import drive_name, extension_for
 from . import esfera, suggest
-from .models import DocumentPartida, Partida, PartidaSuggestion, Pressupost
+from .models import MovementPartida, MovementPartidaSuggestion, Partida, Pressupost
 from .schemas import (
     AssignmentRead,
     AssignmentsUpdate,
     ContextUpdate,
     ImportSummary,
+    InvoiceBrief,
     PartidaRead,
     PressupostRead,
     QueueItem,
@@ -45,8 +51,9 @@ router = APIRouter()
 CONTEXT_APP = "cosecre-docs"
 CONTEXT_KEY = "partides.context"
 
-#: Documents that are never charged to a budget line.
-NOT_CHARGED = {"Pressupost", "Albarà"}
+#: Movements that never reach the budget: money moving between the school's
+#: own accounts, and the opening balance of a statement.
+NOT_CHARGED = {"traspas_intern", "saldo_inicial"}
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -84,29 +91,29 @@ def _partida_read(partida: Partida, has_children: set[str], usage: dict[int, tup
         te_fills=partida.codi in has_children,
         retirada=partida.retirada,
         context=partida.context or "",
-        factures=count,
+        moviments=count,
         imputat=round(total, 2),
     )
 
 
 def _usage(session: Session, exercici: int) -> dict[int, tuple[int, float]]:
-    """Confirmed invoices per line, and what they add up to."""
+    """Confirmed movements per line, and what they add up to."""
     rows = (
-        session.query(DocumentPartida, Document.import_value)
-        .join(Partida, Partida.id == DocumentPartida.partida_id)
-        .join(Document, Document.id == DocumentPartida.document_id)
-        .filter(Partida.exercici == exercici, DocumentPartida.confirmada.is_(True))
+        session.query(MovementPartida, BankMovement.import_value)
+        .join(Partida, Partida.id == MovementPartida.partida_id)
+        .join(BankMovement, BankMovement.id == MovementPartida.movement_id)
+        .filter(Partida.exercici == exercici, MovementPartida.confirmada.is_(True))
         .all()
     )
-    shares: dict[int, list[DocumentPartida]] = {}
+    shares: dict[int, list[MovementPartida]] = {}
     for assignment, _ in rows:
-        shares.setdefault(assignment.document_id, []).append(assignment)
+        shares.setdefault(assignment.movement_id, []).append(assignment)
     usage: dict[int, tuple[int, float]] = {}
     for assignment, total in rows:
         amount = assignment.import_assignat
         if amount is None:
-            # Unsplit: the whole invoice, shared evenly if it sits on several lines.
-            amount = (total or 0.0) / len(shares[assignment.document_id])
+            # Unsplit: the whole movement, shared evenly if it sits on several lines.
+            amount = abs(total or 0.0) / len(shares[assignment.movement_id])
         count, running = usage.get(assignment.partida_id, (0, 0.0))
         usage[assignment.partida_id] = (count + 1, running + amount)
     return usage
@@ -143,36 +150,40 @@ def _read_budget(request: Request, session: Session, exercici: int | None) -> Pr
     )
 
 
-def _document(session: Session, reference: str) -> Document:
-    document = session.query(Document).filter(Document.internal_doc_number == reference).first()
-    if document is None:
-        raise HTTPException(status_code=404, detail="No s'ha trobat el document.")
-    return document
+def _movement(session: Session, movement_id: int) -> BankMovement:
+    movement = session.get(BankMovement, movement_id)
+    if movement is None or movement.categoria in NOT_CHARGED:
+        raise HTTPException(status_code=404, detail="No s'ha trobat el moviment.")
+    return movement
 
 
-def _exercici_for(document: Document, years: list[int]) -> int | None:
+def _exercici_for(movement: BankMovement, years: list[int]) -> int | None:
     if not years:
         return None
-    when = suggest.invoice_date(document)
+    when = suggest.movement_date(movement)
     return when.year if when is not None and when.year in years else years[0]
 
 
-def _queue_item(
-    document: Document,
-    years: list[int],
-    assignments: list[DocumentPartida],
-    suggestion: PartidaSuggestion | None,
-) -> QueueItem:
+def _paid_invoices(session: Session, movement_ids: list[int] | None = None) -> dict[int, list[Document]]:
+    """The invoices each movement paid, as a person confirmed them."""
+    query = (
+        session.query(PaymentMatch.movement_id, Document)
+        .join(Document, Document.id == PaymentMatch.document_id)
+        .filter(PaymentMatch.status == "confirmed")
+    )
+    if movement_ids is not None:
+        query = query.filter(PaymentMatch.movement_id.in_(movement_ids or [-1]))
+    paid: dict[int, list[Document]] = {}
+    for movement_id, document in query.order_by(PaymentMatch.id):
+        paid.setdefault(movement_id, []).append(document)
+    return paid
+
+
+def _invoice_brief(document: Document) -> InvoiceBrief:
     upload = document.upload
     stored = Path(upload.stored_path) if upload is not None else None
     has_file = stored is not None and stored.exists()
-    if any(a.confirmada for a in assignments):
-        estat = "assignada"
-    elif assignments:
-        estat = "proposta"
-    else:
-        estat = "pendent"
-    return QueueItem(
+    return InvoiceBrief(
         reference=document.internal_doc_number,
         tipus_document=document.tipus_document or "",
         num_factura=document.num_factura or "",
@@ -182,15 +193,41 @@ def _queue_item(
         import_value=document.import_value,
         descripcio=document.descripcio or "",
         descripcio_compra=document.descripcio_compra or "",
-        metode_pagament=document.metode_pagament or "",
-        pagament=document.pagament or "",
-        pressupost_afectat=document.pressupost_afectat or "",
         responsable_nom=document.responsable_nom or "",
-        validat=bool(document.validat),
         file_url=f"/documents/records/{document.internal_doc_number}/file" if has_file else None,
         file_name=drive_name(document, extension_for(document)) if has_file else None,
-        exercici=_exercici_for(document, years),
-        curs=suggest.school_year(suggest.invoice_date(document)),
+    )
+
+
+def _queue_item(
+    movement: BankMovement,
+    years: list[int],
+    invoices: list[Document],
+    assignments: list[MovementPartida],
+    suggestion: MovementPartidaSuggestion | None,
+) -> QueueItem:
+    if any(a.confirmada for a in assignments):
+        estat = "assignada"
+    elif assignments:
+        estat = "proposta"
+    else:
+        estat = "pendent"
+    return QueueItem(
+        id=movement.id,
+        import_id=movement.import_id,
+        codi=movement.codi or "",
+        compte=movement.compte or "",
+        tipus=movement.tipus or "",
+        categoria=movement.categoria or "",
+        data=suggest.movement_date(movement),
+        concepte=movement.concepte or "",
+        mes_dades=movement.mes_dades or "",
+        import_value=movement.import_value,
+        sentit=suggest.sentit(movement),  # type: ignore[arg-type]
+        match_status=movement.match_status or "",
+        factures=[_invoice_brief(d) for d in invoices],
+        exercici=_exercici_for(movement, years),
+        curs=suggest.school_year(suggest.movement_date(movement)),
         estat=estat,  # type: ignore[arg-type]
         assignments=[
             AssignmentRead(
@@ -217,31 +254,48 @@ def _queue_item(
     )
 
 
-def _item_for(session: Session, document: Document) -> QueueItem:
-    assignments = session.query(DocumentPartida).filter(DocumentPartida.document_id == document.id).all()
+def _item_for(session: Session, movement: BankMovement) -> QueueItem:
+    assignments = session.query(MovementPartida).filter(MovementPartida.movement_id == movement.id).all()
     return _queue_item(
-        document, _exercicis(session), assignments, session.get(PartidaSuggestion, document.id)
+        movement,
+        _exercicis(session),
+        _paid_invoices(session, [movement.id]).get(movement.id, []),
+        assignments,
+        session.get(MovementPartidaSuggestion, movement.id),
     )
 
 
-def _supplier_history(session: Session, document: Document) -> list[tuple[str, int]]:
-    """Lines this supplier's other invoices were confirmed to, most used first."""
-    cif = compact_code(document.cif_proveidor)
-    name = fold(document.proveidor or "")
-    if not cif and not name:
+def _history(session: Session, movement: BankMovement, invoices: list[Document]) -> list[tuple[str, int]]:
+    """Lines other movements were confirmed to, by the same supplier or concept, most used first.
+
+    The supplier comes from the invoices a movement paid; a movement with none
+    (a bank fee, a direct debit) is known by its concept instead.
+    """
+    cifs = {compact_code(d.cif_proveidor) for d in invoices} - {""}
+    names = {fold(d.proveidor or "") for d in invoices} - {""}
+    concept = fold(movement.concepte or "")
+    if not cifs and not names and not concept:
         return []
     rows = (
-        session.query(Document.cif_proveidor, Document.proveidor, Partida.nom)
-        .join(DocumentPartida, DocumentPartida.document_id == Document.id)
-        .join(Partida, Partida.id == DocumentPartida.partida_id)
-        .filter(DocumentPartida.confirmada.is_(True), Document.id != document.id)
+        session.query(MovementPartida.movement_id, BankMovement.concepte, Partida.nom)
+        .join(BankMovement, BankMovement.id == MovementPartida.movement_id)
+        .join(Partida, Partida.id == MovementPartida.partida_id)
+        .filter(MovementPartida.confirmada.is_(True), MovementPartida.movement_id != movement.id)
         .all()
     )
-    counts = Counter(
-        line
-        for other_cif, other_name, line in rows
-        if (cif and compact_code(other_cif) == cif) or (name and fold(other_name or "") == name)
-    )
+    if not rows:
+        return []
+    paid = _paid_invoices(session, list({row[0] for row in rows}))
+    counts: Counter[str] = Counter()
+    for other_id, other_concept, line in rows:
+        others = paid.get(other_id, [])
+        same_supplier = any(
+            (cifs and compact_code(d.cif_proveidor) in cifs) or (names and fold(d.proveidor or "") in names)
+            for d in others
+        )
+        same_concept = not invoices and not others and concept and fold(other_concept or "") == concept
+        if same_supplier or same_concept:
+            counts[line] += 1
     return counts.most_common(5)
 
 
@@ -318,11 +372,11 @@ def _apply_import(
             for key, value in values.items():
                 setattr(partida, key, value)
 
-    # What the new file no longer has: kept if invoices point at it.
+    # What the new file no longer has: kept if movements point at it.
     used = {
         row[0]
-        for row in session.query(DocumentPartida.partida_id).filter(
-            DocumentPartida.partida_id.in_([p.id for p in existing.values()] or [-1])
+        for row in session.query(MovementPartida.partida_id).filter(
+            MovementPartida.partida_id.in_([p.id for p in existing.values()] or [-1])
         )
     }
     retired = removed = 0
@@ -414,39 +468,39 @@ def update_line_context(
     return _partida_read(partida, has_children, _usage(session, partida.exercici))
 
 
-# ── Charging invoices ───────────────────────────────────────────────────────
+# ── Charging movements ──────────────────────────────────────────────────────
 
 
 @router.get("/queue", response_model=list[QueueItem])
 def queue(session: Session = Depends(get_db)):
-    """Every register entry that can be charged to a line, with what it has."""
+    """Every statement movement that is charged to a line, with what it has, newest first."""
     years = _exercicis(session)
-    documents = [
-        d
-        for d in session.query(Document).all()
-        if d.status not in IN_FLIGHT and d.tipus_document not in NOT_CHARGED
-    ]
-    assignments: dict[int, list[DocumentPartida]] = {}
-    for assignment in session.query(DocumentPartida).all():
-        assignments.setdefault(assignment.document_id, []).append(assignment)
-    suggestions = {s.document_id: s for s in session.query(PartidaSuggestion).all()}
-    documents.sort(
-        key=lambda d: (suggest.invoice_date(d) or datetime.min.date(), d.id), reverse=True
+    movements = (
+        session.query(BankMovement)
+        .filter(BankMovement.categoria.notin_(NOT_CHARGED), BankMovement.import_value != 0)
+        .all()
     )
+    assignments: dict[int, list[MovementPartida]] = {}
+    for assignment in session.query(MovementPartida).all():
+        assignments.setdefault(assignment.movement_id, []).append(assignment)
+    suggestions = {s.movement_id: s for s in session.query(MovementPartidaSuggestion).all()}
+    paid = _paid_invoices(session)
+    movements.sort(key=lambda m: (suggest.movement_date(m) or datetime.min.date(), m.id), reverse=True)
     return [
-        _queue_item(d, years, assignments.get(d.id, []), suggestions.get(d.id)) for d in documents
+        _queue_item(m, years, paid.get(m.id, []), assignments.get(m.id, []), suggestions.get(m.id))
+        for m in movements
     ]
 
 
-@router.put("/documents/{reference}", response_model=QueueItem)
+@router.put("/movements/{movement_id}", response_model=QueueItem)
 def assign(
-    reference: str,
+    movement_id: int,
     payload: AssignmentsUpdate,
     session: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    """Set an invoice's lines. What is sent is confirmed; anything else goes."""
-    document = _document(session, reference)
+    """Set a movement's lines. What is sent is confirmed; anything else goes."""
+    movement = _movement(session, movement_id)
     wanted = {line.partida_id: line for line in payload.partides}
     if wanted:
         found = session.query(Partida).filter(Partida.id.in_(wanted)).all()
@@ -465,10 +519,10 @@ def assign(
                 status_code=422,
                 detail=f"«{headings[0].nom}» té subpartides: tria'n una.",
             )
-    _check_split(document, list(wanted.values()))
+    _check_split(movement, list(wanted.values()))
     current = {
         a.partida_id: a
-        for a in session.query(DocumentPartida).filter(DocumentPartida.document_id == document.id)
+        for a in session.query(MovementPartida).filter(MovementPartida.movement_id == movement.id)
     }
     for partida_id, assignment in current.items():
         if partida_id not in wanted:
@@ -476,22 +530,22 @@ def assign(
     for partida_id, line in wanted.items():
         assignment = current.get(partida_id)
         if assignment is None:
-            assignment = DocumentPartida(
-                document_id=document.id, partida_id=partida_id, origen="persona"
+            assignment = MovementPartida(
+                movement_id=movement.id, partida_id=partida_id, origen="persona"
             )
             session.add(assignment)
         assignment.import_assignat = line.import_assignat
         assignment.confirmada = True
         assignment.assigned_by_id = admin.id
     session.commit()
-    return _item_for(session, document)
+    return _item_for(session, movement)
 
 
-def _check_split(document: Document, lines: list) -> None:
-    """A split is all or nothing, and adds up to the invoice.
+def _check_split(movement: BankMovement, lines: list) -> None:
+    """A split is all or nothing, and adds up to the movement.
 
     No amounts at all means "shared evenly"; one line alone takes the whole
-    invoice whatever it says.
+    movement whatever it says. Parts are positive whichever way the money went.
     """
     amounts = [line.import_assignat for line in lines]
     if len(lines) < 2 or all(amount is None for amount in amounts):
@@ -504,19 +558,17 @@ def _check_split(document: Document, lines: list) -> None:
         )
     if any(amount <= 0 for amount in amounts):
         raise HTTPException(status_code=422, detail="Cada part ha de ser més gran que zero.")
-    total = document.import_value
-    if total is not None and abs(sum(amounts) - total) > 0.01:
+    total = abs(movement.import_value)
+    if abs(sum(amounts) - total) > 0.01:
         raise HTTPException(
             status_code=422,
-            detail=(
-                f"El repartiment suma {sum(amounts):.2f} € i la factura és de {total:.2f} €."
-            ),
+            detail=f"El repartiment suma {sum(amounts):.2f} € i el moviment és de {total:.2f} €.",
         )
 
 
-@router.post("/documents/{reference}/suggest", response_model=QueueItem)
+@router.post("/movements/{movement_id}/suggest", response_model=QueueItem)
 async def suggest_lines(
-    reference: str,
+    movement_id: int,
     request: Request,
     session: Session = Depends(get_db),
     _: User = Depends(require_admin),
@@ -525,25 +577,28 @@ async def suggest_lines(
     jev = getattr(request.app.state.classifier, "jev", None)
     if jev is None:
         raise HTTPException(status_code=503, detail="Jev no està configurat en aquest hub.")
-    document = _document(session, reference)
+    movement = _movement(session, movement_id)
     years = _exercicis(session)
-    exercici = _exercici_for(document, years)
+    exercici = _exercici_for(movement, years)
     if exercici is None:
         raise HTTPException(
             status_code=409, detail="Encara no hi ha cap pressupost importat a Configuració."
         )
     partides = session.query(Partida).filter(Partida.exercici == exercici).order_by(Partida.ordre).all()
     context = _general_context(session)
-    history = _supplier_history(session, document)
+    invoices = _paid_invoices(session, [movement.id]).get(movement.id, [])
+    history = _history(session, movement, invoices)
     try:
-        result = await run_in_threadpool(suggest.ask, jev, document, partides, context, history)
+        result = await run_in_threadpool(
+            suggest.ask, jev, movement, invoices, partides, context, history
+        )
     except JevError as exc:
         logger.warning("Jev could not suggest a budget line", exc_info=True)
         raise HTTPException(status_code=502, detail="Jev no ha respost. Torna-ho a provar.") from exc
 
-    stored = session.get(PartidaSuggestion, document.id)
+    stored = session.get(MovementPartidaSuggestion, movement.id)
     if stored is None:
-        stored = PartidaSuggestion(document_id=document.id)
+        stored = MovementPartidaSuggestion(movement_id=movement.id)
         session.add(stored)
     stored.ranking = [{"partida_id": r.partida_id, "probability": r.probability} for r in result.ranking]
     stored.confidence = result.confidence
@@ -552,15 +607,15 @@ async def suggest_lines(
     stored.model = result.model
     stored.created_at = utcnow()
 
-    current = session.query(DocumentPartida).filter(DocumentPartida.document_id == document.id).all()
+    current = session.query(MovementPartida).filter(MovementPartida.movement_id == movement.id).all()
     if not any(a.confirmada for a in current):
         for assignment in current:
             session.delete(assignment)
         session.flush()
         for ranked in result.preassign():
             session.add(
-                DocumentPartida(
-                    document_id=document.id,
+                MovementPartida(
+                    movement_id=movement.id,
                     partida_id=ranked.partida_id,
                     origen="jev",
                     confianca=ranked.probability,
@@ -568,4 +623,4 @@ async def suggest_lines(
                 )
             )
     session.commit()
-    return _item_for(session, document)
+    return _item_for(session, movement)
