@@ -11,7 +11,7 @@ import PartidaPicker from '../components/partides/PartidaPicker.vue'
 import SplitEditor, { type SplitLine } from '../components/partides/SplitEditor.vue'
 import { fold } from '../composables/useTableQuery'
 import { formatAmount, formatDate } from '../document-fields'
-import { type Share, addShare, evenShares, fundTone, lineTitle, lineYears, rebalance, removeShare, shortCode } from '../partides'
+import { type Share, addShare, evenShares, fundTone, lineTitle, lineYears, removeShare, shortCode } from '../partides'
 
 /**
  * Charging statement movements to budget lines, one after another, fast.
@@ -187,10 +187,6 @@ function toggle(id: number) {
     : addShare(draft.value, id, total.value)
 }
 
-/** A share typed on the map: the other lines make room. */
-function setShare(id: number, euros: number) {
-  draft.value = rebalance(draft.value, id, euros, total.value)
-}
 
 const splitLines = computed<SplitLine[]>(() =>
   draft.value.map((line) => {
@@ -758,13 +754,10 @@ function signed(value: number) {
           :suggested="suggestedMap"
           :movement-year="current?.curs ?? ''"
           :side="current?.sentit ?? 'despesa'"
-          :shares="draft"
-          :total="total"
           :order="order"
           reorderable
           :disabled="!current"
           @toggle="toggle"
-          @share="setShare"
           @reorder="reorder"
         >
         </PartidaPicker>

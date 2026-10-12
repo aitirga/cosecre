@@ -2,9 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 
 import type { Partida } from '../../api/types'
-import { parseAmount } from '../../document-fields'
 import {
-  type Share,
   LEVEL_LABELS,
   LEVELS,
   type Level,
@@ -27,8 +25,8 @@ import AppIcon from '../AppIcon.vue'
  * by colour before it is read. The movement's school year leads: lines of
  * other years stay visible but step back. Search, fund, year and level narrow
  * the map; the keyboard walks what is left. Jev's picks carry their odds as
- * a violet tag. A chosen line takes its share right here when the movement is split,
- * and the lines inside a concept keep the order the secretari/a dragged them
+ * a violet tag, the first one stronger. How a split movement is shared is set
+ * in the middle column, not here. The lines inside a concept keep the order the secretari/a dragged them
  * into, on every device.
  */
 const props = defineProps<{
@@ -40,10 +38,6 @@ const props = defineProps<{
   movementYear: string
   /** The side of the budget the movement belongs to: expenses for money out, income for money in. */
   side?: 'despesa' | 'ingres'
-  /** The movement's split, to type a chosen line's share in place. */
-  shares?: Share[]
-  /** The movement's amount, unsigned. */
-  total?: number | null
   /** The secretari/a's own order of the lines in each concept, by code. */
   order?: Record<string, string[]>
   /** Whether that order may be changed (the secretari/a's alone). */
@@ -52,7 +46,6 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   toggle: [id: number]
-  share: [id: number, euros: number]
   reorder: [block: string, codes: string[]]
 }>()
 
@@ -225,28 +218,14 @@ const blocks = computed<Block[]>(() => {
   return list
 })
 
-// ── A chosen line's share, typed on the line ────────────────────────────────
-
-const split = computed(() => (props.shares?.length ?? 0) > 1)
-const editing = ref<{ id: number; unit: 'eur' | 'pct'; text: string } | null>(null)
-
-function shareOf(id: number) {
-  return props.shares?.find((share) => share.id === id)?.amount ?? 0
-}
-
-function shareShown(id: number, unit: 'eur' | 'pct') {
-  if (editing.value?.id === id && editing.value.unit === unit) return editing.value.text
-  const euros = shareOf(id)
-  if (unit === 'eur') return euros.toLocaleString('ca-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  return props.total ? ((euros / props.total) * 100).toLocaleString('ca-ES', { maximumFractionDigits: 1 }) : ''
-}
-
-function onShare(id: number, unit: 'eur' | 'pct', text: string) {
-  editing.value = { id, unit, text }
-  const value = parseAmount(text.replace('%', ''))
-  if (value === undefined || value === null || (unit === 'pct' && !props.total)) return
-  emit('share', id, unit === 'eur' ? value : ((props.total ?? 0) * value) / 100)
-}
+/** Jev's first choice: the one hint worth a stronger violet. */
+const topSuggested = computed(() => {
+  let best: number | null = null
+  for (const [id, probability] of Object.entries(props.suggested)) {
+    if (best === null || probability > props.suggested[best]) best = Number(id)
+  }
+  return best
+})
 
 // ── Reordering the lines of a concept ───────────────────────────────────────
 
@@ -484,6 +463,7 @@ defineExpose({ focusSearch })
             'is-aside': line.aside && !selected.includes(line.partida.id),
             'is-cursor': flat[cursor] === line.partida.id,
             'is-suggested': suggested[line.partida.id] !== undefined,
+            'is-top': topSuggested === line.partida.id,
             'is-disabled': disabled,
           }"
           :tabindex="disabled ? -1 : 0"
@@ -502,39 +482,10 @@ defineExpose({ focusSearch })
               <span v-if="line.partida.context" class="tag tag-note" aria-label="Té context">
                 <AppIcon name="message" :size="10" />
               </span>
-              <span v-if="suggested[line.partida.id] !== undefined" class="tag tag-ai">
+              <span v-if="suggested[line.partida.id] !== undefined" class="tag tag-ai" :title="topSuggested === line.partida.id ? 'La primera opció de Jev' : 'Una alternativa de Jev'">
                 <AppIcon name="sparkles" :size="10" />
                 {{ Math.round(suggested[line.partida.id] * 100) }} %
               </span>
-            </span>
-            <span v-if="split && selected.includes(line.partida.id)" class="line-share" @click.stop @keydown.stop>
-              <label class="share-field">
-                <input
-                  class="input input-mono"
-                  inputmode="decimal"
-                  :value="shareShown(line.partida.id, 'eur')"
-                  :aria-label="`Import de ${line.title}`"
-                  @input="onShare(line.partida.id, 'eur', ($event.target as HTMLInputElement).value)"
-                  @focus="($event.target as HTMLInputElement).select()"
-                  @blur="editing = null"
-                  @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
-                />
-                <span class="unit">€</span>
-              </label>
-              <label class="share-field share-pct">
-                <input
-                  class="input input-mono"
-                  inputmode="decimal"
-                  :value="shareShown(line.partida.id, 'pct')"
-                  :disabled="!total"
-                  :aria-label="`Percentatge de ${line.title}`"
-                  @input="onShare(line.partida.id, 'pct', ($event.target as HTMLInputElement).value)"
-                  @focus="($event.target as HTMLInputElement).select()"
-                  @blur="editing = null"
-                  @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
-                />
-                <span class="unit">%</span>
-              </label>
             </span>
           </span>
           <span class="line-side">
@@ -856,6 +807,18 @@ defineExpose({ focusSearch })
   background: var(--ai-100);
 }
 
+/* Jev's first choice: a clearer violet, still a hint until it is chosen. */
+.line.is-top {
+  border-color: var(--ai-400);
+  background: var(--ai-100);
+  box-shadow: 0 0 0 2px var(--ai-100);
+}
+
+.line.is-top .tag-ai {
+  background: var(--ai-600);
+  color: #fff;
+}
+
 .line.is-on {
   border-color: var(--tone);
   border-style: solid;
@@ -891,41 +854,6 @@ defineExpose({ focusSearch })
   box-shadow: 0 2px 0 var(--accent-500);
 }
 
-
-
-
-.line-share {
-  display: flex;
-  gap: 4px;
-  margin-top: 3px;
-}
-
-.share-field {
-  position: relative;
-  width: 96px;
-}
-
-.share-field.share-pct {
-  width: 62px;
-}
-
-.share-field .input {
-  width: 100%;
-  height: 24px;
-  padding: 0 18px 0 5px;
-  font-size: var(--text-xs);
-  text-align: right;
-}
-
-.share-field .unit {
-  position: absolute;
-  top: 50%;
-  right: 6px;
-  color: var(--ink-400);
-  font-size: 10px;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
 
 .line-main {
   display: grid;

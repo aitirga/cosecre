@@ -414,10 +414,10 @@ defineExpose({ balanced, even })
 
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 104px 68px 26px;
+  grid-template-columns: minmax(0, 1fr) 84px 54px 22px;
   align-items: center;
-  gap: 6px;
-  padding: 4px 4px 4px 9px;
+  gap: 4px;
+  padding: 4px 2px 4px 8px;
   border: 1px solid var(--line);
   border-left: 3px solid var(--tone);
   border-radius: var(--r-md);
@@ -495,7 +495,7 @@ defineExpose({ balanced, even })
   gap: 6px;
   padding: 2px 2px 2px 8px;
   border-radius: var(--r-md);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   font-weight: 500;
 }
 
