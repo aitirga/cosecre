@@ -188,7 +188,7 @@ defineExpose({ balanced, even })
       />
     </div>
 
-    <ul class="rows">
+    <ul v-if="!single" class="rows">
       <li
         v-for="line in lines"
         :key="line.id"

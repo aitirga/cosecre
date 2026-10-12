@@ -26,8 +26,8 @@ import AppIcon from '../AppIcon.vue'
  * each carries its fund's colour as a stripe, so "the Motxilles one" is found
  * by colour before it is read. The movement's school year leads: lines of
  * other years stay visible but step back. Search, fund, year and level narrow
- * the map; the keyboard walks what is left. Jev's picks lead, in their own
- * strip. A chosen line takes its share right here when the movement is split,
+ * the map; the keyboard walks what is left. Jev's picks carry their odds as
+ * a violet tag. A chosen line takes its share right here when the movement is split,
  * and the lines inside a concept keep the order the secretari/a dragged them
  * into, on every device.
  */
@@ -223,16 +223,6 @@ const blocks = computed<Block[]>(() => {
   // esfer@'s order for real concepts; the loose catch-alls after them.
   else list.sort((a, b) => Number(Boolean(a.loose)) - Number(Boolean(b.loose)))
   return list
-})
-
-/** Jev's picks worth a look, best first: their own strip above the map. */
-const jevLines = computed(() => {
-  const byId = new Map(lines.value.map((line) => [line.partida.id, line]))
-  return Object.entries(props.suggested)
-    .map(([id, probability]) => ({ line: byId.get(Number(id)), probability }))
-    .filter((entry): entry is { line: Line; probability: number } => Boolean(entry.line) && entry.probability >= 0.05)
-    .sort((a, b) => b.probability - a.probability)
-    .slice(0, 3)
 })
 
 // ── A chosen line's share, typed on the line ────────────────────────────────
@@ -467,93 +457,7 @@ defineExpose({ focusSearch })
       </button>
     </div>
 
-    <div v-if="blocks.length || jevLines.length || $slots.jev" class="map" role="listbox" aria-multiselectable="true" aria-label="Partides">
-      <section v-if="jevLines.length || $slots.jev" class="block block-jev">
-        <header class="block-head">
-          <span class="block-title block-title-ai"><AppIcon name="sparkles" :size="11" /> Jev suggereix</span>
-          <slot name="jev-action" />
-        </header>
-        <slot name="jev" />
-        <div
-          v-for="{ line } in jevLines"
-          :key="`jev-${line.partida.id}`"
-                    role="option"
-          class="line"
-          :class="{
-            'is-on': selected.includes(line.partida.id),
-            'is-aside': line.aside && !selected.includes(line.partida.id),
-            'is-cursor': flat[cursor] === line.partida.id,
-            'is-suggested': suggested[line.partida.id] !== undefined,
-            'is-disabled': disabled,
-          }"
-          :tabindex="disabled ? -1 : 0"
-          :aria-selected="selected.includes(line.partida.id)"
-          :aria-disabled="disabled"
-          :style="{ '--tone': line.tone.solid, '--tone-soft': line.tone.soft }"
-          :title="line.partida.context ? `${line.partida.nom}\n\n${line.partida.context}` : line.partida.nom"
-          @click="!disabled && emit('toggle', line.partida.id)"
-          @keydown="onLineKey($event, line.partida.id)"
-        >
-          <span class="line-main">
-            <span class="line-title">{{ line.title }}</span>
-            <span class="line-tags">
-              <span v-for="tag in line.years" :key="tag" class="tag tag-year mono">{{ tag }}</span>
-              <span class="tag mono">{{ shortCode(line.partida.codi) }}</span>
-              <span v-if="line.partida.context" class="tag tag-note" aria-label="Té context">
-                <AppIcon name="message" :size="10" />
-              </span>
-              <span v-if="suggested[line.partida.id] !== undefined" class="tag tag-ai">
-                <AppIcon name="sparkles" :size="10" />
-                {{ Math.round(suggested[line.partida.id] * 100) }} %
-              </span>
-            </span>
-            <span v-if="split && selected.includes(line.partida.id)" class="line-share" @click.stop @keydown.stop>
-              <label class="share-field">
-                <input
-                  class="input input-mono"
-                  inputmode="decimal"
-                  :value="shareShown(line.partida.id, 'eur')"
-                  :aria-label="`Import de ${line.title}`"
-                  @input="onShare(line.partida.id, 'eur', ($event.target as HTMLInputElement).value)"
-                  @focus="($event.target as HTMLInputElement).select()"
-                  @blur="editing = null"
-                  @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
-                />
-                <span class="unit">€</span>
-              </label>
-              <label class="share-field share-pct">
-                <input
-                  class="input input-mono"
-                  inputmode="decimal"
-                  :value="shareShown(line.partida.id, 'pct')"
-                  :disabled="!total"
-                  :aria-label="`Percentatge de ${line.title}`"
-                  @input="onShare(line.partida.id, 'pct', ($event.target as HTMLInputElement).value)"
-                  @focus="($event.target as HTMLInputElement).select()"
-                  @blur="editing = null"
-                  @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
-                />
-                <span class="unit">%</span>
-              </label>
-            </span>
-          </span>
-          <span class="line-side">
-            <span class="line-budget mono">{{ formatEuros(line.partida.import_pressupost) }}</span>
-            <span
-              class="meter"
-              :title="`Imputat ${formatEuros(line.partida.imputat, 2)} en ${line.partida.moviments} moviments`"
-            >
-              <span
-                :class="{ over: line.partida.imputat > line.partida.import_pressupost }"
-                :style="{ width: `${used(line.partida) * 100}%` }"
-              />
-            </span>
-          </span>
-          <span class="line-check" aria-hidden="true">
-            <AppIcon v-if="selected.includes(line.partida.id)" name="check" :size="12" />
-          </span>
-        </div>
-      </section>
+    <div v-if="blocks.length" class="map" role="listbox" aria-multiselectable="true" aria-label="Partides">
       <!-- Columns on an inner box with no height of its own: they balance,
            and the outer box scrolls, rather than spilling sideways. -->
       <div class="map-cols">
@@ -671,6 +575,7 @@ defineExpose({ focusSearch })
 <style scoped>
 .picker {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 8px;
   min-height: 0;
@@ -678,12 +583,14 @@ defineExpose({ focusSearch })
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .search {
   display: flex;
-  flex: 1;
+  flex: 1 1 180px;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   height: 32px;
@@ -939,9 +846,14 @@ defineExpose({ focusSearch })
   border-color: var(--accent-400);
 }
 
+/* Jev's picks: a faint violet hint, never louder than a chosen line. */
 .line.is-suggested {
   border-color: var(--ai-200);
-  border-style: dashed;
+  background: var(--ai-50);
+}
+
+.line.is-suggested:hover {
+  background: var(--ai-100);
 }
 
 .line.is-on {
@@ -979,17 +891,8 @@ defineExpose({ focusSearch })
   box-shadow: 0 2px 0 var(--accent-500);
 }
 
-.block-jev {
-  border-color: var(--ai-200);
-  background: var(--ai-50);
-}
 
-.block-title-ai {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--ai-700);
-}
+
 
 .line-share {
   display: flex;

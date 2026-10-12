@@ -45,9 +45,31 @@ const TABS: { id: Tab; label: string }[] = [
 const tab = ref<Tab>('pendent')
 const railSearch = ref('')
 
+// ── Which account ───────────────────────────────────────────────────────────
+// The same chips as Justificar extractes, and the same `?compte=` in the URL.
+
+const ACCOUNTS = ['General', 'Material i Sortides', 'Menjador', 'Targeta Prepagament', 'Caixeta']
+const account = computed(() => (typeof route.query.compte === 'string' ? route.query.compte : ''))
+const accountChips = computed(() =>
+  ACCOUNTS.map((name) => {
+    const own = queue.value.filter((item) => item.compte === name)
+    return { name, count: own.length, pending: own.filter((item) => item.estat !== 'assignada').length }
+  }),
+)
+const scoped = computed(() => (account.value ? queue.value.filter((item) => item.compte === account.value) : queue.value))
+
+function pickAccount(name: string) {
+  if (dirty.value && !window.confirm('Aquest moviment té canvis sense desar. Vols descartar-los?')) return
+  const query = { ...route.query }
+  delete query.m
+  if (name && name !== account.value) query.compte = name
+  else delete query.compte
+  void router.replace({ query })
+}
+
 const counts = computed(() => {
-  const result: Record<Tab, number> = { pendent: 0, proposta: 0, assignada: 0, totes: queue.value.length }
-  for (const item of queue.value) result[item.estat] += 1
+  const result: Record<Tab, number> = { pendent: 0, proposta: 0, assignada: 0, totes: scoped.value.length }
+  for (const item of scoped.value) result[item.estat] += 1
   return result
 })
 
@@ -59,7 +81,7 @@ const counts = computed(() => {
 const frozen = ref<number[]>([])
 function refreeze() {
   const words = fold(railSearch.value)
-  frozen.value = queue.value
+  frozen.value = scoped.value
     .filter((item) => tab.value === 'totes' || item.estat === tab.value)
     .filter(
       (item) =>
@@ -77,6 +99,11 @@ function refreeze() {
     .map((item) => item.id)
 }
 watch([tab, railSearch], refreeze)
+// Another account: its list, and its first movement.
+watch(account, () => {
+  refreeze()
+  if (frozen.value.length) open(frozen.value[0], true)
+})
 
 const byRef = computed(() => new Map(queue.value.map((item) => [item.id, item])))
 const rail = computed(() => frozen.value.map((id) => byRef.value.get(id)).filter(Boolean) as PartidaQueueItem[])
@@ -226,8 +253,9 @@ async function reorder(block: string, codis: string[]) {
 // ── Columns ─────────────────────────────────────────────────────────────────
 // The three columns part where people drag them, and stay that way.
 
-const COLUMNS_KEY = 'cosecre.partides.columns'
-const columns = reactive({ rail: 250, middle: 460 })
+const COLUMNS_KEY = 'cosecre.partides.columns.v2'
+// The map is what is worked in, so it gets the most room; then the movement; then the list.
+const columns = reactive({ rail: 220, middle: 360 })
 try {
   Object.assign(columns, JSON.parse(localStorage.getItem(COLUMNS_KEY) ?? '{}'))
 } catch {
@@ -240,7 +268,7 @@ function startResize(event: PointerEvent, which: 'rail' | 'middle') {
   handle.setPointerCapture(event.pointerId)
   const startX = event.clientX
   const start = columns[which]
-  const [min, max] = which === 'rail' ? [180, 420] : [340, 820]
+  const [min, max] = which === 'rail' ? [180, 360] : [300, 640]
   const move = (e: PointerEvent) => {
     columns[which] = Math.round(Math.min(max, Math.max(min, start + e.clientX - startX)))
   }
@@ -461,7 +489,7 @@ watch(currentRef, (reference) => {
   requestAnimationFrame(() => document.querySelector(`[data-ref="${reference}"]`)?.scrollIntoView({ block: 'nearest' }))
 })
 
-const doneShare = computed(() => (queue.value.length ? counts.value.assignada / queue.value.length : 0))
+const doneShare = computed(() => (scoped.value.length ? counts.value.assignada / scoped.value.length : 0))
 
 function pct(value: number) {
   return `${Math.round(value * 100)} %`
@@ -513,6 +541,25 @@ function signed(value: number) {
       </div>
     </header>
 
+    <div class="accounts" role="group" aria-label="Filtra per compte">
+      <button class="chip" :class="{ on: !account }" type="button" @click="pickAccount('')">
+        Tots <span>{{ queue.length }}</span>
+      </button>
+      <button
+        v-for="chip in accountChips"
+        :key="chip.name"
+        class="chip"
+        :class="{ on: account === chip.name }"
+        type="button"
+        :disabled="!chip.count"
+        @click="pickAccount(chip.name)"
+      >
+        {{ chip.name }}
+        <span>{{ chip.count }}</span>
+        <i v-if="chip.pending" class="pending-dot" :title="`${chip.pending} sense partida`" />
+      </button>
+    </div>
+
     <p v-if="noBudget" class="notice notice-info">
       <AppIcon name="info" :size="15" />
       <span>
@@ -528,7 +575,7 @@ function signed(value: number) {
 
     <div class="work" :style="{ '--rail-w': `${columns.rail}px`, '--middle-w': `${columns.middle}px` }">
       <!-- ── The queue ─────────────────────────────────────────────────── -->
-      <aside class="rail" aria-label="Moviments">
+      <aside class="rail card" aria-label="Moviments">
         <nav class="rail-tabs" role="tablist">
           <button
             v-for="option in TABS"
@@ -579,8 +626,8 @@ function signed(value: number) {
       <div class="col-handle col-handle-rail" role="separator" aria-orientation="vertical" aria-label="Amplada de la llista" @pointerdown="startResize($event, 'rail')" />
 
       <!-- ── The movement, what it paid, and its lines ─────────────────── -->
-      <section v-if="current" class="invoice" aria-label="Moviment">
-        <article class="card inv">
+      <section v-if="current" class="invoice card" aria-label="Moviment">
+        <article class="inv">
           <div class="inv-top">
             <span class="eyebrow">
               {{ current.compte || 'Extracte' }}<template v-if="current.codi"> · {{ current.codi }}</template>
@@ -654,23 +701,12 @@ function signed(value: number) {
               <RouterLink
                 v-if="current.categoria === 'pagament'"
                 :to="{ name: 'reconcile', query: { extracte: String(current.import_id), moviment: String(current.id) } }"
-              >Justifica'l</RouterLink>
+              > Justifica'l</RouterLink>
             </p>
           </div>
         </article>
 
-        <article class="card charge" :class="{ 'is-dirty': dirty }">
-          <header class="charge-head">
-            <span class="charge-title">
-              {{ draft.length > 1 ? `Repartit entre ${draft.length} partides` : 'Partida' }}
-            </span>
-            <span v-if="current.estat === 'assignada' && !dirty" class="badge badge-olive"><AppIcon name="check" :size="11" /> Desat</span>
-            <span v-else-if="proposalAsIs" class="badge badge-ai" title="Encara no s'ha desat: ⌘↵ la confirma">
-              <AppIcon name="sparkles" :size="11" /> Proposta de Jev
-            </span>
-            <span v-else-if="dirty" class="badge badge-accent">Sense desar</span>
-          </header>
-
+        <article class="charge" :class="{ 'is-dirty': dirty }">
           <SplitEditor
             v-if="draft.length"
             v-model="draft"
@@ -681,6 +717,7 @@ function signed(value: number) {
           <p v-else class="chosen-empty">Tria una o més partides al mapa de la dreta.</p>
 
           <p v-if="saveError" class="notice notice-error"><AppIcon name="alert" :size="14" /><span>{{ saveError }}</span></p>
+          <p v-if="askError" class="notice notice-error"><AppIcon name="alert" :size="14" /><span>{{ askError }}</span></p>
 
           <footer class="charge-actions">
             <button
@@ -695,10 +732,17 @@ function signed(value: number) {
               <kbd class="kbd kbd-on">⌘↵</kbd>
             </button>
             <button type="button" class="btn btn-ghost" :disabled="!nextRef" @click="open(nextRef)">Salta</button>
+            <span class="charge-state">
+              <span v-if="current.estat === 'assignada' && !dirty" class="badge badge-olive"><AppIcon name="check" :size="11" /> Desat</span>
+              <span v-else-if="proposalAsIs" class="badge badge-ai" title="Encara no s'ha desat: ⌘↵ la confirma">
+                <AppIcon name="sparkles" :size="11" /> Jev
+              </span>
+              <span v-else-if="dirty" class="badge badge-accent">Sense desar</span>
+            </span>
           </footer>
         </article>
       </section>
-      <section v-else class="invoice invoice-empty">
+      <section v-else class="invoice invoice-empty card">
         <p class="empty">{{ queueQuery.isLoading.value ? 'Carregant…' : 'Tria un moviment de la llista.' }}</p>
       </section>
 
@@ -723,25 +767,6 @@ function signed(value: number) {
           @share="setShare"
           @reorder="reorder"
         >
-          <template v-if="jevOn && current" #jev-action>
-            <button
-              type="button"
-              class="btn btn-ai-outline btn-sm"
-              :disabled="asking.has(current.id) || noBudget"
-              title="Torna-ho a preguntar a Jev (P)"
-              @click.stop="askJev(current.id).catch(() => undefined)"
-            >
-              <AppIcon :name="asking.has(current.id) ? 'refresh' : 'sparkles'" :size="12" :class="{ spin: asking.has(current.id) }" />
-              {{ asking.has(current.id) ? 'Pensant…' : suggestion ? 'Torna-hi' : 'Proposa' }}
-            </button>
-          </template>
-          <template v-if="jevOn && current" #jev>
-            <p v-if="askError" class="jev-note jev-error">{{ askError }}</p>
-            <p v-else-if="suggestion && suggestion.cap > 0.5" class="jev-note">Jev creu que aquest moviment no s'imputa a cap partida.</p>
-            <p v-else-if="!suggestion && !asking.has(current.id)" class="jev-note">Encara no s'ha preguntat a Jev.</p>
-            <p v-else-if="suggestion && !topSuggestions.length" class="jev-note">Jev no en veu cap de clara.</p>
-            <p v-if="suggestion?.multiple && suggestion.multiple >= 0.6" class="jev-note">Sembla que paga conceptes diferents: potser cal repartir-lo.</p>
-          </template>
         </PartidaPicker>
         <p v-else class="empty">{{ budgetQuery.isLoading.value ? 'Carregant el pressupost…' : 'Sense pressupost.' }}</p>
       </section>
@@ -780,6 +805,52 @@ function signed(value: number) {
   min-height: 560px;
 }
 
+.accounts {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  margin-top: -4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.accounts .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--surface-0);
+  color: var(--ink-700);
+  font: inherit;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.accounts .chip span {
+  color: var(--ink-400);
+  font-variant-numeric: tabular-nums;
+}
+
+.accounts .chip.on {
+  border-color: var(--accent-500);
+  color: var(--accent-700);
+}
+
+.accounts .chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pending-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-600);
+}
+
 .head-side {
   display: flex;
   align-items: center;
@@ -803,7 +874,7 @@ function signed(value: number) {
 .work {
   display: grid;
   flex: 1;
-  grid-template-columns: var(--rail-w, 250px) 12px var(--middle-w, 460px) 12px minmax(320px, 1fr);
+  grid-template-columns: var(--rail-w, 220px) 12px var(--middle-w, 360px) 12px minmax(420px, 1fr);
   min-height: 0;
 }
 
@@ -832,16 +903,24 @@ function signed(value: number) {
 }
 
 /* ── Rail ─────────────────────────────────────────────────────────────── */
+/* Three panels side by side, each as tall as the work area and never wider
+   than its column, whatever a long name or a big count inside would like. */
+.work > * {
+  min-width: 0;
+}
+
 .rail {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 6px;
   min-height: 0;
+  padding: 8px 6px 4px;
 }
 
 .rail-tabs {
   display: grid;
-  grid-template-columns: repeat(4, auto);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--line);
@@ -850,11 +929,12 @@ function signed(value: number) {
 }
 
 .rail-tab {
-  display: inline-flex;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 4px 4px;
+  min-width: 0;
+  padding: 3px 2px;
+  line-height: 1.25;
   border: 0;
   border-radius: var(--r-sm);
   background: none;
@@ -873,6 +953,7 @@ function signed(value: number) {
 
 .rail-count {
   color: var(--ink-400);
+  font-size: 10px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
@@ -967,24 +1048,26 @@ function signed(value: number) {
 }
 
 /* ── The invoice ──────────────────────────────────────────────────────── */
+/* One panel: the movement scrolls, what it is charged to stays at the foot. */
 .invoice {
-  display: grid;
-  /* The column's width, whatever a long name inside would like. */
-  grid-template-columns: minmax(0, 1fr);
-  align-content: start;
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
-  padding-bottom: 8px;
+  overflow: hidden;
 }
 
 .invoice-empty {
-  place-items: center;
+  align-items: center;
+  justify-content: center;
 }
 
 .inv {
   display: grid;
+  flex: 1;
+  align-content: start;
   gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
   padding: 14px 16px;
 }
 
@@ -1154,26 +1237,16 @@ function signed(value: number) {
 }
 
 .charge {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-  box-shadow: 0 -6px 12px -10px rgba(15, 30, 60, 0.25);
+  flex: none;
+  max-height: 60%;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+  background: var(--surface-1);
 }
 
 .charge.is-dirty {
-  border-color: var(--accent-300);
-}
-
-.charge-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.charge-title {
-  color: var(--ink-700);
-  font-size: var(--text-sm);
-  font-weight: 600;
+  border-top-color: var(--accent-300);
+  background: var(--accent-50);
 }
 
 .chosen-empty {
@@ -1186,19 +1259,15 @@ function signed(value: number) {
   text-align: center;
 }
 
-.jev-note {
-  margin: 0 2px 4px;
-  color: var(--ai-700);
-  font-size: var(--text-xs);
-}
-
-.jev-note.jev-error {
-  color: var(--danger-700);
-}
-
 .charge-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+
+.charge-state {
+  display: inline-flex;
+  min-width: 0;
 }
 
 .charge-actions .btn-primary {
@@ -1250,7 +1319,7 @@ function signed(value: number) {
 
 @media (max-width: 1280px) {
   .work {
-    grid-template-columns: var(--middle-w, 460px) 12px minmax(0, 1fr);
+    grid-template-columns: var(--middle-w, 360px) 12px minmax(0, 1fr);
   }
 
   .rail,
