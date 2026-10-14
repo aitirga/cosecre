@@ -104,14 +104,15 @@ async def queue_upload(
     the models do not read those fields, so they stay until someone edits them.
     """
     reference = generate_reference()
-    stored_path = await save_upload_file(file, reference, settings)
+    stored = await save_upload_file(file, reference, settings)
+    stored_path = stored.path
 
     upload = Upload(
         user_id=user.id,
         internal_doc_number=reference,
         document_type="document",
         source_file_name=file.filename or stored_path.name,
-        source_file_type=file.content_type or "application/octet-stream",
+        source_file_type=stored.content_type,
         stored_path=str(stored_path),
         capture_source=source,
         status="pending",

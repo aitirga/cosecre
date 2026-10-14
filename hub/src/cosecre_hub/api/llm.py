@@ -316,7 +316,7 @@ async def extract(
             detail=f"Files larger than {_MAX_INLINE_FILE_BYTES // (1024 * 1024)} MB are not accepted.",
         )
 
-    suffix = Path(file.filename or "").suffix
+    suffix = Path(file.filename or "").suffix.lower()
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=True) as scratch:
         scratch.write(payload)
         scratch.flush()

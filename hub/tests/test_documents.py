@@ -557,6 +557,43 @@ def test_uploads_reject_an_unsupported_content_type(register):
     assert response.status_code == 400
 
 
+@pytest.mark.parametrize(
+    ("name", "mime", "content", "expected_type", "expected_suffix"),
+    [
+        ("FACTURA.PDF", "application/pdf", b"%PDF-1.7", "application/pdf", ".pdf"),
+        ("FACTURA.PDF", "application/octet-stream", b"%PDF-1.7", "application/pdf", ".pdf"),
+        ("FACTURA.PDF", "", b"%PDF-1.7", "application/pdf", ".pdf"),
+        ("Scan.JPEG", "application/octet-stream", JPEG, "image/jpeg", ".jpg"),
+        ("IMG_0001.JPG", "image/jpg", JPEG, "image/jpeg", ".jpg"),
+        ("Foto.PNG", "application/octet-stream", b"\x89PNG\r\n\x1a\nxx", "image/png", ".png"),
+        ("sense-extensio", "application/octet-stream", b"%PDF-1.7", "application/pdf", ".pdf"),
+        ("factura.PDF", "application/pdf; charset=binary", b"%PDF-1.7", "application/pdf", ".pdf"),
+    ],
+)
+def test_uploads_are_recognised_whatever_the_case_of_the_extension(
+    register, name, mime, content, expected_type, expected_suffix
+):
+    client, headers, _, _ = register
+    response = client.post(f"{RECORDS}/upload", headers=headers, files={"file": (name, content, mime)})
+    assert response.status_code == 200, response.text
+    reference = response.json()["internal_doc_number"]
+    record = client.get(f"{RECORDS}/{reference}", headers=headers).json()
+    assert record["source_file_type"] == expected_type
+    fetched = client.get(f"{RECORDS}/{reference}/file", headers=headers)
+    assert fetched.headers["content-type"].startswith(expected_type)
+    assert fetched.content == content
+
+
+def test_uploads_keep_a_lower_case_extension_on_disk(register):
+    client, headers, _, _ = register
+    response = client.post(
+        f"{RECORDS}/upload", headers=headers, files={"file": ("FACTURA.PDF", b"%PDF-1.7", "application/pdf")}
+    )
+    reference = response.json()["internal_doc_number"]
+    stored = [p.name for p in client.app.state.settings.upload_dir.iterdir() if p.name.startswith(reference)]
+    assert stored == [f"{reference}-FACTURA.pdf"]
+
+
 def test_an_unreadable_document_is_kept_as_an_error_and_can_be_filled_by_hand(tmp_path):
     class Broken(FakeProvider):
         def extract_file(self, request):
