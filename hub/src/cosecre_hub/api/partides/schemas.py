@@ -88,7 +88,9 @@ class AssignmentRead(BaseModel):
 
 class RankedRead(BaseModel):
     partida_id: int
+    #: After the history weighed in; ``jev`` is Jev's own.
     probability: float
+    jev: float | None = None
 
 
 class SuggestionRead(BaseModel):

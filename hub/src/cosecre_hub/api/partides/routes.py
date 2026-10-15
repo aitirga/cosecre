@@ -13,7 +13,6 @@ charged to is an accounting decision.
 from __future__ import annotations
 
 import logging
-from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -24,12 +23,17 @@ from starlette.concurrency import run_in_threadpool
 from ...deps import get_db, get_workspace_setting, require_admin
 from ...models import AppSetting, BankMovement, Document, PaymentMatch, User, utcnow
 from ...services.classification import JevError
-from ...services.people import fold
 from ...services.storage import MAX_UPLOAD_BYTES
 from ...services.text_format import compact_code
 from ..documents.register import drive_name, extension_for
-from . import esfera, suggest
-from .models import MovementPartida, MovementPartidaSuggestion, Partida, Pressupost
+from . import esfera, precedents, suggest
+from .models import (
+    MovementPartida,
+    MovementPartidaSuggestion,
+    Partida,
+    PartidaDecision,
+    Pressupost,
+)
 from .schemas import (
     AssignmentRead,
     AssignmentsUpdate,
@@ -280,40 +284,6 @@ def _item_for(session: Session, movement: BankMovement) -> QueueItem:
         assignments,
         session.get(MovementPartidaSuggestion, movement.id),
     )
-
-
-def _history(session: Session, movement: BankMovement, invoices: list[Document]) -> list[tuple[str, int]]:
-    """Lines other movements were confirmed to, by the same supplier or concept, most used first.
-
-    The supplier comes from the invoices a movement paid; a movement with none
-    (a bank fee, a direct debit) is known by its concept instead.
-    """
-    cifs = {compact_code(d.cif_proveidor) for d in invoices} - {""}
-    names = {fold(d.proveidor or "") for d in invoices} - {""}
-    concept = fold(movement.concepte or "")
-    if not cifs and not names and not concept:
-        return []
-    rows = (
-        session.query(MovementPartida.movement_id, BankMovement.concepte, Partida.nom)
-        .join(BankMovement, BankMovement.id == MovementPartida.movement_id)
-        .join(Partida, Partida.id == MovementPartida.partida_id)
-        .filter(MovementPartida.confirmada.is_(True), MovementPartida.movement_id != movement.id)
-        .all()
-    )
-    if not rows:
-        return []
-    paid = _paid_invoices(session, list({row[0] for row in rows}))
-    counts: Counter[str] = Counter()
-    for other_id, other_concept, line in rows:
-        others = paid.get(other_id, [])
-        same_supplier = any(
-            (cifs and compact_code(d.cif_proveidor) in cifs) or (names and fold(d.proveidor or "") in names)
-            for d in others
-        )
-        same_concept = not invoices and not others and concept and fold(other_concept or "") == concept
-        if same_supplier or same_concept:
-            counts[line] += 1
-    return counts.most_common(5)
 
 
 # ── The budget ──────────────────────────────────────────────────────────────
@@ -574,8 +544,31 @@ def assign(
         assignment.import_assignat = line.import_assignat
         assignment.confirmada = True
         assignment.assigned_by_id = admin.id
+    _record_decision(session, movement, found if wanted else [], admin)
     session.commit()
     return _item_for(session, movement)
+
+
+def _record_decision(session: Session, movement: BankMovement, chosen: list[Partida], admin: User) -> None:
+    """Keep what Jev put first next to what the person confirmed, for the history."""
+    decision = session.get(PartidaDecision, movement.id)
+    suggestion = session.get(MovementPartidaSuggestion, movement.id)
+    top = suggestion.ranking[0] if suggestion is not None and suggestion.ranking else None
+    proposed = session.get(Partida, top["partida_id"]) if top else None
+    if not chosen or proposed is None:
+        if decision is not None:
+            session.delete(decision)
+        return
+    if decision is None:
+        decision = PartidaDecision(movement_id=movement.id)
+        session.add(decision)
+    decision.proposada_codi = proposed.codi
+    decision.proposada_nom = proposed.nom
+    decision.probabilitat = float(top["probability"])
+    decision.triades = [{"codi": p.codi, "nom": p.nom} for p in chosen]
+    decision.corregida = proposed.id not in {p.id for p in chosen}
+    decision.decided_by_id = admin.id
+    decision.decided_at = utcnow()
 
 
 def _check_split(movement: BankMovement, lines: list) -> None:
@@ -624,7 +617,7 @@ async def suggest_lines(
     partides = session.query(Partida).filter(Partida.exercici == exercici).order_by(Partida.ordre).all()
     context = _general_context(session)
     invoices = _paid_invoices(session, [movement.id]).get(movement.id, [])
-    history = _history(session, movement, invoices)
+    history = precedents.gather(session, movement, invoices)
     try:
         result = await run_in_threadpool(
             suggest.ask, jev, movement, invoices, partides, context, history
@@ -637,7 +630,9 @@ async def suggest_lines(
     if stored is None:
         stored = MovementPartidaSuggestion(movement_id=movement.id)
         session.add(stored)
-    stored.ranking = [{"partida_id": r.partida_id, "probability": r.probability} for r in result.ranking]
+    stored.ranking = [
+        {"partida_id": r.partida_id, "probability": r.probability, "jev": r.jev} for r in result.ranking
+    ]
     stored.confidence = result.confidence
     stored.cap = result.cap
     stored.multiple = result.multiple

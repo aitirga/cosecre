@@ -6,9 +6,10 @@ lines for money in — plus a "none fits" way out, and a yes/no on whether it
 spans more than one budget concept, asked together so the second costs no
 latency. What the movement says is thin ("TRANSF. A …"), so the invoices it
 paid, as confirmed in Justificar extractes, carry most of the meaning. Code
-keeps what is known for certain: the movement's school year, what the same
-supplier or concept was charged to before, and what the secretari/a wrote
-about the lines and in general.
+keeps what is known for certain: the movement's school year, what the
+secretari/a wrote about the lines and in general, and what the same supplier
+or concept was charged to before — which Jev reads and which then bends its
+ranking (see :mod:`.precedents`).
 
 Nothing here is final. What Jev proposes is stored unconfirmed and shown in
 violet until a person accepts or changes it.
@@ -25,6 +26,7 @@ from ...models import BankMovement, Document
 from ...services.classification import JevClient
 from .esfera import fund_family
 from .models import Partida
+from .precedents import History
 
 #: Jev's own limit is 255 options per Choice; one is the way out.
 MAX_OPTIONS = 254
@@ -61,6 +63,8 @@ def sentit(movement: BankMovement) -> str:
 class Ranked:
     partida_id: int
     probability: float
+    #: Jev's own probability, before the history weighed in.
+    jev: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,10 +85,16 @@ class Suggestion:
         if (
             len(self.ranking) > 1
             and (self.multiple or 0) >= SPLIT_MINIMUM
-            and self.ranking[1].probability >= SECOND_LINE_MINIMUM
+            # Whether the purchase has a second part is Jev's to say: the history
+            # knows the supplier's usual line, not what else this one bought.
+            and _own(self.ranking[1]) >= SECOND_LINE_MINIMUM
         ):
             chosen.append(self.ranking[1])
         return chosen
+
+
+def _own(ranked: Ranked) -> float:
+    return ranked.jev if ranked.jev is not None else ranked.probability
 
 
 def _tagged_year(name: str) -> str:
@@ -139,7 +149,8 @@ def build_state(
     movement: BankMovement,
     invoices: list[Document],
     general_context: str,
-    history: list[tuple[str, int]],
+    history: History,
+    names: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     when = movement_date(movement)
     moviment = {
@@ -158,13 +169,20 @@ def build_state(
     if invoices:
         # Only the first invoice's text: it is long, and Jev's state is not.
         state["factures_que_paga"] = [_invoice(d, i == 0) for i, d in enumerate(invoices)]
-    if history:
-        state["partides_anteriors_del_mateix_proveidor_o_concepte"] = [
-            {"partida": name, "vegades": count} for name, count in history
-        ]
+    precedents = history.for_state(names or {})
+    if precedents:
+        state["decisions_anteriors"] = precedents
     if general_context.strip():
         state["criteris_del_centre"] = general_context.strip()
     return state
+
+
+PRECEDENTS_RULES = [
+    "`decisions_anteriors` són les partides on una persona va imputar altres moviments "
+    "del mateix proveïdor (o del mateix concepte): és la millor pista, i més com més "
+    "vegades i més recent. Si la compra és clarament d'una altra mena, mana la compra.",
+    "Les `correccions` són propostes teves que la persona va canviar: no repeteixis l'error.",
+]
 
 
 def build_questions(
@@ -191,7 +209,7 @@ def build_questions(
                         "Les partides que comencen per un curs (24-25, 25-26) són d'aquell "
                         "curs escolar: tria la del `curs_escolar_del_moviment`.",
                         "Segueix `criteris_del_centre` i el camp `quan_s_usa` de cada partida.",
-                        "Si el mateix concepte ja s'ha imputat a una partida, és una bona pista.",
+                        *PRECEDENTS_RULES,
                     ],
                 },
                 "criteria": criteria,
@@ -234,8 +252,7 @@ def build_questions(
                     "Les partides d'un fons finalista (Motxilles, Pla de Xoc, PMOE…) només "
                     "quan la compra és d'aquell programa; si no, el pressupost ordinari.",
                     "Segueix `criteris_del_centre` i el camp `quan_s_usa` de cada partida.",
-                    "Si el mateix proveïdor o concepte ja s'ha imputat a una partida, és una "
-                    "bona pista.",
+                    *PRECEDENTS_RULES,
                 ],
             },
             "criteria": criteria,
@@ -251,15 +268,27 @@ def build_questions(
     }
 
 
-def read_answers(answers: dict[str, Any], model: str) -> Suggestion:
+def read_answers(
+    answers: dict[str, Any],
+    model: str,
+    history: History | None = None,
+    codis: dict[int, str] | None = None,
+) -> Suggestion:
+    """Jev's answer as a ranking, bent by the history when there is one.
+
+    ``codis`` maps each option's id to its code, which is what the history
+    knows lines by across years.
+    """
     choice = answers.get("partida") or {}
-    ranking: list[Ranked] = []
+    raw: dict[int, float] = {}
     cap = 0.0
     for key, probability in (choice.get("probabilities") or {}).items():
         if key == NONE_KEY:
             cap = float(probability)
         elif key.startswith("p") and key[1:].isdigit():
-            ranking.append(Ranked(int(key[1:]), round(float(probability), 4)))
+            raw[int(key[1:])] = round(float(probability), 4)
+    weighed = history.weigh(raw, codis or {}) if history is not None else raw
+    ranking = [Ranked(pid, weighed[pid], raw[pid]) for pid in raw]
     ranking.sort(key=lambda r: r.probability, reverse=True)
     picked = str(choice.get("choice", ""))
     if not ranking and picked.startswith("p") and picked[1:].isdigit():
@@ -280,11 +309,14 @@ def ask(
     invoices: list[Document],
     partides: list[Partida],
     general_context: str,
-    history: list[tuple[str, int]],
+    history: History,
 ) -> Suggestion:
     """Raises :class:`~cosecre_hub.services.classification.JevError` when Jev is down."""
     tipus = sentit(movement)
     options = candidates(partides, school_year(movement_date(movement)), tipus)
-    state = json.dumps(build_state(movement, invoices, general_context, history), ensure_ascii=False)
+    names = {p.codi: p.nom for p in partides}
+    state = json.dumps(
+        build_state(movement, invoices, general_context, history, names), ensure_ascii=False
+    )
     answers = jev.ask(state, build_questions(options, partides, tipus))
-    return read_answers(answers, jev.model)
+    return read_answers(answers, jev.model, history, {p.id: p.codi for p in options})

@@ -996,7 +996,8 @@ export interface PartidaAssignment {
 }
 
 export interface PartidaSuggestion {
-  ranking: { partida_id: number; probability: number }[]
+  /** `probability` is after the history weighed in; `jev` is Jev's own. */
+  ranking: { partida_id: number; probability: number; jev?: number | null }[]
   confidence: number
   cap: number
   multiple: number | null

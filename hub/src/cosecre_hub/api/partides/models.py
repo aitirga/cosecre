@@ -117,7 +117,8 @@ class MovementPartidaSuggestion(Base):
     movement_id: Mapped[int] = mapped_column(
         ForeignKey("bank_movements.id", ondelete="CASCADE"), primary_key=True
     )
-    #: ``[{"partida_id": 12, "probability": 0.61}, …]``, best first.
+    #: ``[{"partida_id": 12, "probability": 0.61, "jev": 0.48}, …]``, best first;
+    #: ``probability`` is after the history weighed in, ``jev`` before.
     ranking: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     #: Probability that the payment spans several budget concepts.
@@ -128,8 +129,38 @@ class MovementPartidaSuggestion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class PartidaDecision(Base):
+    """What Jev put first for a movement and what a person charged it to.
+
+    Written when a person confirms the lines, so a later re-ask cannot hide
+    that Jev was wrong. Names are kept as they were: lines are per year.
+    """
+
+    __tablename__ = "partida_decisions"
+
+    movement_id: Mapped[int] = mapped_column(
+        ForeignKey("bank_movements.id", ondelete="CASCADE"), primary_key=True
+    )
+    proposada_codi: Mapped[str] = mapped_column(String(64), default="")
+    proposada_nom: Mapped[str] = mapped_column(Text, default="")
+    #: Jev's probability for it, after the history weighed in.
+    probabilitat: Mapped[float] = mapped_column(Float, default=0.0)
+    #: ``[{"codi": …, "nom": …}, …]``: what the person confirmed.
+    triades: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    #: The person did not keep Jev's first line.
+    corregida: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    decided_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 @event.listens_for(BankMovement, "after_delete")
 def _forget_movement(mapper, connection, target: BankMovement) -> None:
     """SQLite does not enforce the cascades, and a reused id would inherit them."""
-    for table in (MovementPartida.__table__, MovementPartidaSuggestion.__table__):
+    for table in (
+        MovementPartida.__table__,
+        MovementPartidaSuggestion.__table__,
+        PartidaDecision.__table__,
+    ):
         connection.execute(delete(table).where(table.c.movement_id == target.id))

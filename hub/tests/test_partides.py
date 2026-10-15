@@ -9,7 +9,8 @@ from datetime import date
 from openpyxl import Workbook
 
 from conftest import build_client, make_user, register_admin
-from cosecre_hub.api.partides import esfera, suggest
+from cosecre_hub.api.partides import esfera, precedents, suggest
+from cosecre_hub.api.partides.models import PartidaDecision
 from cosecre_hub.models import BankMovement, Document, PaymentMatch, StatementImport
 from cosecre_hub.services.classification import DocumentClassifier, JevClient, JevError
 
@@ -452,9 +453,22 @@ def test_a_split_purchase_gets_two_lines_and_the_supplier_history_is_a_hint(tmp_
         ids["D/220000100/4210.29"],
     ]
     state, _ = jev.asked[0]
-    assert state["partides_anteriors_del_mateix_proveidor_o_concepte"] == [
-        {"partida": "25-26 Autocars INFANTIL.", "vegades": 1}
-    ]
+    assert state["decisions_anteriors"] == {
+        "mateix": "proveidor",
+        "partides": [
+            {
+                "partida": "25-26 Autocars INFANTIL.",
+                "vegades": 1,
+                "ultima": "2026-01",
+                "exemple": "Autocar per la sortida d'infantil al Tibidabo",
+            }
+        ],
+    }
+    # The history leans on the supplier's usual line, but the second part of a
+    # split is Jev's own call, so it is not pushed below the line.
+    ranking = item["suggestion"]["ranking"]
+    assert ranking[0]["probability"] > ranking[0]["jev"] == 0.7
+    assert ranking[1]["probability"] < ranking[1]["jev"] == 0.25
 
 
 def test_without_jev_or_a_budget_the_suggestion_says_why(tmp_path, hub):
@@ -528,9 +542,8 @@ def test_money_in_is_offered_the_income_lines_and_bank_fees_their_concept(tmp_pa
     assert f"p{ids['I/3000001']}" in criteria
     assert f"p{ids['D/220000100/4210.29']}" not in criteria
     state, _ = jev.asked[1]
-    assert state["partides_anteriors_del_mateix_proveidor_o_concepte"] == [
-        {"partida": "Despeses per comissions bancàries", "vegades": 1}
-    ]
+    assert state["decisions_anteriors"]["mateix"] == "concepte"
+    assert state["decisions_anteriors"]["partides"][0]["partida"] == "Despeses per comissions bancàries"
 
 
 def test_the_secretari_orders_a_concepts_lines_and_it_holds(hub):
@@ -555,3 +568,75 @@ def test_jev_only_preselects_when_it_is_sure():
     assert unsure.preassign() == []
     sure = suggest.Suggestion(ranking=[suggest.Ranked(1, 0.8)], confidence=0.8, cap=0.1, multiple=0.1, model="m")
     assert [r.partida_id for r in sure.preassign()] == [1]
+
+
+def test_a_correction_is_kept_and_shown_to_jev_next_time(tmp_path):
+    jev = FakeJev()
+    with _jev_client(tmp_path, jev) as client:
+        admin = register_admin(client)
+        upload(client, admin, esfera_export())
+        ids = {code: line["id"] for code, line in lines(client, admin).items()}
+        bus, office = ids["D/223000100/4210.11"], ids["D/220000100/4210.29"]
+        jev.answers = _prefer(ids, "D/223000100/4210.11")
+
+        add_document(client, "DOC-OLD", data_factura=date(2026, 1, 5))
+        old = add_movement(client, paid="DOC-OLD", data=date(2026, 1, 9))
+        client.post(f"{API}/movements/{old}/suggest", headers=admin)
+        client.put(f"{API}/movements/{old}", headers=admin, json={"partides": [{"partida_id": office}]})
+
+        accepted = add_movement(client, concepte="ALTRA COSA", data=date(2026, 2, 1))
+        client.post(f"{API}/movements/{accepted}/suggest", headers=admin)
+        client.put(f"{API}/movements/{accepted}", headers=admin, json={"partides": [{"partida_id": bus}]})
+
+        add_document(client, "DOC-1")
+        movement = add_movement(client, paid="DOC-1")
+        client.post(f"{API}/movements/{movement}/suggest", headers=admin)
+
+        with client.app.state.session_factory() as session:
+            decisions = {d.movement_id: d for d in session.query(PartidaDecision)}
+    assert decisions[old].corregida is True
+    assert decisions[old].proposada_codi == "D/223000100/4210.11"
+    assert decisions[old].triades == [{"codi": "D/220000100/4210.29", "nom": "Material oficina"}]
+    assert decisions[accepted].corregida is False
+
+    state, _ = jev.asked[-1]
+    assert state["decisions_anteriors"]["correccions"] == [
+        {
+            "jev_va_proposar": "25-26 Autocars INFANTIL.",
+            "la_persona_va_triar": "Material oficina",
+            "vegades": 1,
+        }
+    ]
+
+
+def test_the_history_bends_jevs_ranking_more_the_more_there_is():
+    codis = {1: "A", 2: "B"}
+    jev_says = {1: 0.6, 2: 0.3}
+
+    def history(times: int) -> precedents.History:
+        return precedents.History(
+            by="proveidor", lines=[precedents.Precedent(codi="B", nom="B", weight=float(times), count=times)]
+        )
+
+    assert precedents.History().weigh(jev_says, codis) == jev_says
+    once, often = history(1).weigh(jev_says, codis), history(10).weigh(jev_says, codis)
+    # "None fits" keeps its own share: the lines' total does not change.
+    assert round(sum(often.values()), 3) == 0.9
+    assert once[2] > jev_says[2] and often[2] > once[2]
+    assert once[1] > once[2]  # one precedent nudges…
+    assert often[2] > often[1]  # …ten decide
+
+
+def test_what_jev_reads_of_the_history_has_a_size_limit():
+    many = precedents.History(
+        by="proveidor",
+        lines=[
+            precedents.Precedent(codi=f"C{i}", nom=f"Partida {i}", weight=1.0, count=1, example="x" * 90)
+            for i in range(20)
+        ],
+        corrections=[precedents.Correction(codi="C1", nom="Partida 1", chosen="Partida 2", count=2)],
+    )
+    block = many.for_state({})
+    assert len(json.dumps(block, ensure_ascii=False)) <= precedents.MAX_CHARS
+    assert len(block["partides"]) <= precedents.MAX_LINES
+    assert block["correccions"]
