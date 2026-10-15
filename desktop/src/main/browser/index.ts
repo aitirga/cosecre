@@ -6,7 +6,7 @@ import { BrowserCredentials } from './credentials'
 import { isGicarLogin, submitSferaLogin } from './sfera-login'
 import type { DesktopStore } from '../store'
 import { queryPortal, validateQuery } from '../sfera/explorer'
-import { readDashboard, selectCentre } from '../sfera/dashboard'
+import { chooseConfiguredCentre, configuredCentre, readDashboard, selectCentre } from '../sfera/dashboard'
 import { SferaInvoices } from '../sfera/invoices'
 import { hubClient, reconcileExportItem, runExportItem } from '../sfera/export-runner'
 import { diagnoseExport } from '../sfera/diagnostics'
@@ -26,6 +26,9 @@ export class EmbeddedBrowser {
   private popups = new Set<BrowserWindow>()
   private id = ''
   private initialUrl = ''
+  /** The centre named in the settings, chosen automatically once per portal session. */
+  private centre = ''
+  private centreSought = false
   private credentials = new BrowserCredentials(app.getPath('userData'))
   private context = ''
   private login: BrowserState['login'] = 'manual'
@@ -84,6 +87,14 @@ export class EmbeddedBrowser {
     }
     if (this.view?.webContents === wc) this.notify(this.state(id))
   }
+  private async chooseCentre(wc: WebContents): Promise<void> {
+    if (this.centreSought || !this.centre || wc.isDestroyed()) return
+    try { const page = new URL(wc.getURL()), home = new URL(this.initialUrl); if (page.origin !== home.origin || page.pathname !== home.pathname) return } catch { return }
+    this.centreSought = true
+    const id = this.id, epoch = this.epoch
+    const chosen = await chooseConfiguredCentre(wc, this.initialUrl, this.centre, () => id === this.id && epoch === this.epoch).catch(() => null)
+    if (chosen && id === this.id && this.view?.webContents === wc) { this.loginMessage = `Centre ${chosen.code} · ${chosen.name} seleccionat segons la configuració.`; this.notify(this.state(id)) }
+  }
   async open(tool: unknown): Promise<BrowserState> {
     if (tool !== 'sfera') throw new Error('Eina desconeguda.')
     // A hidden portal retained between Navegador and Resum i dades keeps the
@@ -94,9 +105,13 @@ export class EmbeddedBrowser {
       const root = hub!.replace(/\/$/, '').replace(/\/api\/v1$/, '') + '/api/v1'
       const response = await fetch(root + '/apps/cosecre-sfera/settings', { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(10000) })
       if (!response.ok) throw new Error('No es pot verificar la configuració d’Esfer@.')
-      const bundle = await response.json() as { settings?: { access_url?: string } }
+      const bundle = await response.json() as { settings?: { access_url?: string; centre?: string } }
       if (epoch !== this.epoch || hub !== this.store.hubUrl || token !== this.store.tokens['cosecre.accessToken']) throw new Error('El context de la sessió ha canviat.')
-      if (context === this.context && portalUrl(bundle.settings?.access_url) === this.initialUrl) return this.state(this.id)
+      if (context === this.context && portalUrl(bundle.settings?.access_url) === this.initialUrl) {
+        const centre = String(bundle.settings?.centre ?? '').trim()
+        if (centre !== this.centre) { this.centre = centre; this.centreSought = false; void this.chooseCentre(this.view.webContents) }
+        return this.state(this.id)
+      }
     }
     this.dispose()
     const epoch = this.epoch
@@ -107,13 +122,14 @@ export class EmbeddedBrowser {
     const get = async (path: string) => {
       const response = await fetch(root + path, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(10000) })
       if (!response.ok) throw new Error('No es pot verificar el compte o la configuració d’Esfer@. Torna a iniciar sessió si ha caducat.')
-      return response.json() as Promise<{ id?: number; role?: string; is_admin?: boolean; settings?: { access_url?: string } }>
+      return response.json() as Promise<{ id?: number; role?: string; is_admin?: boolean; settings?: { access_url?: string; centre?: string } }>
     }
     const [user, bundle] = await Promise.all([get('/auth/me'), get('/apps/cosecre-sfera/settings')])
     if (epoch !== this.epoch || hub !== this.store.hubUrl || token !== this.store.tokens['cosecre.accessToken']) throw new Error('El context de la sessió ha canviat.')
     const role = user.role ?? (user.is_admin ? 'admin' : 'administratiu')
     if (!['admin', 'administratiu'].includes(role) || !Number.isSafeInteger(user.id)) throw new Error('Compte no autoritzat.')
     this.initialUrl = portalUrl(bundle.settings?.access_url)
+    this.centre = String(bundle.settings?.centre ?? '').trim()
     this.context = createHash('sha256').update(JSON.stringify([root, user.id, tool])).digest('hex')
     try {
       const credentialStatus = await this.credentials.status(this.context)
@@ -134,7 +150,7 @@ export class EmbeddedBrowser {
     const publish = () => { if (this.view?.webContents === wc) this.notify(this.state(this.id)) }
     wc.on('did-start-loading', () => { this.error = null; publish() })
     wc.on('did-stop-loading', publish)
-    wc.on('did-finish-load', () => { void this.identify(wc) })
+    wc.on('did-finish-load', () => { void this.identify(wc); void this.chooseCentre(wc) })
     wc.on('did-navigate', publish)
     wc.on('did-navigate-in-page', publish)
     wc.on('page-title-updated', publish)
@@ -221,6 +237,7 @@ export class EmbeddedBrowser {
         this.contents(id)
         for (const popup of this.popups) popup.destroy()
         this.attemptedLogin = true
+        this.centreSought = false
         this.login = 'manual'
         this.loginMessage = 'Sessió esborrada. Pots identificar-te manualment o prémer Identificar-me.'
         wc.stop()
@@ -248,7 +265,11 @@ export class EmbeddedBrowser {
   async dashboard(input: unknown) {
     const raw = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {}
     if (Object.keys(raw).some(k => k !== 'budgetId') || (raw.budgetId !== undefined && (!Number.isSafeInteger(raw.budgetId) || Number(raw.budgetId) <= 0))) throw new Error('Consulta no vàlida.')
-    return this.withPortal((wc,url,valid)=>readDashboard(wc,url,raw.budgetId === undefined ? {} : { budgetId: Number(raw.budgetId) },valid))
+    return this.withPortal(async (wc,url,valid)=>{
+      const result = await readDashboard(wc,url,raw.budgetId === undefined ? {} : { budgetId: Number(raw.budgetId) },valid)
+      const match = !result.ok && configuredCentre(this.centre, result.centres)
+      return match ? selectCentre(wc,url,match.code,valid) : result
+    })
   }
   async dashboardCentre(code: unknown) { return this.withPortal((wc,url,valid)=>selectCentre(wc,url,code,valid)) }
   async invoiceCatalog(budgetId?:number) { return this.withPortal((wc,url,valid)=>this.invoices.catalog(wc,url,valid,budgetId)) }
@@ -291,6 +312,6 @@ export class EmbeddedBrowser {
       if (this.attached && !this.window.isDestroyed()) this.window.contentView.removeChildView(this.view)
       if (!this.view.webContents.isDestroyed()) this.view.webContents.close()
     }
-    this.view = null; this.attached = false; this.error = null; this.id = ''; this.context = ''; this.attemptedLogin = false; this.login = 'manual'; this.loginMessage = null
+    this.view = null; this.attached = false; this.error = null; this.id = ''; this.centre = ''; this.centreSought = false; this.context = ''; this.attemptedLogin = false; this.login = 'manual'; this.loginMessage = null
   }
 }

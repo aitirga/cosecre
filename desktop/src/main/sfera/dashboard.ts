@@ -4,6 +4,7 @@ import type {
   SferaAccount, SferaCentreOption, SferaDashboard, SferaDashboardBudget, SferaDashboardResult,
   SferaIncomeRow, SferaInvoiceRow, SferaLine, SferaMonth, SferaMovement,
 } from '../../../../frontend/src/sfera/dashboard'
+import { matchCentre } from '../../../../frontend/src/sfera/centre-match'
 
 /**
  * Read-only dashboard over Esfer@'s training portal.
@@ -245,3 +246,30 @@ export async function selectCentre(wc: WebContents, configuredUrl: string, code:
     return { ok: false, error: 'Esfer@ no ha carregat el centre a temps. Torna-ho a provar.' }
   }
 }
+
+/**
+ * Chooses the configured centre in «Escolliu el centre» as soon as the portal
+ * shows it. Leaves the dialog to the person when no offered centre matches.
+ */
+export async function chooseConfiguredCentre(wc: WebContents, configuredUrl: string, setting: string, contextValid: () => boolean): Promise<SferaCentreOption | null> {
+  const configured = new URL(configuredUrl)
+  const end = Date.now() + 60000
+  while (Date.now() < end && contextValid() && !wc.isDestroyed()) {
+    const current = new URL(wc.getURL())
+    if (current.origin === configured.origin && current.pathname === configured.pathname) {
+      const access = await wc.executeJavaScript(ACCESS_SCRIPT).catch(() => null) as Access | null
+      if (access?.centre && access.headers.USR_CENTRE) return null
+      const centres = (await wc.executeJavaScript(CENTRES_SCRIPT).catch(() => []) as SferaCentreOption[]).filter(c => /^\d{8}$/.test(c.code))
+      if (centres.length) {
+        const match = matchCentre(setting, centres)
+        if (!match || !contextValid()) return null
+        return await wc.executeJavaScript(selectScript(match.code)).catch(() => false) ? match : null
+      }
+    }
+    await new Promise(done => setTimeout(done, 1000))
+  }
+  return null
+}
+
+/** The configured centre among those Esfer@ offers, if one is close enough. */
+export const configuredCentre = (setting: string, centres: SferaCentreOption[] | undefined) => centres && matchCentre(setting, centres)
